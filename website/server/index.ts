@@ -1,4 +1,5 @@
 import { capsule, endpoint, query, text } from "lakebed/server";
+import { githubDownloads } from "./downloads";
 
 // Star counts for the two hosts that carry the repository. GitHub allows about
 // sixty anonymous reads an hour per address and the capsule shares one, so the
@@ -122,6 +123,7 @@ export default capsule({
 
   queries: {
     stars: query(async () => stars()),
+    downloads: query(async () => githubDownloads()),
   },
 
   endpoints: {

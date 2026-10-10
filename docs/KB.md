@@ -94,6 +94,15 @@ The hierarchy, restrained colors, button focus outlines and reduced-motion rule 
 
 Create a new worktree and feature branch for each new Emc² task. Bind the T3 Code thread to that worktree before task work. Preserve the main checkout. See [ADR 0005](adr/0005-task-worktrees.md), based on the owner's instruction from 2026-10-09.
 
+## Showcase downloads
+
+The [showcase website](../website/README.md#download-count) displays a combined download total for Windows,
+macOS and Linux installers from all published GitHub releases. Its public query follows pagination and
+caches complete totals for ten minutes, retaining the last count on failed requests. It adds no desktop
+telemetry. `npm test` includes `scripts/website-downloads.test.mjs`; the website build is separate:
+`cd website` followed by `npx lakebed build --target claimed`. Hosted outbound requests require a claimed
+deployment. Browser and live deployment verification remain separate from these checks.
+
 ## Application rename
 
 Version 0.1.4 publishes the application as Emc². `desktop/migrate.ts` moves `mail`, `settings.env` and `Local State` from the pre-rename app-data folder into the new one on first launch and writes `.renamed-to-emc2` so the step never repeats. `desktop/migrate.test.ts` covers the carry, the single run, the no-overwrite case and the two no-op cases; run it with `npm test`. Installers are named `Emc²-<version>-<os>-<arch>.<ext>`. The Windows application id stays `dev.screen.aggregate-mail`, and the local MCP server is named `emc2`.

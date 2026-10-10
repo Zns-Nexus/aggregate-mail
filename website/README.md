@@ -9,9 +9,21 @@ npx lakebed dev
 npx lakebed deploy
 ```
 
-It is a Lakebed capsule, so there is no build step and no npm dependency in the page. `server/index.ts` is an
-empty capsule because the page reads nothing and needs no sign-in, and Tailwind classes compile from
-`client/index.tsx`.
+It is a Lakebed capsule with no app npm dependencies. `server/index.ts` serves public star and download
+counts without sign-in, and Tailwind classes compile from `client/index.tsx`.
+
+## Download count
+
+The website sums GitHub's `download_count` across `.exe`, `.dmg` and `.AppImage` assets in all published
+releases, including both Mac architectures and older app versions. Source archives, checksums and update
+metadata are excluded. Counts describe downloads, not unique users or successful installations.
+
+The server follows release pagination, shares concurrent reads and caches results for ten minutes. Failed
+or invalid responses retain the last complete count; before any successful read, the count stays hidden.
+This cache resets when the server restarts. Outbound fetch requires a claimed Lakebed deployment.
+
+Run the focused check from the repository root with `node --test scripts/website-downloads.test.mjs`.
+Build the website from this directory with `npx lakebed build --target claimed`.
 
 ## Provider marks
 
