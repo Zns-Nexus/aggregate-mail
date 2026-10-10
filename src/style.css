@@ -1111,6 +1111,15 @@ input[type="checkbox"][role="switch"]:disabled {
   white-space: nowrap;
   color: var(--text-4);
 }
+.dialog .provider-row {
+  height: auto;
+  min-height: 44px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dialog .provider-row strong {
+  width: auto;
+}
 .action {
   gap: 5px;
   color: var(--link);

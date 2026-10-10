@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open guided account setup directly from the inbox, with provider defaults, app-password help and errors that keep the form open for correction.
+- Add Gmail and Google Workspace connections through TLS IMAP/SMTP with a Google app password, alongside configured Google sign-in. Keep the two connection methods separate and avoid duplicate Gmail Sent copies.
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 
 ## 0.1.4

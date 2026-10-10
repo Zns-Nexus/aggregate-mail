@@ -8,6 +8,12 @@ import type { Mail, Provider } from "../shared/types.js";
 import type { StoredAccount } from "./store.js";
 
 export const presets = {
+  "gmail-imap": {
+    imapHost: "imap.gmail.com",
+    smtpHost: "smtp.gmail.com",
+    imapPort: 993,
+    smtpPort: 465,
+  },
   icloud: {
     imapHost: "imap.mail.me.com",
     smtpHost: "smtp.mail.me.com",
@@ -193,6 +199,7 @@ export const providers: Record<
       });
     },
   },
+  "gmail-imap": imapProvider(),
   icloud: imapProvider(),
   fastmail: imapProvider(),
   yahoo: imapProvider(),
@@ -205,6 +212,8 @@ function smtp(a: StoredAccount) {
     secure: a.credentials.smtpPort === 465,
     requireTLS: a.credentials.smtpPort !== 465,
     auth: { user: a.email, pass: a.credentials.password },
+    logger: false,
+    debug: false,
     connectionTimeout: 15000,
     socketTimeout: 30000,
   });
@@ -266,9 +275,12 @@ function imapProvider() {
               );
           } else {
             const folders = await client.list();
+            const googleImap = a.provider === "gmail-imap";
             const archive =
-              folders.find((f) => f.specialUse === "\\Archive")?.path ||
-              "Archive";
+              folders.find((f) => f.specialUse === (googleImap ? "\\All" : "\\Archive"))?.path ||
+              (googleImap ? null : "Archive");
+            if (!archive)
+              throw new Error("Gmail All Mail is unavailable. Enable it in IMAP before archiving.");
             if (!folders.some((f) => f.path === archive))
               await client.mailboxCreate(archive);
             if (!(await client.messageMove(uid, archive, { uid: true })))
@@ -300,6 +312,8 @@ function imapProvider() {
         envelope: { from: a.email, to: [input.to, ...(input.cc || [])] },
         raw,
       });
+      // Gmail SMTP saves Sent itself; appending over IMAP would duplicate it.
+      if (a.provider === "gmail-imap") return;
       const client = imap(a);
       try {
         await client.connect();

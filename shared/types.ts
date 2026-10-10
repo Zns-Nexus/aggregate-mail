@@ -1,4 +1,18 @@
-export type Provider = "gmail" | "icloud" | "fastmail" | "yahoo" | "imap";
+export type Provider = "gmail" | "gmail-imap" | "icloud" | "fastmail" | "yahoo" | "imap";
+export const providerNames: Record<Provider, string> = {
+  gmail: "Gmail",
+  "gmail-imap": "Gmail",
+  icloud: "iCloud Mail",
+  fastmail: "Fastmail",
+  yahoo: "Yahoo Mail",
+  imap: "Custom IMAP",
+};
+export const appPasswordHelp: Partial<Record<Provider, string>> = {
+  "gmail-imap": "https://support.google.com/accounts/answer/185833",
+  icloud: "https://support.apple.com/102654",
+  fastmail: "https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords",
+  yahoo: "https://help.yahoo.com/kb/SLN15241.html",
+};
 export type Account = {
   id: string;
   email: string;

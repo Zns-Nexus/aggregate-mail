@@ -15,6 +15,34 @@ Emc² shares its React renderer, Electron main process and bundled mail service 
 
 The macOS target disables app and DMG signing and notarization. The release workflow calls cross-platform CI and publishes installers for version tags. Building a package does not publish it or prove Gatekeeper acceptance.
 
+## Account setup
+
+The empty inbox opens the account connection dialog directly. Settings uses
+the same connection path. Known providers supply their server settings; users
+enter an email address and provider-issued app password. Only custom IMAP
+requires manual hosts and ports. Connection errors stay in the dialog so users
+can correct their input.
+
+Gmail supports two separate transports: `gmail` uses the existing Gmail API
+OAuth flow; `gmail-imap` uses `imap.gmail.com:993` and `smtp.gmail.com:465` over
+TLS. The latter accepts personal Gmail and Workspace addresses when Google
+permits app passwords. It does not require a Google Cloud project. Google
+recommends OAuth, and administrators or account security policy can prevent
+app-password access. See [Google's requirements](https://support.google.com/accounts/answer/185833).
+
+Account creation validates incoming and outgoing access before writing the
+encrypted account record. Reconnecting cannot silently change between Google
+transports or mix their cached message IDs. Gmail IMAP sends rely on Google's
+Sent copy and do not append a second copy. Other providers retain the existing
+Sent-copy behavior, including the warning after successful delivery when
+copying to Sent fails.
+
+Source builds still require OAuth client configuration for Google browser
+sign-in. No shared client, cloud relay or provider-registration automation is
+included. See [connection instructions](../README.md#connect-an-account) and
+[ADR 0008](adr/0008-guided-account-connections.md). Synthetic tests do not prove
+live provider eligibility, login, mail delivery or installed desktop behavior.
+
 ## Verification
 
 Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access and checks native menu roles on macOS. Use a temporary user-data directory so checks cannot open a maintainer's accounts:

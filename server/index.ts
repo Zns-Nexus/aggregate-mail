@@ -18,7 +18,7 @@ import { mountMcp, authorizeMcp } from "./mcp.js";
 import { classify, sortMail, SortingUnavailable, type Sorting } from "./sorting.js";
 import { companyLogo } from "./avatars.js";
 import { companySvg, isFreeMail, normalizeDomain, syncLogos } from "./logos.js";
-import { jevProviderOf } from "../shared/types.js";
+import { jevProviderOf, type Provider } from "../shared/types.js";
 
 const configPath = process.env.MAIL_CONFIG_PATH || ".env";
 if (existsSync(configPath)) loadEnvFile(configPath);
@@ -169,6 +169,12 @@ app.post("/api/logos/sync", async (_req, res) => {
   }
 });
 const oauthStates = new Map<string, number>();
+function existingAccount(email: string, provider: Provider) {
+  const matches = all("account").filter((a) => a.email.toLowerCase() === email.toLowerCase());
+  if (matches.some((a) => a.provider !== provider))
+    throw new Error("This email is already connected using another connection method. Keep that connection, or disconnect it before switching. Disconnecting removes its local mail cache.");
+  return matches[0];
+}
 app.get("/api/oauth/google", (_req, res) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     if (process.env.MAIL_DESKTOP_TOKEN)
@@ -224,9 +230,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
       .gmail({ version: "v1", auth })
       .users.getProfile({ userId: "me" });
     const email = z.email().parse(data.emailAddress);
-    const old = all("account").find(
-      (a) => a.provider === "gmail" && a.email === email,
-    );
+    const old = existingAccount(email, "gmail");
     const refreshToken = tokens.refresh_token || old?.credentials.refreshToken;
     if (!refreshToken)
       throw new Error(
@@ -264,7 +268,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
   }
 });
 const imapSchema = z.object({
-  provider: z.enum(["icloud", "fastmail", "yahoo", "imap"]),
+  provider: z.enum(["gmail-imap", "icloud", "fastmail", "yahoo", "imap"]),
   email: z.email(),
   password: z.string().min(1).max(1000),
   username: z.string().max(320).optional(),
@@ -283,13 +287,17 @@ const imapSchema = z.object({
 });
 app.post("/api/accounts/imap", async (req, res) => {
   const input = imapSchema.parse(req.body);
-  const old = all("account").find(
-    (a) => a.provider === input.provider && a.email === input.email,
-  );
+  if (input.provider === "gmail-imap") {
+    input.password = input.password.replace(/ /g, "");
+    if (!/^[a-z]{16}$/.test(input.password))
+      throw new Error("Enter the 16-letter Google app password. Do not use your regular Google password.");
+  }
+  const old = existingAccount(input.email, input.provider);
   const id = old?.id || randomUUID();
   const credentials = {
     ...input,
     ...(input.provider === "imap" ? {} : presets[input.provider]),
+    username: input.provider === "imap" ? input.username : input.email,
   };
   if (!credentials.imapHost || !credentials.smtpHost)
     throw new Error("Enter both IMAP and SMTP server names.");
@@ -300,7 +308,10 @@ app.post("/api/accounts/imap", async (req, res) => {
     credentials,
   };
   await validateImap(a);
-  put("account", id, a);
+  // Validation awaits the network; another connection can finish meanwhile.
+  const current = existingAccount(input.email, input.provider);
+  a.id = current?.id || id;
+  put("account", a.id, a);
   res.json({ ok: true });
 });
 app.delete("/api/accounts/:id", (req, res) => {
