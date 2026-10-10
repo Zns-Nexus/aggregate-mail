@@ -4,7 +4,7 @@ import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { z } from "zod";
-import type { Mail, Provider } from "../shared/types.js";
+import type { GmailLabel, Mail, Provider } from "../shared/types.js";
 import type { StoredAccount } from "./store.js";
 
 export const presets = {
@@ -38,6 +38,35 @@ function gmail(a: StoredAccount) {
   const auth = oauth();
   auth.setCredentials({ refresh_token: a.credentials.refreshToken });
   return google.gmail({ version: "v1", auth });
+}
+
+export async function listGmailLabels(a: StoredAccount): Promise<GmailLabel[]> {
+  const result = await gmail(a).users.labels.list({ userId: "me" });
+  return (result.data.labels || []).flatMap((label) =>
+    label.id && label.name && (label.type === "user" || label.type === "system")
+      ? [{ id: label.id, accountId: a.id, name: label.name, type: label.type }]
+      : [],
+  );
+}
+
+export async function updateGmailLabels(a: StoredAccount, m: Mail, labelIds: string[], customIds: string[]) {
+  const api = gmail(a);
+  const current = await api.users.messages.get({
+    userId: "me", id: m.remoteId, format: "metadata", fields: "labelIds",
+  });
+  const removeLabelIds = (current.data.labelIds || []).filter((id) => customIds.includes(id) && !labelIds.includes(id));
+  if (removeLabelIds.length > 100) throw new Error("Too many labels to remove at once. Update this message in Gmail.");
+  const result = await api.users.messages.modify({
+    userId: "me",
+    id: m.remoteId,
+    requestBody: {
+      addLabelIds: labelIds,
+      // Remove only this account's custom labels, including labels absent from an older cache.
+      removeLabelIds,
+    },
+  });
+  if (result.data.id !== m.remoteId) throw new Error("Gmail did not confirm the labels. Sync and try again.");
+  return result.data.labelIds || [];
 }
 function imap(a: StoredAccount) {
   return new ImapFlow({
@@ -143,6 +172,7 @@ export const providers: Record<
                 return {
                   ...previous,
                   unread,
+                  labelIds: result.data.labelIds || [],
                   threadId: result.data.threadId || undefined,
                 };
               return {
@@ -154,6 +184,7 @@ export const providers: Record<
                   Number(result.data.internalDate),
                 )),
                 threadId: result.data.threadId || undefined,
+                labelIds: result.data.labelIds || [],
               };
             }),
           );
@@ -249,10 +280,21 @@ function imapProvider() {
       const client = imap(a);
       try {
         await client.connect();
-        const lock = await client.getMailboxLock("INBOX");
+        const mailbox = m.archived && action === "read"
+          ? (await client.list()).find((folder) => folder.specialUse === "\\Archive")?.path || "Archive"
+          : "INBOX";
+        const lock = await client.getMailboxLock(mailbox);
         try {
-          const [validity, uid] = m.remoteId.split(":");
-          if (
+          const [validity, originalUid] = m.remoteId.split(":");
+          let uid = originalUid;
+          if (m.archived && action === "read") {
+            if (!m.messageId) throw new Error("This archived email has no Message-ID. Mark it read in your provider.");
+            // Moving IMAP mail changes its UID; never reuse the old inbox UID in the archive.
+            const matches = await client.search({ header: { "message-id": m.messageId } }, { uid: true });
+            if (!matches || matches.length !== 1)
+              throw new Error("Could not identify this archived email. Mark it read in your provider.");
+            uid = String(matches[0]);
+          } else if (
             !client.mailbox ||
             String(client.mailbox.uidValidity) !== validity
           )

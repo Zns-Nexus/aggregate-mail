@@ -895,6 +895,55 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 
 /* Sender context: 280px side panel. */
+.label-filter {
+  width: 140px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.label-filter .dropdown-trigger {
+  border: 0;
+  padding: 0;
+  height: 28px;
+  overflow: hidden;
+  color: #fff;
+}
+.label-filter .dropdown-menu {
+  width: 240px;
+  max-height: 320px;
+  overflow: auto;
+}
+.label-filter .dropdown-menu li {
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.label-filter .dropdown-menu li.active {
+  background: transparent;
+  text-decoration: underline;
+}
+.message-labels {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin: 16px 0;
+  color: #fff;
+}
+.message-labels > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.label-options {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.label-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.label-options input { flex-shrink: 0; }
 .context {
   width: 280px;
   flex-shrink: 0;

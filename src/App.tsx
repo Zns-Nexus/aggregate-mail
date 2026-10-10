@@ -23,10 +23,12 @@ import {
   Settings,
   Sms as MailIcon,
 } from "iconsax-react";
+import { customLabels, densityShortcut, matchesLabel, markReadOnOpen, selectedMail } from "./mail-ui";
 import { jevProviders, logoDomain } from "../shared/types";
 import type {
   Account,
   Category,
+  GmailLabel,
   JevProvider,
   LogoSummary,
   Mail,
@@ -51,6 +53,7 @@ type Compose = {
 const empty: State = {
   accounts: [],
   messages: [],
+  labels: [],
   rules: [],
   googleConfigured: false,
   googleClientId: null,
@@ -307,6 +310,8 @@ export function App() {
   const [state, setState] = useState(empty);
   const [view, setView] = useState<View>("important");
   const [accountFilter, setAccountFilter] = useState("all");
+  const [labelFilter, setLabelFilter] = useState("all");
+  const [labelMail, setLabelMail] = useState<Mail | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -377,6 +382,8 @@ export function App() {
   const [loaded, setLoaded] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const csrf = useRef("");
+  const pendingReads = useRef(new Set<string>());
+  const loadRevision = useRef(0);
   const syncLock = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const api = useCallback(
@@ -396,8 +403,10 @@ export function App() {
     [],
   );
   const reload = useCallback(async () => {
+    const revision = ++loadRevision.current;
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
+    if (revision !== loadRevision.current) return data;
     setState(data);
     setLoaded(true);
     return data;
@@ -472,6 +481,12 @@ export function App() {
     setOpened(false);
     setSelectedId(null);
   };
+  const labels = state.labels.filter((label) =>
+    accountFilter === "all" || label.accountId === accountFilter);
+  const activeLabel = labels.find((label) => `${label.accountId}:${label.id}` === labelFilter);
+  useEffect(() => {
+    if (labelFilter !== "all" && !activeLabel) setLabelFilter("all");
+  }, [labelFilter, activeLabel]);
   const now = Date.now();
   const isSnoozed = (m: Mail) =>
     m.snoozedUntil !== null && m.snoozedUntil > now;
@@ -479,6 +494,7 @@ export function App() {
     .filter((m) => {
       if (accountFilter !== "all" && m.accountId !== accountFilter)
         return false;
+      if (!matchesLabel(m, activeLabel)) return false;
       if (
         view === "archive"
           ? !m.archived
@@ -492,7 +508,7 @@ export function App() {
         .includes(query.toLowerCase());
     })
     .sort((a, b) => b.date - a.date);
-  const selected = filtered.find((m) => m.id === selectedId) || filtered[0];
+  const selected = selectedMail(state.messages, filtered, selectedId, opened);
   const accountOf = (m: Mail) =>
     state.accounts.find((a) => a.id === m.accountId);
   const selectedAccount = selected && accountOf(selected);
@@ -502,10 +518,11 @@ export function App() {
         !m.archived &&
         !isSnoozed(m) &&
         m.category === category &&
+        matchesLabel(m, activeLabel) &&
         (accountFilter === "all" || accountFilter === m.accountId),
     ).length;
   const snoozedCount = state.messages.filter(
-    (m) => !m.archived && isSnoozed(m),
+    (m) => !m.archived && isSnoozed(m) && matchesLabel(m, activeLabel),
   ).length;
   const perform = async (task: () => Promise<unknown>, success?: string) => {
     if (busy) return;
@@ -537,13 +554,20 @@ export function App() {
     setRecent((ids) =>
       [mail.id, ...ids.filter((id) => id !== mail.id)].slice(0, 6),
     );
-    if (mail.unread && !mail.archived) void changeMessage(mail, "read");
+    void markReadOnOpen(mail, pendingReads.current, async () => {
+      await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "read" });
+      await reload();
+    }).catch((error: unknown) => setNotice(
+      error instanceof Error ? `${error.message} Open the email again to retry marking it read.`
+        : "Could not mark this email as read. Open it again to retry.",
+    ));
   };
   const jumpTo = (mail: Mail) => {
     setView(
       mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
     );
     setAccountFilter("all");
+    setLabelFilter("all");
     setQuery("");
     openMail(mail);
   };
@@ -589,16 +613,23 @@ export function App() {
           ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
       )
         return;
+      const nextDensity = densityShortcut(event);
+      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail) {
+        event.preventDefault();
+        setDensity(nextDensity);
+        return;
+      }
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === "Escape") {
         setOpened(false);
         setTeach(null);
         setSnooze(null);
         setShortcuts(false);
+        setLabelMail(null);
         setSettings(false);
         return;
       }
-      if (compose || teach || snooze || shortcuts) return;
+      if (compose || teach || snooze || shortcuts || labelMail) return;
       const inbox = !settings;
       if (event.key === "/") {
         event.preventDefault();
@@ -672,7 +703,7 @@ export function App() {
   const paneKey =
     opened && selected
       ? `mail:${selected.id}`
-      : `list:${view}:${accountFilter}`;
+      : `list:${view}:${accountFilter}:${labelFilter}`;
   const pane = useRef({ key: paneKey, motion });
   if (pane.current.key !== paneKey)
     pane.current = {
@@ -821,6 +852,27 @@ export function App() {
                 ))}
               </nav>
             )}
+            {!settings && labels.length > 0 && (
+              <div className="label-filter">
+                <Dropdown
+                  label="Filter by Gmail label"
+                  value={labelFilter}
+                  options={[
+                    { value: "all", label: "All labels" },
+                    ...labels.map((label) => {
+                      const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
+                      const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
+                      return { value: `${label.accountId}:${label.id}`, label: privacy ? hideAddresses(name) : name };
+                    }),
+                  ]}
+                  onChange={(value) => {
+                    setLabelFilter(value);
+                    setSelectedId(null);
+                    setOpened(false);
+                  }}
+                />
+              </div>
+            )}
             {!settings &&
               (searching ? (
                 <div className="search" role="search">
@@ -948,6 +1000,14 @@ export function App() {
                       </div>
                       <time>{new Date(selected.date).toLocaleString()}</time>
                     </div>
+                    {selectedAccount?.provider === "gmail" && (
+                      <div className="message-labels">
+                        <span>
+                          <Redact text={customLabels(selected, state.labels).filter((label) => selected.labelIds?.includes(label.id)).map((label) => label.name).join(", ") || "No labels"} />
+                        </span>
+                        <button className="link" disabled={busy || syncing} onClick={() => setLabelMail(selected)}>Edit labels</button>
+                      </div>
+                    )}
                     <div className="message-body">
                       <MessageBody
                         text={
@@ -1121,6 +1181,20 @@ export function App() {
             </aside>
           </main>
         )}
+        {labelMail && (
+          <Dialog title="Gmail labels" onClose={() => { if (!busy) setLabelMail(null); }}>
+            <LabelForm
+              key={labelMail.id}
+              mail={labelMail}
+              labels={customLabels(labelMail, state.labels)}
+              busy={busy || syncing}
+              onSave={(labelIds) => void perform(async () => {
+                await api(`/messages/${encodeURIComponent(labelMail.id)}`, "PATCH", { action: "labels", labelIds });
+                setLabelMail(null);
+              }, "Labels updated.")}
+            />
+          </Dialog>
+        )}
         {compose && (
           <ComposePanel
             draft={compose}
@@ -1235,6 +1309,7 @@ export function App() {
                 ["s", "Snooze"],
                 ["m", "Teach sorting"],
                 ["d", "Comfortable / Compact"],
+                ["Ctrl + / Ctrl −", "Less / more compact"],
                 ["p", "Blur email addresses on / off"],
                 [",", "Settings"],
                 ["?", "Keyboard shortcuts"],
@@ -1249,6 +1324,40 @@ export function App() {
         )}
       </div>
     </PrivacyContext.Provider>
+  );
+}
+
+export function LabelForm({ mail, labels, busy, onSave }: {
+  mail: Mail;
+  labels: GmailLabel[];
+  busy: boolean;
+  onSave: (labelIds: string[]) => void;
+}) {
+  const [selected, setSelected] = useState(() => new Set(mail.labelIds || []));
+  return (
+    <form onSubmit={(event) => {
+      event.preventDefault();
+      onSave(labels.filter((label) => selected.has(label.id)).map((label) => label.id));
+    }}>
+      <div className="label-options">
+        {labels.length ? labels.map((label) => (
+          <label key={label.id}>
+            <input type="checkbox" checked={selected.has(label.id)} disabled={busy} onChange={(event) => {
+              setSelected((current) => {
+                const next = new Set(current);
+                if (event.target.checked) next.add(label.id);
+                else next.delete(label.id);
+                return next;
+              });
+            }} />
+            <Redact text={label.name} />
+          </label>
+        )) : <p className="note">Create labels in Gmail, then sync this account.</p>}
+      </div>
+      <div className="form-actions">
+        <button className="button" disabled={busy || !labels.length}>Save labels</button>
+      </div>
+    </form>
   );
 }
 
@@ -1779,6 +1888,9 @@ function Dropdown<T extends string>({
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
+    if (open) document.getElementById(`${id}-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [open, active, id]);
+  useEffect(() => {
     if (!open) return;
     setActive(value);
     const away = (event: MouseEvent) => {
@@ -1802,9 +1914,12 @@ function Dropdown<T extends string>({
         type="button"
         ref={trigger}
         className="dropdown-trigger"
+        role="combobox"
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        aria-activedescendant={open ? `${id}-${active}` : undefined}
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {
@@ -1830,9 +1945,9 @@ function Dropdown<T extends string>({
       {open && (
         <ul
           className="dropdown-menu"
+          id={id}
           role="listbox"
-          aria-labelledby={id}
-          aria-activedescendant={`${id}-${active}`}
+          aria-label={label}
         >
           {options.map((option) => (
             <li

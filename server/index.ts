@@ -8,11 +8,12 @@ import express from "express";
 import { google } from "googleapis";
 import { z } from "zod";
 import { all, put, remove, account, type StoredAccount } from "./store.js";
-import { oauth, providers, presets, validateImap } from "./providers.js";
+import { oauth, providers, presets, validateImap, listGmailLabels } from "./providers.js";
 import {
   sendMail,
   updateMessage,
   messageActionSchema,
+  runMailWork,
 } from "./mail-actions.js";
 import { mountMcp, authorizeMcp } from "./mcp.js";
 import { classify, sortMail, SortingUnavailable, type Sorting } from "./sorting.js";
@@ -67,7 +68,8 @@ app.use("/api", (req, res, next) => {
     syncing &&
     !["GET", "HEAD"].includes(req.method) &&
     !req.path.startsWith("/send") &&
-    req.path !== "/mcp"
+    req.path !== "/mcp" &&
+    !(req.method === "PATCH" && /^\/messages\/[^/]+$/.test(req.path) && req.body?.action === "read")
   )
     return res
       .status(409)
@@ -79,6 +81,7 @@ app.get("/api/state", (_req, res) => {
     csrf,
     accounts: all("account").map(({ credentials: _credentials, ...a }) => a),
     messages: all("mail"),
+    labels: all("label"),
     rules: all("rule"),
     googleConfigured: !!(
       process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
@@ -308,6 +311,8 @@ app.delete("/api/accounts/:id", (req, res) => {
   remove("account", req.params.id);
   for (const m of all("mail").filter((m) => m.accountId === req.params.id))
     remove("mail", m.id);
+  for (const label of all("label").filter((label) => label.accountId === req.params.id))
+    remove("label", `${label.accountId}:${label.id}`);
   res.json({ ok: true });
 });
 app.post("/api/sync", async (_req, res) => {
@@ -316,71 +321,81 @@ app.post("/api/sync", async (_req, res) => {
   syncing = true;
   const errors: string[] = [];
   try {
-    for (const a of all("account")) {
-      try {
-        const existing = new Map(
-          all("mail")
-            .filter((m) => m.accountId === a.id)
-            .map((m) => [m.id, m]),
-        );
-        const incoming = await providers[a.provider].list(a, existing);
-        const rules = all("rule");
-        const fresh = incoming.filter((m) => !existing.has(m.id));
-        const judged = new Map<string, Sorting>();
-        if (
-          fresh.length &&
-          (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)
-        ) {
-          // One judgement per message, in parallel: a first sync has hundreds.
-          let cursor = 0;
-          let stopped = false;
-          await Promise.all(
-            Array.from({ length: Math.min(6, fresh.length) }, async () => {
-              while (cursor < fresh.length && !stopped) {
-                const m = fresh[cursor++];
-                try {
-                  judged.set(m.id, await classify(m, rules));
-                } catch (error) {
-                  if (stopped) return;
-                  stopped = true;
-                  errors.push(
-                    error instanceof SortingUnavailable
-                      ? error.message
-                      : "AI sorting unavailable. Mail was synced using local sorting.",
-                  );
-                }
-              }
-            }),
+    await runMailWork(async () => {
+      for (const a of all("account")) {
+        try {
+          if (a.provider === "gmail") {
+            const labels = await listGmailLabels(a);
+            for (const label of labels) put("label", `${a.id}:${label.id}`, label);
+            const ids = new Set(labels.map((label) => label.id));
+            for (const label of all("label"))
+              if (label.accountId === a.id && !ids.has(label.id))
+                remove("label", `${a.id}:${label.id}`);
+          }
+          const existing = new Map(
+            all("mail")
+              .filter((m) => m.accountId === a.id)
+              .map((m) => [m.id, m]),
           );
+          const incoming = await providers[a.provider].list(a, existing);
+          const rules = all("rule");
+          const fresh = incoming.filter((m) => !existing.has(m.id));
+          const judged = new Map<string, Sorting>();
+          if (
+            fresh.length &&
+            (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)
+          ) {
+            // One judgement per message, in parallel: a first sync has hundreds.
+            let cursor = 0;
+            let stopped = false;
+            await Promise.all(
+              Array.from({ length: Math.min(6, fresh.length) }, async () => {
+                while (cursor < fresh.length && !stopped) {
+                  const m = fresh[cursor++];
+                  try {
+                    judged.set(m.id, await classify(m, rules));
+                  } catch (error) {
+                    if (stopped) return;
+                    stopped = true;
+                    errors.push(
+                      error instanceof SortingUnavailable
+                        ? error.message
+                        : "AI sorting unavailable. Mail was synced using local sorting.",
+                    );
+                  }
+                }
+              }),
+            );
+          }
+          for (const m of incoming) {
+            const previous = existing.get(m.id);
+            const sorting = previous
+              ? {
+                  category: previous.category,
+                  relevance: previous.relevance,
+                  reason: previous.reason,
+                }
+              : (judged.get(m.id) ?? sortMail(m, rules));
+            put("mail", m.id, {
+              ...m,
+              ...sorting,
+              archived: false,
+              snoozedUntil: previous?.snoozedUntil || null,
+            });
+          }
+          const ids = new Set(incoming.map((m) => m.id));
+          for (const m of existing.values())
+            if (!m.archived && !ids.has(m.id))
+              put("mail", m.id, { ...m, archived: true, labelIds: m.labelIds?.filter((id) => id !== "INBOX") });
+          put("account", a.id, { ...a, error: undefined });
+        } catch {
+          const error = `${a.email}: sync failed. Check your connection or reconnect the account.`;
+          errors.push(error);
+          put("account", a.id, { ...a, error });
         }
-        for (const m of incoming) {
-          const previous = existing.get(m.id);
-          const sorting = previous
-            ? {
-                category: previous.category,
-                relevance: previous.relevance,
-                reason: previous.reason,
-              }
-            : (judged.get(m.id) ?? sortMail(m, rules));
-          put("mail", m.id, {
-            ...m,
-            ...sorting,
-            archived: false,
-            snoozedUntil: previous?.snoozedUntil || null,
-          });
-        }
-        const ids = new Set(incoming.map((m) => m.id));
-        for (const m of existing.values())
-          if (!m.archived && !ids.has(m.id))
-            put("mail", m.id, { ...m, archived: true });
-        put("account", a.id, { ...a, error: undefined });
-      } catch {
-        const error = `${a.email}: sync failed. Check your connection or reconnect the account.`;
-        errors.push(error);
-        put("account", a.id, { ...a, error });
       }
-    }
-    put("meta", "sync", { lastSync: Date.now() });
+      put("meta", "sync", { lastSync: Date.now() });
+    });
     res.json({ errors });
   } finally {
     syncing = false;
