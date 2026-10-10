@@ -15,4 +15,4 @@ For tagged builds, require the tag to match the committed release version and re
 
 ## Consequences
 
-Installer filenames and application versions identify each CI candidate without repository write permission. Local production builds and packaging use the committed version; release version bumps remain explicit. All platform jobs in one run use the same application version. A rerun changes the application version, macOS bundle build version and Windows file version.
+Installer filenames and application versions identify each CI candidate without repository write permission. Local production builds and packaging use the committed version; release version bumps remain explicit. All platform jobs in one run attempt use the same application version. A rerun changes the application version, macOS bundle build version and Windows file version. Partial reruns replace rebuilt platform artifacts and preserve earlier successful artifacts.

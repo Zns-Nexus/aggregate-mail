@@ -48,7 +48,7 @@ Keep credentials, personal contact details, absolute machine paths, private host
 | macOS | Intel x64 | `.dmg` | `macos-15-intel` |
 | Linux | x64 | `.AppImage` | `ubuntu-24.04` |
 
-Download `installer-<platform>` from the workflow run's Artifacts section. Each artifact expires after one day. Missing installer files fail the job. Superseded runs are canceled, and each job has a 20-minute limit.
+Download `installer-<platform>` from the workflow run's Artifacts section. Each artifact expires after one day. Reruns replace artifacts for rebuilt platforms; successful platform jobs that are not rerun retain their earlier artifacts. Missing installer files fail the job. Superseded runs are canceled, and each job has a 20-minute limit.
 
 [The build-version step](../scripts/set-build-version.mjs) gives non-tag runs the version `<release>-ci.<GITHUB_RUN_ID>.<GITHUB_RUN_ATTEMPT>`. It updates `package.json` and both root lockfile versions only in the runner checkout. Each new run or rerun has a distinct application version and installer filename. The macOS bundle build version and Windows file version use the workflow run number and attempt. Tagged builds keep the exact release version and reject a mismatched tag. Bump and commit the source release version before each new release tag. See [ADR 0004](adr/0004-ci-build-versions.md).
 

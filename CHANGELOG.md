@@ -3,7 +3,7 @@
 ## 0.1.3
 
 - Add cross-platform CI and version-tag releases for Windows x64, macOS Apple silicon and Intel, and Linux x64 installers. Retain CI artifacts for one day and attach installer checksums to releases.
-- Give each CI run and rerun a distinct application version and installer filename. Keep tagged releases at the matching release version.
+- Give each CI run and rerun a distinct application version and installer filename. Replace rebuilt platform artifacts on reruns. Keep tagged releases at the matching release version.
 - Add project agent instructions and contributor guidelines with repository links, verification commands and mail privacy safeguards.
 - Add unsigned macOS DMG and ZIP packaging with a macOS icon derived from the existing artwork. The Windows installer command is unchanged.
 - Add native macOS menus and spacing for window controls. Keep the mail service running when a user cancels quitting with an unsent draft.
