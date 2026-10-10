@@ -74,7 +74,7 @@ export function createMcpServer(
   assertNotSyncing: () => void,
   changed: () => void,
 ) {
-  const server = new McpServer({ name: "aggregate-mail", version: "0.1.0" });
+  const server = new McpServer({ name: "emc2", version: "0.1.0" });
   const safe = (run: () => unknown | Promise<unknown>) => async () => {
     try {
       return json(await run());
@@ -186,7 +186,7 @@ export function createMcpServer(
         return json(
           {
             error:
-              "Sending replies is disabled. Enable Allow sending replies in Aggregate Mail Settings, MCP.",
+              "Sending replies is disabled. Enable Allow sending replies in Emc² Settings, MCP.",
           },
           true,
         );

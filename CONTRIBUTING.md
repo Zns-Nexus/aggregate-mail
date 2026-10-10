@@ -1,4 +1,4 @@
-# Contributing to Aggregate Mail
+# Contributing to Emc²
 
 Keep each contribution focused on one problem. Read [PRODUCT.md](PRODUCT.md)
 for scope, [DESIGN.md](DESIGN.md) for interface behavior and

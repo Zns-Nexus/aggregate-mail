@@ -57,7 +57,7 @@ app.use("/api", (req, res, next) => {
   )
     return res
       .status(403)
-      .json({ error: "Open this inbox in Aggregate Mail." });
+      .json({ error: "Open this inbox in Emc²." });
   if (
     !["GET", "HEAD"].includes(req.method) &&
     req.headers["x-csrf-token"] !== csrf
@@ -175,7 +175,7 @@ app.get("/api/oauth/google", (_req, res) => {
       return res
         .type("text")
         .send(
-          "Save your Google client ID and secret in Aggregate Mail Settings, then try again.",
+          "Save your Google client ID and secret in Emc² Settings, then try again.",
         );
     return res.redirect(
       `${appUrl}/?error=${encodeURIComponent("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env and restart the server.")}`,
@@ -244,7 +244,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
       res
         .type("text")
         .send(
-          "Account connected. You can close this tab and return to Aggregate Mail.",
+          "Account connected. You can close this tab and return to Emc².",
         );
     } else res.redirect(`${appUrl}/?connected=1`);
   } catch (error) {
@@ -255,7 +255,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
       res
         .status(400)
         .type("text")
-        .send(`${message} Return to Aggregate Mail to try again.`);
+        .send(`${message} Return to Emc² to try again.`);
       return;
     }
     res.redirect(
