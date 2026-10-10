@@ -174,7 +174,7 @@ input[type="checkbox"][role="switch"]:disabled {
   overflow: hidden;
 }
 
-/* Top bar: 48px, matching the native caption overlay height. */
+/* Top bar: 48px, the whole of the window chrome now that the frame is hidden. */
 .topbar {
   height: 48px;
   flex-shrink: 0;
@@ -185,7 +185,6 @@ input[type="checkbox"][role="switch"]:disabled {
   border-bottom: 1px solid var(--line);
 }
 .desktop .topbar {
-  padding-right: 150px;
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -195,6 +194,39 @@ input[type="checkbox"][role="switch"]:disabled {
 .desktop[data-platform="darwin"] .topbar {
   padding-left: 96px;
   padding-right: 16px;
+}
+.traffic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+.traffic button {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: default;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  transition: background 140ms var(--ease-out);
+}
+.traffic .close {
+  background: #ff5f57;
+}
+.traffic .minimize {
+  background: #febc2e;
+}
+.traffic .zoom {
+  background: #28c840;
+}
+/* macOS greys the lights while the window is in the background. */
+.traffic.inactive button {
+  background: #3a3a3a;
+}
+/* On the right, the close light takes the corner. */
+.traffic.right {
+  flex-direction: row-reverse;
 }
 .tabs {
   position: relative;
@@ -986,10 +1018,15 @@ input[type="checkbox"][role="switch"]:disabled {
   max-width: 640px;
   margin: 0 auto;
 }
+/* Grouped rows in rounded panels, the way macOS settings stack them. */
+.settings-column > section {
+  padding: 14px 18px 18px;
+  background: #121212;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
 .settings-column > section + section {
-  margin-top: 36px;
-  padding-top: 32px;
-  border-top: 1px solid var(--line);
+  margin-top: 14px;
 }
 .settings h1 {
   display: flex;
@@ -1314,7 +1351,7 @@ input[type="checkbox"][role="switch"]:disabled {
 .shortcut-list kbd {
   color: var(--text);
 }
-.mcp-toggle {
+.setting-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
