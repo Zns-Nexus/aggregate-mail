@@ -80,3 +80,6 @@ export function account(id: string) {
   if (!found) throw new Error("Account not found.");
   return found;
 }
+export function closeStore() {
+  db.close();
+}

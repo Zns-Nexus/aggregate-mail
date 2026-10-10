@@ -32,6 +32,11 @@ entered details available for correction and retry.
 test-only `happy-dom` dependency. It exercises the desktop callback, pending
 submissions, retained input, inline errors and retry without a browser or accounts.
 
+The server onboarding fixture stops its HTTP server and calls `closeStore()`
+before removing the temporary directory. Windows requires the SQLite handle
+to be closed before its files can be deleted. The application does not call
+this test cleanup helper.
+
 Gmail supports two separate transports: `gmail` uses the existing Gmail API
 OAuth flow; `gmail-imap` uses `imap.gmail.com:993` and `smtp.gmail.com:465` over
 TLS. The latter accepts personal Gmail and Workspace addresses when Google

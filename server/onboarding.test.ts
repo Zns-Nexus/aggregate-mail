@@ -50,7 +50,7 @@ test("account onboarding keeps transport identities and Gmail mailbox semantics"
   let googleEmail = "user@workspace.example";
   t.mock.method(google, "gmail", () => ({ users: { getProfile: async () => ({ data: { emailAddress: googleEmail } }) } }), {});
   const { startServer } = await import("./index.js");
-  const { all, put } = await import("./store.js");
+  const { all, put, closeStore } = await import("./store.js");
   const { providers } = await import("./providers.js");
   const server = await startServer(0);
   try {
@@ -175,6 +175,7 @@ test("account onboarding keeps transport identities and Gmail mailbox semantics"
     });
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    closeStore();
     rmSync(directory, { recursive: true, force: true });
   }
 });
