@@ -4,7 +4,7 @@ An installable desktop email client for Windows, with a macOS build target, base
 
 ## Install
 
-Download the newest installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases) — `Aggregate-Mail-Setup-0.1.2.exe`, about 127 MB. It installs for the current user and creates Start menu and desktop shortcuts. Launch Aggregate Mail and connect accounts in Settings.
+Download the newest published Windows setup installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases). The next release version is `0.1.3`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Aggregate Mail and connect accounts in Settings.
 
 To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Aggregate Mail.exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
@@ -17,9 +17,9 @@ npm ci
 npm run package:mac
 ```
 
-The command creates `release/Aggregate-Mail-0.1.2-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Aggregate Mail to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
+The command creates `release/Aggregate-Mail-0.1.3-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Aggregate Mail to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
 
-These packages are unsigned and not notarized. Packaging explicitly skips signing, certificate discovery, and notarization. Gatekeeper may block downloaded copies; a local startup check does not prove downloaded-app acceptance. No macOS download is published by these commands, and the existing release workflow remains Windows-only.
+These packages are unsigned and not notarized. Packaging explicitly skips signing, certificate discovery, and notarization. Gatekeeper may block downloaded copies; a local startup check does not prove downloaded-app acceptance. Local packaging does not publish downloads. The version-tag release workflow publishes both macOS architectures alongside Windows and Linux.
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 
@@ -137,6 +137,16 @@ npm run dev
 
 `npm run dev` launches the desktop app with React Fast Refresh and live CSS updates. Close the app to stop its development server. Restart this command after changing desktop or backend code. UI changes that require a full reload can reset an unsent draft. OAuth keeps the callback address above in development. `npm start` opens the last production build, created with `npm run build`. `npm run package` creates the Windows installer. `npm run check:desktop` checks production startup, database access and API isolation without driving the UI; `npm run dev -- --check-startup` also checks the hot reload client and development API proxy. `npm run dev:web` retains the earlier browser development target; it is not needed to use the app.
 
+## CI
+
+GitHub Actions runs tests, TypeScript checks, production builds and installer packaging on every pull request and push to `main`. Windows and macOS also run an isolated production-startup check before packaging. Linux runtime behavior is not checked by this workflow. You can also run `CI` manually from the Actions tab.
+
+Download the run's `installer-windows-x64` artifact for the Windows setup `.exe`, `installer-macos-arm64` or `installer-macos-x64` for a macOS `.dmg`, or `installer-linux-x64` for a Linux `.AppImage`. Artifacts expire after one day. These unsigned packages are build candidates; packaging does not verify native startup or account operations. macOS candidates are not notarized.
+
+Each CI run uses a distinct version such as `0.1.3-ci.123456.1`, where the last two numbers identify the workflow run and attempt. Reruns increment the attempt. This version appears in the application metadata and installer filename. Tagged releases retain the matching `package.json` version. Bump and commit that release version before creating each new release tag.
+
+This public repository uses free standard GitHub-hosted runners. Excess artifact storage above the owner's shared allowance costs $0.25 USD per GB-month under [GitHub's billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions). One-day retention, npm caching, job timeouts and cancellation of superseded runs keep usage low. See [the CI contract](docs/KB.md#ci).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, verification and pull requests.
@@ -144,7 +154,9 @@ AI contributors must also read the project instructions in [AGENTS.md](AGENTS.md
 
 ## Releasing
 
-The source lives on GitCafe, which hosts no release downloads and runs no CI, so installers ship from the GitHub mirror. Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, packages and attaches the installer to a GitHub release. To cut the same build locally:
+GitHub hosts CI and release downloads. Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls the CI build jobs and attaches the Windows setup installer, both macOS DMGs, the Linux AppImage and `SHA256SUMS.txt` to the GitHub release after all jobs pass. The tag must match `package.json`. Manual workflow runs create build artifacts; only version-tag runs publish releases.
+
+To cut a Windows build locally:
 
 ```powershell
 node scripts/release.mjs --patch
