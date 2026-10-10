@@ -436,7 +436,7 @@ export function App() {
       window.desktop?.onAccountConnected((error) => {
         if (error) setNotice(error);
         else {
-          setConnecting(null);
+          setConnecting(current => current === "choose" ? null : current);
           void reload()
             .then(() => sync())
             .catch((error) => setNotice(error.message));

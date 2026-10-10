@@ -23,6 +23,15 @@ enter an email address and provider-issued app password. Only custom IMAP
 requires manual hosts and ports. Connection errors stay in the dialog so users
 can correct their input.
 
+Google sign-in completion dismisses the provider chooser only. It preserves
+another provider's open form and any pending connection check. A pending check
+blocks duplicate submissions and form dismissal; a failed check leaves the
+entered details available for correction and retry.
+
+`src/onboarding.test.tsx` mounts the React forms in a synthetic DOM with the
+test-only `happy-dom` dependency. It exercises the desktop callback, pending
+submissions, retained input, inline errors and retry without a browser or accounts.
+
 Gmail supports two separate transports: `gmail` uses the existing Gmail API
 OAuth flow; `gmail-imap` uses `imap.gmail.com:993` and `smtp.gmail.com:465` over
 TLS. The latter accepts personal Gmail and Workspace addresses when Google
