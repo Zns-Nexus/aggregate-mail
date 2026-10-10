@@ -55,6 +55,8 @@ Quiet and flat. Ryan Vogel's layout at a readable size: near-black background, h
 
 ## Typography
 
+Client action icons use local outline SVGs with a consistent 24px grid, 1.75px stroke and rounded ends. Close uses a plain cross; Settings uses sliders. Gmail uses a multicolor vector mark, and custom IMAP uses an outline envelope without a colored tile. Button labels and keyboard behavior stay unchanged.
+
 Segoe UI Variable on Windows, SF Pro on macOS. 13px throughout the inbox, 15px sender name and Settings headings, 20px message heading, 14px message body at 1.7 line height.
 
 ## Behavior

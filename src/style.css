@@ -404,8 +404,14 @@ input[type="checkbox"][role="switch"]:disabled {
   width: 68%;
   height: 68%;
 }
-.provider-icon.gmail {
-  background: #e5484d;
+.provider-icon.gmail,
+.provider-icon.imap {
+  background: transparent;
+}
+.provider-icon.gmail svg,
+.provider-icon.imap svg {
+  width: 100%;
+  height: 100%;
 }
 .provider-icon.icloud {
   background: #3e9cf5;

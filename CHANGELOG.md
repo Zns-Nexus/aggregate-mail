@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Replace client action icons with consistent rounded outlines and use a vector Gmail mark in account filters, Settings and sender badges.
+
 - Sync Gmail labels, filter cached mail by label, and edit existing custom labels on opened messages.
 - Add Ctrl+Plus and Ctrl+Minus shortcuts for comfortable and compact inbox density.
 - Mark opened unread mail read without dropping requests during other actions or sync; include archived Gmail mail and safely locate archived IMAP mail by Message-ID, with retryable errors.

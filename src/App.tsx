@@ -12,17 +12,18 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ArrowDown2,
+  ChevronDown,
   ArrowRight,
   Check,
-  CloseCircle,
+  Close,
   Cloud,
+  Gmail,
   Eye,
-  EyeSlash,
-  SearchNormal1,
+  EyeOff,
+  Search,
   Settings,
-  Sms as MailIcon,
-} from "iconsax-react";
+  Mail as MailIcon,
+} from "./icons";
 import { customLabels, densityShortcut, matchesLabel, markReadOnOpen, selectedMail } from "./mail-ui";
 import { jevProviders, logoDomain } from "../shared/types";
 import type {
@@ -262,13 +263,15 @@ export function MessageBody({ text }: { text: string }) {
 function ProviderIcon({ provider }: { provider: Provider }) {
   return (
     <span className={`provider-icon ${provider}`} aria-hidden="true">
-      {provider === "icloud" ? (
-        <Cloud color="currentColor" variant="Bold" />
+      {provider === "gmail" ? (
+        <Gmail />
+      ) : provider === "icloud" ? (
+        <Cloud />
       ) : provider === "imap" ? (
         <MailIcon color="currentColor" />
       ) : (
         <b>
-          {provider === "gmail" ? "M" : provider === "fastmail" ? "F" : "y!"}
+          {provider === "fastmail" ? "F" : "y!"}
         </b>
       )}
     </span>
@@ -876,7 +879,7 @@ export function App() {
             {!settings &&
               (searching ? (
                 <div className="search" role="search">
-                  <SearchNormal1 color="currentColor" size={14} />
+                  <Search color="currentColor" size={14} />
                   <input
                     ref={searchRef}
                     aria-label="Search all synced mail"
@@ -891,7 +894,7 @@ export function App() {
                     }}
                   />
                   <button aria-label="Close search" onClick={closeSearch}>
-                    <CloseCircle color="currentColor" size={13} />
+                    <Close color="currentColor" size={13} />
                   </button>
                 </div>
               ) : (
@@ -914,7 +917,7 @@ export function App() {
                     title="Search (/)"
                     onClick={showSearch}
                   >
-                    <SearchNormal1 color="currentColor" size={15} />
+                    <Search color="currentColor" size={15} />
                   </button>
                 </>
               ))}
@@ -929,7 +932,7 @@ export function App() {
               }
               onClick={togglePrivacy}
             >
-              {privacy ? <EyeSlash color="currentColor" size={15} /> : <Eye color="currentColor" size={15} />}
+              {privacy ? <EyeOff color="currentColor" size={15} /> : <Eye color="currentColor" size={15} />}
             </button>
             <button
               className="icon"
@@ -951,7 +954,7 @@ export function App() {
               aria-label="Dismiss notification"
               onClick={() => setNotice("")}
             >
-              <CloseCircle color="currentColor" size={12} />
+              <Close color="currentColor" size={12} />
             </button>
           </div>
         )}
@@ -1418,7 +1421,7 @@ function Dialog({
         <div className="dialog-title">
           <h2>{title}</h2>
           <button className="icon" aria-label="Close dialog" onClick={onClose}>
-            <CloseCircle color="currentColor" size={13} />
+            <Close color="currentColor" size={13} />
           </button>
         </div>
         {children}
@@ -1940,7 +1943,7 @@ function Dropdown<T extends string>({
         }}
       >
         {options.find((option) => option.value === value)?.label}
-        <ArrowDown2 color="currentColor" size={12} className={open ? "up" : undefined} />
+        <ChevronDown color="currentColor" size={12} className={open ? "up" : undefined} />
       </button>
       {open && (
         <ul
@@ -2317,7 +2320,7 @@ function McpSection({
           onClick={() => setOpen((value) => !value)}
         >
           {open ? "Hide options" : "Show options"}
-          <ArrowDown2 color="currentColor" size={12} className={open ? "up" : undefined} />
+          <ChevronDown color="currentColor" size={12} className={open ? "up" : undefined} />
         </button>
       </div>
       <p className="note">
