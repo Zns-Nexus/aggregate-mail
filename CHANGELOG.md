@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- Rename the application to Emc². Installers are published as `Emc²-0.1.4-win-x64.exe`, `Emc²-0.1.4-mac-arm64.dmg`, `Emc²-0.1.4-mac-x64.dmg` and `Emc²-0.1.4-linux-x64.AppImage`.
+- Carry an existing installation across the rename in one automatic step: the first launch under the new name moves `mail`, `settings.env` and `Local State` from the old app-data folder into the new one and marks the migration so it runs once. The old folder is left in place.
+- Rename the local MCP server to `emc2`, so existing `claude mcp add --transport http` registrations must use the new name.
+- Keep the Windows application id and the installer identity unchanged, so an installed copy is upgraded rather than installed alongside the old one.
+
 ## 0.1.3
 
 - Add cross-platform CI and version-tag releases for Windows x64, macOS Apple silicon and Intel, and Linux x64 installers. Retain CI artifacts for one day and attach installer checksums to releases.

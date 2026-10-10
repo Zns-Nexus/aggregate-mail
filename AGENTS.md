@@ -1,4 +1,4 @@
-# Aggregate Mail agent instructions
+# Emc² agent instructions
 
 These instructions apply to this repository. Follow higher-priority user and
 environment instructions. This file grants no release or credential authority.
@@ -16,7 +16,7 @@ environment instructions. This file grants no release or credential authority.
 
 ## Project map
 
-Aggregate Mail is a single-user Electron email client for Windows with an
+Emc² is a single-user Electron email client for Windows with an
 unsigned macOS build target. It uses React, strict TypeScript, Vite, a bundled
 Express mail service and encrypted SQLite storage. The installed application
 does not need a separate browser, terminal or Node installation.

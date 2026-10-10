@@ -20,9 +20,14 @@ import { DatabaseSync, backup } from "node:sqlite";
 import path from "node:path";
 import type { Server } from "node:http";
 import { isExternalLink, isLocalNavigation } from "./navigation.js";
+import { migrateLegacyUserData } from "./migrate.js";
 
-app.setName("Aggregate Mail");
+app.setName("Emc²");
 app.setAppUserModelId("dev.screen.aggregate-mail");
+migrateLegacyUserData({
+  appData: app.getPath("appData"),
+  target: app.getPath("userData"),
+});
 let window: BrowserWindow | null = null;
 let server: Server | undefined;
 const origin = "http://127.0.0.1:32145";
@@ -135,7 +140,7 @@ else {
       );
       localSession.setPermissionCheckHandler(() => false);
       window = new BrowserWindow({
-        title: "Aggregate Mail",
+        title: "Emc²",
         width: 1440,
         height: 900,
         minWidth: 900,
@@ -244,7 +249,7 @@ else {
         return;
       }
       dialog.showErrorBox(
-        "Aggregate Mail could not start",
+        "Emc² could not start",
         error instanceof Error ? error.message : "Unknown startup error.",
       );
       app.quit();

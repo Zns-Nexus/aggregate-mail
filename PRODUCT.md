@@ -1,4 +1,4 @@
-# Aggregate Mail
+# Emc²
 
 <!-- impeccable:product-schema 1 -->
 

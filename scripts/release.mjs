@@ -50,7 +50,7 @@ const version = !level
 const tag = `v${version}`;
 const repo = githubRepo();
 
-console.log(`Aggregate Mail ${current.version} -> ${version}`);
+console.log(`Emc² ${current.version} -> ${version}`);
 console.log(`Release lane: ${repo ? `GitHub ${repo}` : "none found"}`);
 if (!level && releaseDir && !args.includes("--rebuild"))
   console.log("No --major/--minor/--patch given, rebuilding the current version.");
