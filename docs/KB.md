@@ -4,6 +4,11 @@
 
 [AGENTS.md](../AGENTS.md) defines the project map, change boundaries, mail privacy safeguards and verification requirements for agents. [CONTRIBUTING.md](../CONTRIBUTING.md) provides setup, focused-change and pull-request steps for people and AI contributors. Read these before changing the repository.
 
+Before shared work starts or resumes, follow the issue search, ownership and
+worktree steps in [CONTRIBUTING.md](../CONTRIBUTING.md). The issue or pull
+request is the task record for scope, owner, branches, checks and status. See
+[ADR 0007](adr/0007-contributor-coordination.md) for the reason for this process.
+
 ## Desktop targets
 
 Emc² shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).

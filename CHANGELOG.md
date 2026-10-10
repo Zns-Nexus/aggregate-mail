@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
+
 ## 0.1.4
 
 - Show total GitHub installer downloads across Windows, macOS and Linux on the showcase website, with a ten-minute cache and the last successful count retained during GitHub outages.

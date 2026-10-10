@@ -67,6 +67,13 @@ body:
       description: Redacted output, a screenshot, or nothing.
     validations:
       required: false
+  - type: textarea
+    id: related-work
+    attributes:
+      label: Related issues or pull requests
+      description: Link relevant open or closed work, or state that you searched by problem and affected area.
+    validations:
+      required: true
   - type: checkboxes
     id: privacy
     attributes:
