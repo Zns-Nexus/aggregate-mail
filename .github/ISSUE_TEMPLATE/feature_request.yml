@@ -9,6 +9,8 @@ body:
         Read [PRODUCT.md](https://github.com/Zns-Nexus/aggregate-mail/blob/main/PRODUCT.md)
         first: it records the scope the project keeps, and a request outside it
         is easier to answer with that context in hand.
+        Exclude private mail and credentials. Report vulnerabilities through
+        [SECURITY.md](https://github.com/Zns-Nexus/aggregate-mail/blob/main/SECURITY.md).
   - type: textarea
     id: problem
     attributes:
@@ -30,3 +32,10 @@ body:
       description: Other ways you solve this today, and why they fall short.
     validations:
       required: false
+  - type: textarea
+    id: related-work
+    attributes:
+      label: Related issues or pull requests
+      description: Link relevant open or closed work, or state that you searched by problem and affected area.
+    validations:
+      required: true

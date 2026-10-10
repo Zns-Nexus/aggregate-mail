@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
+
 ## 0.1.4
 
 - Rename the application to Emc². Installers are published as `Emc²-0.1.4-win-x64.exe`, `Emc²-0.1.4-mac-arm64.dmg`, `Emc²-0.1.4-mac-x64.dmg` and `Emc²-0.1.4-linux-x64.AppImage`.

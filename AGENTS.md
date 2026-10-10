@@ -11,6 +11,8 @@ environment instructions. This file grants no release or credential authority.
    Read [ADR 0001](docs/adr/0001-unsigned-macos-packaging.md) before changing
    desktop packaging, storage or quit behavior.
 3. Follow [CONTRIBUTING.md](CONTRIBUTING.md) for setup and pull requests.
+   Its coordination steps govern issue and pull request searches, task claims
+   and ownership before shared work starts or resumes.
 4. Check the branch, HEAD and dirty state. Name the task's owned files and
    required proof. Preserve unrelated edits and commits.
 
