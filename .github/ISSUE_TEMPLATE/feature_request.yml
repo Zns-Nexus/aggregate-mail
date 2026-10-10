@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a change to how Emc² works.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [PRODUCT.md](https://github.com/Zns-Nexus/aggregate-mail/blob/main/PRODUCT.md)
+        first: it records the scope the project keeps, and a request outside it
+        is easier to answer with that context in hand.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does Emc² get in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behavior you want, in as much detail as helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other ways you solve this today, and why they fall short.
+    validations:
+      required: false

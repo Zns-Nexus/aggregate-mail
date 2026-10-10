@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/Zns-Nexus/aggregate-mail/blob/main/CONTRIBUTING.md
+    about: How to set up, verify and submit a change to Emc².
+  - name: Security policy
+    url: https://github.com/Zns-Nexus/aggregate-mail/security/policy
+    about: Report a vulnerability privately instead of opening an issue.
