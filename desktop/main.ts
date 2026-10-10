@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  ipcMain,
   Menu,
   safeStorage,
   session,
@@ -36,6 +37,15 @@ else {
   app.on("second-instance", () => {
     if (window?.isMinimized()) window.restore();
     window?.focus();
+  });
+  // The window is frameless outside macOS, so the renderer's traffic lights ask
+  // for these instead of the native caption buttons.
+  ipcMain.on("window-command", (_event, command: string) => {
+    if (!window) return;
+    if (command === "minimize") window.minimize();
+    else if (command === "maximize")
+      window.isMaximized() ? window.unmaximize() : window.maximize();
+    else if (command === "close") window.close();
   });
   app
     .whenReady()
@@ -133,15 +143,11 @@ else {
         backgroundColor: "#0a0a0a",
         icon: path.join(app.getAppPath(), "build/icon.png"),
         show: false,
+        // macOS keeps its native traffic lights. Elsewhere the window is
+        // frameless and the renderer draws its own; Windows still rounds and
+        // shadows the frame, so the corners belong to the OS.
         titleBarStyle: isMac ? "hiddenInset" : "hidden",
         trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
-        titleBarOverlay: isMac
-          ? false
-          : {
-              color: "#0a0a0a",
-              symbolColor: "#ffffff",
-              height: 48,
-            },
         webPreferences: {
           preload: path.join(__dirname, "preload.cjs"),
           contextIsolation: true,
@@ -150,6 +156,11 @@ else {
           session: localSession,
         },
       });
+      // A maximized window fills the screen, so its corners square off.
+      const reportWindowState = () =>
+        window?.webContents.send("window-state", !!window?.isMaximized());
+      window.on("maximize", reportWindowState);
+      window.on("unmaximize", reportWindowState);
       window.webContents.setWindowOpenHandler(({ url }) => {
         if (isExternalLink(url, origin)) void shell.openExternal(url);
         return { action: "deny" };

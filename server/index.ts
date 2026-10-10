@@ -17,6 +17,7 @@ import {
 import { mountMcp, authorizeMcp } from "./mcp.js";
 import { classify, sortMail, SortingUnavailable, type Sorting } from "./sorting.js";
 import { companyLogo } from "./avatars.js";
+import { companySvg, isFreeMail, normalizeDomain, syncLogos } from "./logos.js";
 import { jevProviderOf } from "../shared/types.js";
 
 const configPath = process.env.MAIL_CONFIG_PATH || ".env";
@@ -33,6 +34,7 @@ const allowedOrigins = new Set([
 ]);
 const csrf = randomBytes(32).toString("hex");
 let syncing = false;
+let scanningLogos = false;
 const assertNotSyncing = () => {
   if (syncing)
     throw new Error("Wait for the current sync to finish, then try again.");
@@ -133,7 +135,11 @@ app.post("/api/config", (req, res) => {
   res.json({ ok: true });
 });
 app.get("/api/logo/:domain", async (req, res) => {
-  const image = await companyLogo(req.params.domain);
+  // theSVG first, then the favicon service: a brand the library knows gets a
+  // proper logo, and everything else keeps the mark its mail host publishes.
+  const image =
+    (await companySvg(req.params.domain)) ||
+    (await companyLogo(req.params.domain));
   if (!image) {
     // Cacheable so a row without a logo is not asked for on every render.
     res.set("Cache-Control", "public, max-age=600");
@@ -141,7 +147,26 @@ app.get("/api/logo/:domain", async (req, res) => {
   }
   res.set("Content-Type", image.type);
   res.set("Cache-Control", "public, max-age=604800");
+  // Third-party vector bytes are served from this origin, so they are kept
+  // inert if the URL is ever opened as a document rather than as an image.
+  res.set("X-Content-Type-Options", "nosniff");
+  res.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
   return res.send(image.body);
+});
+app.post("/api/logos/sync", async (_req, res) => {
+  if (scanningLogos)
+    return res.status(409).json({ error: "A logo scan is already running." });
+  scanningLogos = true;
+  try {
+    const domains = new Set<string>();
+    for (const m of all("mail")) {
+      const domain = normalizeDomain(m.address);
+      if (domain && !isFreeMail(domain)) domains.add(domain);
+    }
+    res.json(await syncLogos([...domains]));
+  } finally {
+    scanningLogos = false;
+  }
 });
 const oauthStates = new Map<string, number>();
 app.get("/api/oauth/google", (_req, res) => {

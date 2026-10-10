@@ -5,6 +5,8 @@ declare global {
       platform: string;
       onMailChanged: (callback: () => void) => () => void;
       oauthUrl: string;
+      windowCommand: (command: "minimize" | "maximize" | "close") => void;
+      onWindowState: (callback: (maximized: boolean) => void) => () => void;
       onAccountConnected: (
         callback: (error: string | null) => void,
       ) => () => void;
