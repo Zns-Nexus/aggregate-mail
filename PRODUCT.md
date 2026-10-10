@@ -4,7 +4,7 @@
 
 ## Platform
 
-Windows desktop
+Windows desktop and a macOS build target
 
 ## Stack
 
@@ -17,6 +17,8 @@ Build the email aggregation client demonstrated in Ryan Vogel's supplied video. 
 ## Capabilities and Constraints
 
 One inbox across accounts. Important and Other categories. Variable row heights reflect relevance. Keyboard navigation and account filtering. Teachable sorting. Gmail OAuth and IMAP providers. Installable Windows application with its own runtime and local app-data storage. Optional local MCP access lets AI clients read cached mail and reply through the running app. MCP is off by default, uses an encrypted persistent bearer token, and requires a separate opt-in for sending replies. Settings sections: Accounts, Sorting, Connection, MCP, About.
+
+The macOS target packages the same application as unsigned DMG and ZIP files. It uses native menus, Command editing shortcuts and Keychain-backed database-key protection. This is a maintainer-led open-source project. Public contributions must exclude personal information, local machine details, credentials and private runtime data. See [the desktop packaging decision](docs/adr/0001-unsigned-macos-packaging.md).
 
 ## Evidence on Hand
 

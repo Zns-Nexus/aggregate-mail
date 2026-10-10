@@ -602,6 +602,7 @@ export function App() {
     >
       <div
         className={`app${window.desktop ? " desktop" : ""}${privacy ? " private" : ""}`}
+        data-platform={window.desktop?.platform}
       >
         <header className="topbar">
           {settings ? (

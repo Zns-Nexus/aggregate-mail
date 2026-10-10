@@ -192,6 +192,10 @@ input[type="checkbox"][role="switch"]:disabled {
 .desktop .topbar :is(button, input, a, label) {
   -webkit-app-region: no-drag;
 }
+.desktop[data-platform="darwin"] .topbar {
+  padding-left: 96px;
+  padding-right: 16px;
+}
 .tabs {
   position: relative;
   display: flex;
