@@ -12,22 +12,23 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ArrowDown2,
   ArrowRight,
   Check,
-  ChevronDown,
+  CloseCircle,
   Cloud,
   Eye,
-  EyeOff,
-  Mail as MailIcon,
-  Search,
+  EyeSlash,
+  SearchNormal1,
   Settings,
-  X,
-} from "lucide-react";
+  Sms as MailIcon,
+} from "iconsax-react";
 import { jevProviders, logoDomain } from "../shared/types";
 import type {
   Account,
   Category,
   JevProvider,
+  LogoSummary,
   Mail,
   Provider,
   State,
@@ -127,6 +128,55 @@ const PrivacyContext = createContext({
 });
 const addressPattern = /[^\s<>()"',;:]+@[^\s<>()"',;:]+\.[a-z]{2,}/gi;
 const hideAddresses = (text: string) => text.replace(addressPattern, "••••••••");
+// Windows and Linux have no traffic lights, so the window runs frameless and
+// these drive it over IPC. macOS keeps its native lights.
+const drawsWindowControls =
+  !!window.desktop && window.desktop.platform !== "darwin";
+function TrafficLights({
+  right,
+  maximized,
+}: {
+  right?: boolean;
+  maximized: boolean;
+}) {
+  const desktop = window.desktop;
+  const [focused, setFocused] = useState(true);
+  useEffect(() => {
+    setFocused(document.hasFocus());
+    const onFocus = () => setFocused(true);
+    const onBlur = () => setFocused(false);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+  if (!desktop || !drawsWindowControls) return null;
+  const controls = [
+    { command: "close", className: "close", label: "Close window" },
+    {
+      command: "maximize",
+      className: "zoom",
+      label: maximized ? "Restore window" : "Maximize window",
+    },
+    { command: "minimize", className: "minimize", label: "Minimize window" },
+  ] as const;
+  return (
+    <div
+      className={`traffic${right ? " right" : ""}${focused ? "" : " inactive"}`}
+    >
+      {controls.map((control) => (
+        <button
+          key={control.command}
+          className={control.className}
+          aria-label={control.label}
+          onClick={() => desktop.windowCommand(control.command)}
+        />
+      ))}
+    </div>
+  );
+}
 function Address({ value, children }: { value: string; children?: ReactNode }) {
   const { on, revealed, toggle } = useContext(PrivacyContext);
   const key = value.toLowerCase();
@@ -163,9 +213,9 @@ function ProviderIcon({ provider }: { provider: Provider }) {
   return (
     <span className={`provider-icon ${provider}`} aria-hidden="true">
       {provider === "icloud" ? (
-        <Cloud fill="currentColor" strokeWidth={0} />
+        <Cloud color="currentColor" variant="Bold" />
       ) : provider === "imap" ? (
-        <MailIcon strokeWidth={2.5} />
+        <MailIcon color="currentColor" />
       ) : (
         <b>
           {provider === "gmail" ? "M" : provider === "fastmail" ? "F" : "y!"}
@@ -236,6 +286,15 @@ export function App() {
     localStorage.setItem("privacy", privacy ? "off" : "on");
     if (!privacy) setRevealed(new Set());
     setPrivacy(!privacy);
+  };
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => window.desktop?.onWindowState(setMaximized), []);
+  const [windowSide, setWindowSide] = useState<"left" | "right">(() =>
+    localStorage.getItem("window-controls") === "right" ? "right" : "left",
+  );
+  const placeWindowControls = (side: "left" | "right") => {
+    localStorage.setItem("window-controls", side);
+    setWindowSide(side);
   };
   const tabsRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLElement>(null);
@@ -604,7 +663,18 @@ export function App() {
         className={`app${window.desktop ? " desktop" : ""}${privacy ? " private" : ""}`}
         data-platform={window.desktop?.platform}
       >
-        <header className="topbar">
+        <header
+          className="topbar"
+          onDoubleClick={(event) => {
+            // A frameless window gets no automatic maximize on the caption
+            // area, so the header has to restore that convention itself.
+            if (!window.desktop || !drawsWindowControls) return;
+            if ((event.target as Element).closest("button, input, a, label"))
+              return;
+            window.desktop.windowCommand("maximize");
+          }}
+        >
+          {windowSide === "left" && <TrafficLights maximized={maximized} />}
           {settings ? (
             <nav className="crumbs" aria-label="Breadcrumb">
               <button onClick={() => setSettings(false)}>
@@ -707,7 +777,7 @@ export function App() {
             {!settings &&
               (searching ? (
                 <div className="search" role="search">
-                  <Search size={14} />
+                  <SearchNormal1 color="currentColor" size={14} />
                   <input
                     ref={searchRef}
                     aria-label="Search all synced mail"
@@ -722,7 +792,7 @@ export function App() {
                     }}
                   />
                   <button aria-label="Close search" onClick={closeSearch}>
-                    <X size={13} />
+                    <CloseCircle color="currentColor" size={13} />
                   </button>
                 </div>
               ) : (
@@ -745,7 +815,7 @@ export function App() {
                     title="Search (/)"
                     onClick={showSearch}
                   >
-                    <Search size={15} />
+                    <SearchNormal1 color="currentColor" size={15} />
                   </button>
                 </>
               ))}
@@ -760,7 +830,7 @@ export function App() {
               }
               onClick={togglePrivacy}
             >
-              {privacy ? <EyeOff size={15} /> : <Eye size={15} />}
+              {privacy ? <EyeSlash color="currentColor" size={15} /> : <Eye color="currentColor" size={15} />}
             </button>
             <button
               className="icon"
@@ -768,9 +838,10 @@ export function App() {
               aria-pressed={settings}
               onClick={() => setSettings((s) => !s)}
             >
-              <Settings size={15} />
+              <Settings color="currentColor" size={15} />
             </button>
           </div>
+          {windowSide === "right" && <TrafficLights right maximized={maximized} />}
         </header>
         {notice && (
           <div className="notice" role="status">
@@ -781,7 +852,7 @@ export function App() {
               aria-label="Dismiss notification"
               onClick={() => setNotice("")}
             >
-              <X size={12} />
+              <CloseCircle color="currentColor" size={12} />
             </button>
           </div>
         )}
@@ -792,6 +863,9 @@ export function App() {
             perform={perform}
             api={api}
             sync={sync}
+            onNotice={setNotice}
+            windowSide={windowSide}
+            onWindowSide={placeWindowControls}
           />
         ) : (
           <main className="workspace">
@@ -911,7 +985,7 @@ export function App() {
                           className="link"
                           onClick={() => setSettings(true)}
                         >
-                          Connect an account <ArrowRight size={11} />
+                          Connect an account <ArrowRight color="currentColor" size={11} />
                         </button>
                       ) : query ? (
                         <p>Try a different sender, subject or phrase.</p>
@@ -1188,7 +1262,7 @@ function Dialog({
         <div className="dialog-title">
           <h2>{title}</h2>
           <button className="icon" aria-label="Close dialog" onClick={onClose}>
-            <X size={13} />
+            <CloseCircle color="currentColor" size={13} />
           </button>
         </div>
         {children}
@@ -1353,7 +1427,7 @@ function TeachDialog({
         <div className="form-actions">
           <span>Sender rules take priority over AI.</span>
           <button className="button" disabled={busy}>
-            Save rule <Check size={12} />
+            Save rule <Check color="currentColor" size={12} />
           </button>
         </div>
       </form>
@@ -1368,12 +1442,18 @@ function SettingsPage({
   perform,
   api,
   sync,
+  onNotice,
+  windowSide,
+  onWindowSide,
 }: {
   state: State;
   busy: boolean;
   perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
   api: Api;
   sync: () => Promise<void>;
+  onNotice: (text: string) => void;
+  windowSide: "left" | "right";
+  onWindowSide: (side: "left" | "right") => void;
 }) {
   const [connecting, setConnecting] = useState<Exclude<
     Provider,
@@ -1438,7 +1518,7 @@ function SettingsPage({
               className="action"
               href={window.desktop?.oauthUrl || "/api/oauth/google"}
             >
-              Continue with Google <ArrowRight size={11} strokeWidth={2.5} />
+              Continue with Google <ArrowRight color="currentColor" size={11} />
             </a>
           </div>
           {(["icloud", "fastmail", "yahoo", "imap"] as const).map(
@@ -1458,7 +1538,7 @@ function SettingsPage({
                   disabled={busy}
                   onClick={() => setConnecting(provider)}
                 >
-                  Connect <ArrowRight size={11} strokeWidth={2.5} />
+                  Connect <ArrowRight color="currentColor" size={11} />
                 </button>
               </div>
             ),
@@ -1547,7 +1627,7 @@ function SettingsPage({
                 target="_blank"
                 rel="noreferrer"
               >
-                Open Google Cloud <ArrowRight size={11} strokeWidth={2.5} />
+                Open Google Cloud <ArrowRight color="currentColor" size={11} />
               </a>
               <p className="muted">
                 Access requested: read mail, update labels and send mail.
@@ -1566,10 +1646,46 @@ function SettingsPage({
             jevProvider={state.jevProvider}
           />
         </section>
+        <section>
+          <h1>
+            <span>4</span>Appearance
+          </h1>
+          {drawsWindowControls ? (
+            <>
+              <p className="note">
+                The window is drawn by the app itself, so its three controls
+                close, minimize and maximize it directly. They dim while another
+                window has focus.
+              </p>
+              <label className="setting-toggle">
+                <span>Window controls on the right</span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={windowSide === "right"}
+                  onChange={(e) =>
+                    onWindowSide(e.target.checked ? "right" : "left")
+                  }
+                />
+              </label>
+            </>
+          ) : (
+            <p className="note">
+              macOS draws the window controls, so they stay in the top-left
+              corner.
+            </p>
+          )}
+        </section>
+        <BrandingSection
+          api={api}
+          perform={perform}
+          busy={busy}
+          onNotice={onNotice}
+        />
         <McpSection api={api} perform={perform} busy={busy} />
         <section>
           <h1>
-            <span>5</span>About
+            <span>7</span>About
           </h1>
           <p className="note">
             Mail is stored encrypted on this computer and syncs every five
@@ -1662,7 +1778,7 @@ function Dropdown<T extends string>({
         }}
       >
         {options.find((option) => option.value === value)?.label}
-        <ChevronDown size={12} className={open ? "up" : undefined} />
+        <ArrowDown2 color="currentColor" size={12} className={open ? "up" : undefined} />
       </button>
       {open && (
         <ul
@@ -1682,7 +1798,7 @@ function Dropdown<T extends string>({
               onClick={() => commit(option.value)}
             >
               {option.label}
-              {option.value === value && <Check size={12} strokeWidth={2.5} />}
+              {option.value === value && <Check color="currentColor" size={12} />}
             </li>
           ))}
         </ul>
@@ -1693,7 +1809,7 @@ function Dropdown<T extends string>({
 function StoredValue({ value, present }: { value?: string; present: boolean }) {
   return present ? (
     <p className="stored">
-      <Check size={11} strokeWidth={2.5} />
+      <Check color="currentColor" size={11} />
       Saved · {value ? <Address value={value} /> : "••••••••••••"}
     </p>
   ) : (
@@ -1920,6 +2036,49 @@ function ConnectDialog({
   );
 }
 
+function BrandingSection({
+  api,
+  perform,
+  busy,
+  onNotice,
+}: {
+  api: Api;
+  perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
+  busy: boolean;
+  onNotice: (text: string) => void;
+}) {
+  return (
+    <section>
+      <h1>
+        <span>5</span>Branding
+      </h1>
+      <p className="note">
+        Sender logos come from theSVG, an open brand icon library, and are
+        cached on this computer. Scan the senders already in your inbox to
+        fetch the ones that are still missing. Companies the library does not
+        know keep their letter.
+      </p>
+      <button
+        className="button"
+        disabled={busy}
+        onClick={() =>
+          void perform(async () => {
+            const { total, found, missing, failed } = await api<LogoSummary>(
+              "/logos/sync",
+              "POST",
+            );
+            onNotice(
+              `Logos scanned: ${total} company ${total === 1 ? "domain" : "domains"}, ${found} found, ${missing} not in the library${failed ? `, ${failed} failed` : ""}.`,
+            );
+          })
+        }
+      >
+        Fetch company logos
+      </button>
+    </section>
+  );
+}
+
 function McpSection({
   api,
   perform,
@@ -1987,7 +2146,7 @@ function McpSection({
     <section className="mcp-settings">
       <div className="section-head">
         <h1>
-          <span>4</span>MCP
+          <span>6</span>MCP
         </h1>
         <button
           className="disclosure"
@@ -1996,7 +2155,7 @@ function McpSection({
           onClick={() => setOpen((value) => !value)}
         >
           {open ? "Hide options" : "Show options"}
-          <ChevronDown size={12} className={open ? "up" : undefined} />
+          <ArrowDown2 color="currentColor" size={12} className={open ? "up" : undefined} />
         </button>
       </div>
       <p className="note">
@@ -2006,7 +2165,7 @@ function McpSection({
       {error && <p role="alert">{error}</p>}
       {settings && (
         <>
-          <label className="mcp-toggle">
+          <label className="setting-toggle">
             <span>Enable MCP</span>
             <input
               type="checkbox"
@@ -2018,7 +2177,7 @@ function McpSection({
           </label>
           {open && (
             <div className="disclosure-body" id="mcp-options">
-              <label className="mcp-toggle">
+              <label className="setting-toggle">
                 <span>Allow sending replies</span>
                 <input
                   type="checkbox"

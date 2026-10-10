@@ -43,9 +43,9 @@ npm test
 npm run build
 ```
 
-Tests use Node's test runner through `tsx` and cover `server/*.test.ts` and
-`desktop/*.test.ts`. The build checks strict TypeScript, builds the renderer
-into `dist/` and bundles Electron code into `.desktop/`.
+Tests use Node's test runner through `tsx` and cover `server/*.test.ts`,
+`desktop/*.test.ts` and `scripts/*.test.mjs`. The build checks strict TypeScript,
+builds the renderer into `dist/` and bundles Electron code into `.desktop/`.
 
 | Changed area | Additional proof |
 | --- | --- |
