@@ -6,6 +6,7 @@
 - Keep uncertain sends as "Send status unknown" with the draft and a possible-delivery warning. Require duplicate-risk confirmation before sending again, including keyboard submission, and retain uncertainty through draft edits.
 - Keep the native application-close prompt neutral about whether a draft was sent.
 - Preserve confirmed send success when saving the Sent copy, closing its connection or refreshing the inbox fails. Treat an IMAP logout result of `false` as a cleanup warning.
+- Close the synthetic send-test database before deleting its temporary files so Windows cleanup can release the directory.
 
 ## 0.1.4
 

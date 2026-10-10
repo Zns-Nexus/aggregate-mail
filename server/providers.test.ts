@@ -10,7 +10,7 @@ test("SMTP acceptance survives Sent-copy and connection cleanup failures", async
   const directory = mkdtempSync(path.join(tmpdir(), "emc2-send-"));
   process.env.MAIL_DATA_DIR = directory;
   process.env.MAIL_DATA_KEY = Buffer.alloc(32, 7).toString("base64");
-  const { put } = await import("./store.js");
+  const { put, closeStore } = await import("./store.js");
   const { sendMail } = await import("./mail-actions.js");
   put("account", "synthetic", {
     id: "synthetic",
@@ -100,6 +100,7 @@ test("SMTP acceptance survives Sent-copy and connection cleanup failures", async
       assert.equal(transport.mock.callCount(), 0);
     });
   } finally {
+    closeStore();
     rmSync(directory, { recursive: true, force: true });
   }
 });
