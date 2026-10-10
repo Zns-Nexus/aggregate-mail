@@ -6,30 +6,20 @@
 
 ## Desktop targets
 
-Aggregate Mail shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
+Aggregate Mail shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds the Windows NSIS installer. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
 
-The macOS target disables app and DMG signing and notarization. The release workflow calls cross-platform CI and publishes installers for version tags. Building a package does not publish it or prove Gatekeeper acceptance.
+The release workflow calls cross-platform CI and publishes installers for version tags. Building a package does not publish it or prove Gatekeeper acceptance.
 
 ## Verification
 
-Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access and checks native menu roles on macOS. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
+Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
 
 ```sh
 check_dir=$(mktemp -d)
 npm run check:desktop -- --user-data-dir="$check_dir"
 ```
 
-For a packaged Apple silicon build, use the logged-in macOS desktop session. Quit any running copy first, since the mail service uses a fixed port:
-
-```sh
-check_dir=$(mktemp -d)
-open -n -W "release/mac-arm64/Aggregate Mail.app" \
-  --stdout "$check_dir/stdout.log" --stderr "$check_dir/stderr.log" \
-  --args --check-startup --user-data-dir="$check_dir/profile"
-cat "$check_dir/stdout.log" "$check_dir/stderr.log"
-```
-
-Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. Intel builds use `release/mac/`. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
+Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
 
 The repository has no `scripts/documentation.py`; documentation checks currently require link and diff review.
 

@@ -50,16 +50,7 @@ else {
   app
     .whenReady()
     .then(async () => {
-      Menu.setApplicationMenu(
-        isMac
-          ? Menu.buildFromTemplate([
-              { role: "appMenu" },
-              { role: "fileMenu" },
-              { role: "editMenu" },
-              { role: "windowMenu" },
-            ])
-          : null,
-      );
+      Menu.setApplicationMenu(null);
       const dataPath = app.getPath("userData");
       const mailPath = path.join(dataPath, "mail");
       mkdirSync(mailPath, { recursive: true });
@@ -192,15 +183,6 @@ else {
       window.webContents.once("did-finish-load", reveal);
       await window.loadURL(rendererOrigin);
       if (checking) {
-        if (isMac) {
-          const roles = Menu.getApplicationMenu()?.items.flatMap((item) =>
-            item.submenu?.items.map((entry) => entry.role?.toLowerCase()) ?? [],
-          );
-          for (const role of ["quit", "close", "undo", "cut", "copy", "paste", "selectall"]) {
-            if (!roles?.includes(role))
-              throw new Error(`The macOS menu is missing ${role}.`);
-          }
-        }
         const response = await fetch(`${origin}/api/state`, {
           headers: { "X-Desktop-Token": token },
         });
@@ -230,8 +212,6 @@ else {
             renderer: "loaded",
             hotReload: developing,
             isolatedApi: true,
-            platform: process.platform,
-            nativeMenu: isMac,
           }),
         );
         app.quit();

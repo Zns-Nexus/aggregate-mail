@@ -61,11 +61,9 @@ on live browser tests in PRODUCT.md.
 
 ## Package locally
 
-`npm run package` creates the Windows NSIS installer. On a Mac,
-`npm run package:mac` creates unsigned DMG and ZIP files, and
-`npm run package:mac:dir` creates the app bundle only. Output goes to `release/`.
-See [README.md](README.md) for architecture selection and installation limits,
-and [ADR 0001](docs/adr/0001-unsigned-macos-packaging.md) for the signing decision.
+`npm run package` creates the Windows NSIS installer in `release/`. See
+[README.md](README.md) for installation limits and [ADR 0001](docs/adr/0001-unsigned-macos-packaging.md)
+for the signing decision.
 
 Packaging does not publish a release. Release tags, the release script and
 workflow dispatch can publish artifacts; use them only within explicit release

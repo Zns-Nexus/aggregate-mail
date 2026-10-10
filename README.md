@@ -1,27 +1,12 @@
 # Aggregate Mail
 
-An installable desktop email client for Windows, with a macOS build target, based on Ryan Vogel's video. Electron with React and TypeScript, a bundled mail service, and encrypted SQLite storage. The installed app needs no browser, terminal, or separate Node installation.
+An installable Windows desktop email client based on Ryan Vogel's video. Electron with React and TypeScript, a bundled mail service, and encrypted SQLite storage. The installed app needs no browser, terminal, or separate Node installation.
 
 ## Install
 
 Download the newest published Windows setup installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases). The next release version is `0.1.3`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Aggregate Mail and connect accounts in Settings.
 
 To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Aggregate Mail.exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
-
-### macOS
-
-Build on a Mac with Node 24 or newer:
-
-```sh
-npm ci
-npm run package:mac
-```
-
-The command creates `release/Aggregate-Mail-0.1.3-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Aggregate Mail to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
-
-These packages are unsigned and not notarized. Packaging explicitly skips signing, certificate discovery, and notarization. Gatekeeper may block downloaded copies; a local startup check does not prove downloaded-app acceptance. Local packaging does not publish downloads. The version-tag release workflow publishes both macOS architectures alongside Windows and Linux.
-
-The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 
 ## Gmail OAuth
 
@@ -47,7 +32,7 @@ Pick the provider under Settings, Connection, then save that provider's API key 
 
 All three serve Jev and accept the same request and answer shapes, so switching provider only changes the URL, the model name and which key you paste. TypeSafe paused new signups in September 2026; OpenRouter is the quickest route if you cannot get an account there.
 
-For any other endpoint that speaks this protocol, set the URL and model yourself in the app-data folder's `settings.env` (see Local storage):
+For any other endpoint that speaks this protocol, set the URL and model yourself in `%APPDATA%/Aggregate Mail/settings.env`:
 
 ```
 TYPESAFE_API_KEY=<that endpoint's key>
@@ -118,9 +103,9 @@ MCP changes notify the open desktop UI to refresh. Replies use the same send pat
 
 ## Local storage
 
-Mail, account credentials, rules and sync metadata are AES-256-GCM encrypted in the app-data folder's `mail` directory. The app-data folder is `%APPDATA%/Aggregate Mail` on Windows and `~/Library/Application Support/Aggregate Mail` on macOS. Electron safeStorage protects the database key using Windows DPAPI or the macOS Keychain. The renderer is sandboxed and has no Node access. Mail/configuration endpoints require a random desktop-session token, in addition to origin and CSRF checks.
+Mail, account credentials, rules and sync metadata are AES-256-GCM encrypted under `%APPDATA%/Aggregate Mail/mail`. Windows DPAPI protects the database key through Electron safeStorage. The renderer is sandboxed and has no Node access. Mail/configuration endpoints require a random desktop-session token, in addition to origin and CSRF checks.
 
-Developer OAuth settings and any optional Jev or OpenAI key are stored in the app-data folder's `settings.env`. Protect your operating-system account and app-data folder; these settings are not encrypted. Never commit them or attach them to issues. Ignore rules and packaging exclusions cover local environment files, private keys and mail databases. `.env.example` contains placeholders only. Review source changes, commit metadata, logs, screenshots and packaged contents before sharing; exclusions cannot detect every secret embedded in source.
+Developer OAuth settings and any optional Jev or OpenAI key are stored in `%APPDATA%/Aggregate Mail/settings.env`. Protect your Windows account and app-data folder; these settings are not encrypted. Never commit them.
 
 The first development launch copies the earlier `.data` database using SQLite's backup API and preserves the original files. Packaged and development desktop builds share the app-data folder. `.data` and `.env` remain available to the earlier browser development target.
 
@@ -167,8 +152,6 @@ That bumps the version, packages, prints the installer's SHA-256, and uploads it
 The installer is unsigned, so Windows SmartScreen warns on first run. There is no auto-updater; installing a newer version over an older one keeps your mail and settings.
 
 ## Verification
-
-The macOS Apple silicon candidate builds as a DMG and ZIP. Its packaged startup check passed through the desktop launch path, including encrypted database access, renderer loading, native menu roles and API isolation. A maintainer confirmed the inbox window was visible. Intel runtime, live account operations and downloaded-app Gatekeeper acceptance remain unverified.
 
 Strict TypeScript and production builds pass. Tests cover sender-rule precedence, visual classification, header validation, desktop navigation restrictions, configuration preservation, and MCP authentication, mail reads and mocked reply operations. `node scripts/check-mcp.mjs` checks an MCP initialize/tools-list handshake against a separate temporary server and verifies requests without a token get 401. Development and packaged native startup checks passed, including encrypted database access and rejection of requests outside the desktop session. No live browser or UI interaction testing was performed. Real account sign-in, mailbox operations and delivery remain unverified until provider credentials are supplied.
 
