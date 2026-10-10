@@ -86,6 +86,7 @@ function StarLink({ count, href, label }: { count?: number | null; href: string;
 
 export function App() {
   const stars = client.useQuery("stars");
+  const downloads = client.useQuery("downloads");
 
   useEffect(() => {
     document.title = "Emc² — mail that sorts itself";
@@ -155,6 +156,11 @@ export function App() {
               </a>
             </div>
             <p className="mt-4 text-xs text-neutral-500">
+              {typeof downloads === "number" ? (
+                <span className="mr-3 text-white">
+                  <span className="tabular-nums">{downloads.toLocaleString("en-US")}</span> downloads
+                </span>
+              ) : null}
               Unsigned build · macOS and Linux installers on the same releases page
             </p>
           </div>
