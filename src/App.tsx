@@ -9,7 +9,9 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import {
   ArrowDown2,
@@ -39,7 +41,7 @@ type View = Category | "snoozed" | "archive";
 const viewOrder: View[] = ["important", "other", "snoozed", "archive"];
 // Direction the list pane enters from: tabs slide sideways, mail opens upward.
 type Motion = "forward" | "back" | "open" | "close";
-type Compose = {
+export type Compose = {
   accountId: string;
   to: string;
   subject: string;
@@ -47,7 +49,51 @@ type Compose = {
   inReplyTo?: string;
   threadId?: string;
   references?: string[];
+  sendUnknown?: boolean;
 };
+const unknownSendNotice =
+  "Send status unknown. This message may already have been sent. Sending again may send a duplicate.";
+
+export async function sendCompose(
+  draft: Compose,
+  { lock, send, reload, setDraft, setBusy, setNotice, confirm }: {
+    lock: { current: boolean };
+    send: (draft: Compose) => Promise<{ warning?: string }>;
+    reload: () => Promise<unknown>;
+    setDraft: Dispatch<SetStateAction<Compose | null>>;
+    setBusy: (busy: boolean) => void;
+    setNotice: (notice: string) => void;
+    confirm: (message: string) => boolean;
+  },
+) {
+  if (lock.current) return;
+  if (
+    draft.sendUnknown &&
+    !confirm("This message may already have been sent. Sending again may send a duplicate. Send again?")
+  )
+    return;
+  lock.current = true;
+  setBusy(true);
+  try {
+    const result = await send(draft);
+    setDraft(null);
+    const sentNotice = result.warning || "Email sent.";
+    setNotice(sentNotice);
+    try {
+      await reload();
+    } catch {
+      setNotice(`${sentNotice}\nInbox refresh failed. Refresh the inbox separately.`);
+    }
+  } catch {
+    setDraft((current) =>
+      current ? { ...current, sendUnknown: true } : current,
+    );
+    setNotice(unknownSendNotice);
+  } finally {
+    lock.current = false;
+    setBusy(false);
+  }
+}
 const empty: State = {
   accounts: [],
   messages: [],
@@ -378,6 +424,7 @@ export function App() {
   const [recent, setRecent] = useState<string[]>([]);
   const csrf = useRef("");
   const syncLock = useRef(false);
+  const sendLock = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const api = useCallback(
     async <T,>(url: string, method = "GET", body?: unknown): Promise<T> => {
@@ -654,7 +701,8 @@ export function App() {
   });
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
-      if (compose?.body || compose?.to || compose?.subject) e.preventDefault();
+      if (compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
+        e.preventDefault();
     };
     window.addEventListener("beforeunload", handle);
     return () => window.removeEventListener("beforeunload", handle);
@@ -1127,25 +1175,19 @@ export function App() {
             setDraft={setCompose}
             accounts={state.accounts}
             busy={busy}
-            onClose={() => {
+            onClose={() => setCompose(null)}
+            onSend={() => {
               if (busy) return;
-              if (
-                !(compose.body || compose.to || compose.subject) ||
-                confirm("Discard this unsent draft?")
-              )
-                setCompose(null);
+              void sendCompose(compose, {
+                lock: sendLock,
+                send: (draft) => api("/send", "POST", draft),
+                reload,
+                setDraft: setCompose,
+                setBusy,
+                setNotice,
+                confirm: (message) => confirm(message),
+              });
             }}
-            onSend={() =>
-              void perform(async () => {
-                const result = await api<{ warning?: string }>(
-                  "/send",
-                  "POST",
-                  compose,
-                );
-                setCompose(null);
-                setNotice(result.warning || "Email sent.");
-              })
-            }
           />
         )}
         {teach && (
@@ -1317,7 +1359,7 @@ function Dialog({
     </div>
   );
 }
-function ComposePanel({
+export function ComposePanel({
   draft,
   setDraft,
   accounts,
@@ -1333,11 +1375,23 @@ function ComposePanel({
   onSend: () => void;
 }) {
   return (
-    <Dialog title={draft.inReplyTo ? "Reply" : "New message"} onClose={onClose}>
+    <Dialog
+      title={draft.inReplyTo ? "Reply" : "New message"}
+      onClose={() => {
+        if (busy) return;
+        if (
+          draft.sendUnknown
+            ? confirm("Discard this draft? This message may already have been sent.")
+            : !(draft.body || draft.to || draft.subject) || confirm("Discard this unsent draft?")
+        )
+          onClose();
+      }}
+    >
       <form
         className="compose-form"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!e.currentTarget.reportValidity()) return;
           onSend();
         }}
       >
@@ -1384,6 +1438,9 @@ function ComposePanel({
           value={draft.body}
           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
         />
+        {draft.sendUnknown && (
+          <p className="dialog-copy" role="status">{unknownSendNotice}</p>
+        )}
         <div className="form-actions">
           <span>
             Plain text ·{" "}

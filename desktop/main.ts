@@ -183,7 +183,7 @@ else {
             buttons: ["Keep editing", "Discard draft"],
             defaultId: 0,
             cancelId: 0,
-            message: "Discard your unsent draft?",
+            message: "Discard your draft?",
           }) === 1
         )
           event.preventDefault();

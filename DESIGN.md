@@ -58,4 +58,6 @@ Segoe UI Variable on Windows, SF Pro on macOS. 13px throughout the inbox, 15px s
 
 ## Behavior
 
+An uncertain send keeps the compose dialog and draft open with "Send status unknown" and a warning that the message may already have been sent. Editing the draft keeps this status. Every subsequent Send submission requires confirmation that another send may create a duplicate. Closing compose asks to discard this draft and warns about possible delivery; it does not call the draft unsent. The native application-close prompt also avoids calling the draft unsent. Form validation blocks invalid input before submission. Confirmed send success closes compose. Sent-copy, connection cleanup and inbox-refresh failures appear as warnings without changing the send outcome.
+
 Motion is short and eased out (cubic-bezier(0.22, 1, 0.36, 1)), never looping. The tab underline slides in 320ms. Switching views slides the list 14px toward the chosen tab with rows fading in on a 12ms stagger capped at six rows so the list settles with the pane; opening mail rises 8px; Settings rises 10px; the sender panel crossfades; dialogs scale up from 0.98. Reduced-motion settings turn all of it off. Focus shows a 1px accent outline. Message bodies render as plain text; remote images are never loaded.
