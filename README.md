@@ -122,9 +122,17 @@ npm run dev
 
 `npm run dev` launches the desktop app with React Fast Refresh and live CSS updates. Close the app to stop its development server. Restart this command after changing desktop or backend code. UI changes that require a full reload can reset an unsent draft. OAuth keeps the callback address above in development. `npm start` opens the last production build, created with `npm run build`. `npm run package` creates the Windows installer. `npm run check:desktop` checks production startup, database access and API isolation without driving the UI; `npm run dev -- --check-startup` also checks the hot reload client and development API proxy. `npm run dev:web` retains the earlier browser development target; it is not needed to use the app.
 
+## CI
+
+GitHub Actions runs tests, TypeScript checks, production builds and installer packaging on every pull request and push to `main`. You can also run `CI` manually from the Actions tab.
+
+Download the run's `installer-windows-x64` artifact for the Windows setup `.exe`, `installer-macos-arm64` or `installer-macos-x64` for a macOS `.dmg`, or `installer-linux-x64` for a Linux `.AppImage`. Artifacts expire after one day. These unsigned packages are build candidates; packaging does not verify native startup or account operations. macOS candidates are not notarized.
+
+This public repository uses free standard GitHub-hosted runners. Excess artifact storage above the owner's shared allowance costs $0.25 USD per GB-month under [GitHub's billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions). One-day retention, npm caching, job timeouts and cancellation of superseded runs keep usage low. See [the CI contract](docs/KB.md#ci).
+
 ## Releasing
 
-The source lives on GitCafe, which hosts no release downloads and runs no CI, so installers ship from the GitHub mirror. Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, packages and attaches the installer to a GitHub release. To cut the same build locally:
+GitHub hosts CI and release downloads. Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, packages and attaches the Windows installer to a GitHub release. To cut the same build locally:
 
 ```powershell
 node scripts/release.mjs --patch
