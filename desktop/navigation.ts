@@ -11,7 +11,7 @@ export function isExternalLink(url: string, origin: string) {
     const parsed = new URL(url);
     return parsed.origin === origin
       ? parsed.pathname === "/api/oauth/google"
-      : parsed.protocol === "https:";
+      : parsed.protocol === "https:" || parsed.protocol === "http:";
   } catch {
     return false;
   }

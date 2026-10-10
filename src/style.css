@@ -884,6 +884,15 @@ input[type="checkbox"][role="switch"]:disabled {
   line-height: 1.7;
   color: #cfcfcf;
 }
+.message-body a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.message-body a:hover,
+.message-body a:focus-visible {
+  color: var(--text);
+}
 
 /* Sender context: 280px side panel. */
 .context {

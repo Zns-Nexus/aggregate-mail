@@ -121,7 +121,7 @@ const dayGroup = (date: number) => {
   return "Earlier";
 };
 // Privacy blurs email addresses until each one is clicked.
-const PrivacyContext = createContext({
+export const PrivacyContext = createContext({
   on: false,
   revealed: new Set<string>(),
   toggle: (_address: string) => {},
@@ -131,7 +131,9 @@ const hideAddresses = (text: string) => text.replace(addressPattern, "•••�
 // Windows and Linux have no traffic lights, so the window runs frameless and
 // these drive it over IPC. macOS keeps its native lights.
 const drawsWindowControls =
-  !!window.desktop && window.desktop.platform !== "darwin";
+  typeof window !== "undefined" &&
+  !!window.desktop &&
+  window.desktop.platform !== "darwin";
 function TrafficLights({
   right,
   maximized,
@@ -207,6 +209,50 @@ function Redact({ text }: { text: string }) {
     last = match.index + match[0].length;
   }
   parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+export function MessageBody({ text }: { text: string }) {
+  const { on } = useContext(PrivacyContext);
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(/\bhttps?:\/\/[^\s<>"'“”‘’]+/gi)) {
+    if (match.index > 0 && /[\w:/]/.test(text[match.index - 1])) continue;
+    let url = match[0];
+    // Keep balanced URL delimiters, but leave prose wrappers outside the link.
+    let parentheses = url.split(")").length - url.split("(").length;
+    let brackets = url.split("]").length - url.split("[").length;
+    while (
+      /[.,;:!?]$/.test(url) ||
+      (url.endsWith(")") && parentheses > 0) ||
+      (url.endsWith("]") && brackets > 0)
+    ) {
+      if (url.endsWith(")")) parentheses--;
+      else if (url.endsWith("]")) brackets--;
+      url = url.slice(0, -1);
+    }
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname || /\\|%(?![\da-f]{2})/i.test(url)) continue;
+    } catch {
+      continue;
+    }
+    parts.push(<Redact key={`text-${match.index}`} text={text.slice(last, match.index)} />);
+    let decoded = url;
+    try {
+      decoded = decodeURIComponent(url);
+    } catch {
+      // Non-UTF-8 bytes must not hide percent-encoded addresses from privacy.
+      decoded = url.replace(/%([\da-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    }
+    const privateAddress = on && hideAddresses(decoded) !== decoded;
+    parts.push(privateAddress ? (
+      <Redact key={match.index} text={hideAddresses(decoded)} />
+    ) : (
+      <a key={match.index} href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+    ));
+    last = match.index + url.length;
+  }
+  parts.push(<Redact key="tail" text={text.slice(last)} />);
   return <>{parts}</>;
 }
 function ProviderIcon({ provider }: { provider: Provider }) {
@@ -902,7 +948,7 @@ export function App() {
                       <time>{new Date(selected.date).toLocaleString()}</time>
                     </div>
                     <div className="message-body">
-                      <Redact
+                      <MessageBody
                         text={
                           selected.body || "This email has no plain-text body."
                         }
