@@ -113,6 +113,14 @@ export type State = {
   lastSync: number | null;
 };
 
+// What a run of POST /api/logos/sync found across the senders in the store.
+export type LogoSummary = {
+  total: number;
+  found: number;
+  missing: number;
+  failed: number;
+};
+
 export type McpSettings = {
   enabled: boolean;
   allowSending: boolean;

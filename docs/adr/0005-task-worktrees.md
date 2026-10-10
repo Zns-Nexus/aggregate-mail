@@ -1,4 +1,4 @@
-# 0002: Use a new worktree for each task
+# 0005: Use a new worktree for each task
 
 Status: accepted by the owner on 2026-10-09.
 

@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.3
 
+- Add cross-platform CI and version-tag releases for Windows x64, macOS Apple silicon and Intel, and Linux x64 installers. Retain CI artifacts for one day and attach installer checksums to releases.
+- Give each CI run and rerun a distinct application version and installer filename. Replace rebuilt platform artifacts on reruns. Keep tagged releases at the matching release version.
 - Make HTTP and HTTPS URLs in email bodies clickable and keyboard accessible.
 - Keep surrounding curly quotes outside email link destinations.
 - Open HTTP links through the existing desktop browser handoff. Keep local API routes and unsupported protocols blocked.
