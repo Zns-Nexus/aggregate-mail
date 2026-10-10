@@ -137,6 +137,11 @@ npm run dev
 
 `npm run dev` launches the desktop app with React Fast Refresh and live CSS updates. Close the app to stop its development server. Restart this command after changing desktop or backend code. UI changes that require a full reload can reset an unsent draft. OAuth keeps the callback address above in development. `npm start` opens the last production build, created with `npm run build`. `npm run package` creates the Windows installer. `npm run check:desktop` checks production startup, database access and API isolation without driving the UI; `npm run dev -- --check-startup` also checks the hot reload client and development API proxy. `npm run dev:web` retains the earlier browser development target; it is not needed to use the app.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, verification and pull requests.
+AI contributors must also read the project instructions in [AGENTS.md](AGENTS.md).
+
 ## Releasing
 
 The source lives on GitCafe, which hosts no release downloads and runs no CI, so installers ship from the GitHub mirror. Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, packages and attaches the installer to a GitHub release. To cut the same build locally:
