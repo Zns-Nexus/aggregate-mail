@@ -29,7 +29,6 @@ const developing = !app.isPackaged && process.argv.includes("--dev");
 const rendererOrigin = developing ? "http://127.0.0.1:5173" : origin;
 const token = randomBytes(32).toString("hex");
 const checking = process.argv.includes("--check-startup");
-const isMac = process.platform === "darwin";
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -40,23 +39,14 @@ else {
   app
     .whenReady()
     .then(async () => {
-      Menu.setApplicationMenu(
-        isMac
-          ? Menu.buildFromTemplate([
-              { role: "appMenu" },
-              { role: "fileMenu" },
-              { role: "editMenu" },
-              { role: "windowMenu" },
-            ])
-          : null,
-      );
+      Menu.setApplicationMenu(null);
       const dataPath = app.getPath("userData");
       const mailPath = path.join(dataPath, "mail");
       mkdirSync(mailPath, { recursive: true });
       const protectedKey = path.join(mailPath, "key.protected");
       if (!safeStorage.isEncryptionAvailable())
         throw new Error(
-          "System credential encryption is unavailable. Your mail store was not opened.",
+          "Windows credential encryption is unavailable. Your mail store was not opened.",
         );
       // Preserve the earlier client's data without moving or deleting its source files.
       let legacyKey: Buffer | undefined;
@@ -133,15 +123,12 @@ else {
         backgroundColor: "#0a0a0a",
         icon: path.join(app.getAppPath(), "build/icon.png"),
         show: false,
-        titleBarStyle: isMac ? "hiddenInset" : "hidden",
-        trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
-        titleBarOverlay: isMac
-          ? false
-          : {
-              color: "#0a0a0a",
-              symbolColor: "#ffffff",
-              height: 48,
-            },
+        titleBarStyle: "hidden",
+        titleBarOverlay: {
+          color: "#0a0a0a",
+          symbolColor: "#ffffff",
+          height: 48,
+        },
         webPreferences: {
           preload: path.join(__dirname, "preload.cjs"),
           contextIsolation: true,
@@ -181,15 +168,6 @@ else {
       window.webContents.once("did-finish-load", reveal);
       await window.loadURL(rendererOrigin);
       if (checking) {
-        if (isMac) {
-          const roles = Menu.getApplicationMenu()?.items.flatMap((item) =>
-            item.submenu?.items.map((entry) => entry.role?.toLowerCase()) ?? [],
-          );
-          for (const role of ["quit", "close", "undo", "cut", "copy", "paste", "selectall"]) {
-            if (!roles?.includes(role))
-              throw new Error(`The macOS menu is missing ${role}.`);
-          }
-        }
         const response = await fetch(`${origin}/api/state`, {
           headers: { "X-Desktop-Token": token },
         });
@@ -219,8 +197,6 @@ else {
             renderer: "loaded",
             hotReload: developing,
             isolatedApi: true,
-            platform: process.platform,
-            nativeMenu: isMac,
           }),
         );
         app.quit();
@@ -239,5 +215,5 @@ else {
       app.quit();
     });
   app.on("window-all-closed", () => app.quit());
-  app.on("will-quit", () => server?.close());
+  app.on("before-quit", () => server?.close());
 }

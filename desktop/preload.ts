@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("desktop", {
-  platform: process.platform,
   onMailChanged: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("mail-changed", listener);
