@@ -316,8 +316,10 @@ function imapProvider() {
         warnings.push("saving a Sent copy failed");
       } finally {
         try {
-          if (client?.usable) await client.logout();
-          else client?.close();
+          if (client?.usable) {
+            if (Object.is(await client.logout(), false))
+              warnings.push("closing the Sent-copy connection failed");
+          } else client?.close();
         } catch {
           warnings.push("closing the Sent-copy connection failed");
         }

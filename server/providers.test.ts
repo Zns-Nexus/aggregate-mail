@@ -29,6 +29,12 @@ test("SMTP acceptance survives Sent-copy and connection cleanup failures", async
       { name: "accepted with copy and logout", copy: true, logout: true },
       { name: "Sent-copy failure", copy: false, logout: true },
       { name: "logout failure after saved copy", copy: true, logout: false },
+      {
+        name: "logout returns false after saved copy",
+        copy: true,
+        logout: true,
+        logoutFalse: true,
+      },
       { name: "copy and logout both fail", copy: false, logout: false },
       { name: "append returns false", copy: false, logout: true, appendFalse: true },
       { name: "Sent-copy connection fails", copy: false, logout: true, connect: false },
@@ -56,6 +62,7 @@ test("SMTP acceptance survives Sent-copy and connection cleanup failures", async
         t.mock.method(ImapFlow.prototype, "logout", async () => {
           logouts++;
           if (!scenario.logout) throw new Error("Synthetic logout failure");
+          if (scenario.logoutFalse) return false;
         });
         t.mock.method(ImapFlow.prototype, "close", () => {
           closes++;
@@ -66,11 +73,13 @@ test("SMTP acceptance survives Sent-copy and connection cleanup failures", async
         assert.equal(sends, 1);
         assert.equal(logouts, scenario.connect === false ? 0 : 1);
         assert.equal(closes, scenario.connect === false ? 1 : 0);
-        if (scenario.copy && scenario.logout) assert.equal(result.warning, undefined);
+        if (scenario.copy && scenario.logout && !scenario.logoutFalse)
+          assert.equal(result.warning, undefined);
         else {
           assert.match(result.warning!, /Email was sent/);
           assert.match(result.warning!, /Do not resend/);
           if (!scenario.copy) assert.match(result.warning!, /Sent copy failed/);
+          if (scenario.logoutFalse) assert.match(result.warning!, /connection failed/);
           if (!scenario.logout || scenario.close === false) assert.match(result.warning!, /connection failed/);
         }
       });
