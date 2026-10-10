@@ -19,7 +19,7 @@ test("CI versions change with each run and rerun; releases match their tag", () 
 });
 
 test("CLI updates both lockfile versions and native build metadata without changing dependencies", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "aggregate-mail-version-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "emc2-version-"));
   try {
     const dependencies = { example: "1.0.0" };
     writeFileSync(path.join(dir, "package.json"), JSON.stringify({ version: "0.1.3", build: {}, dependencies }));

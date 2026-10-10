@@ -1,5 +1,5 @@
 ---
-name: Aggregate Mail
+name: Emc²
 colors:
   background: "#0a0a0a"
   raised: "#161616"

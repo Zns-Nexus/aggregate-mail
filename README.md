@@ -1,12 +1,12 @@
-# Aggregate Mail
+# Emc²
 
 An installable desktop email client for Windows, with a macOS build target, based on Ryan Vogel's video. Electron with React and TypeScript, a bundled mail service, and encrypted SQLite storage. The installed app needs no browser, terminal, or separate Node installation.
 
 ## Install
 
-Download the newest published Windows setup installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases). The next release version is `0.1.3`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Aggregate Mail and connect accounts in Settings.
+Download the newest published Windows setup installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases). The next release is `0.1.4`, published as `Emc²-0.1.4-win-x64.exe`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
 
-To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Aggregate Mail.exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
+To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Emc².exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
 ### macOS
 
@@ -17,7 +17,7 @@ npm ci
 npm run package:mac
 ```
 
-The command creates `release/Aggregate-Mail-0.1.3-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Aggregate Mail to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
+The command creates `release/Emc²-0.1.4-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Emc² to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
 
 These packages are unsigned and not notarized. Packaging explicitly skips signing, certificate discovery, and notarization. Gatekeeper may block downloaded copies; a local startup check does not prove downloaded-app acceptance. Local packaging does not publish downloads. The version-tag release workflow publishes both macOS architectures alongside Windows and Linux.
 
@@ -29,7 +29,7 @@ The macOS menu provides standard Command shortcuts for editing, closing and quit
 2. Configure the consent screen and add your Google accounts as test users.
 3. Create an OAuth client of type Web application.
 4. Register `http://127.0.0.1:32145/api/oauth/google/callback` as its authorized redirect URI.
-5. In Aggregate Mail, save the client ID and secret under Settings, Connection. A ticked `Saved` line under each field shows what is on disk, so an existing client ID never needs re-entering. Use Continue with Google for each account.
+5. In Emc², save the client ID and secret under Settings, Connection. A ticked `Saved` line under each field shows what is on disk, so an existing client ID never needs re-entering. Use Continue with Google for each account.
 
 Sign-in opens in your default browser. After consent, the desktop app refreshes and syncs the account. Access includes reading mail, marking it read, archiving and sending. Google apps left in external testing may require periodic reconnection. See [Google's authorization documentation](https://developers.google.com/workspace/gmail/api/auth/web-server).
 
@@ -88,7 +88,7 @@ AI clients can read synced mail and reply through the running app at `http://127
 For Claude Code:
 
 ```sh
-claude mcp add --transport http aggregate-mail http://127.0.0.1:32145/mcp --header "Authorization: Bearer <token>"
+claude mcp add --transport http emc2 http://127.0.0.1:32145/mcp --header "Authorization: Bearer <token>"
 ```
 
 For JSON-config clients that support Streamable HTTP `url` and `headers` entries, including compatible Claude Desktop/Cursor configurations:
@@ -96,7 +96,7 @@ For JSON-config clients that support Streamable HTTP `url` and `headers` entries
 ```json
 {
   "mcpServers": {
-    "aggregate-mail": {
+    "emc2": {
       "url": "http://127.0.0.1:32145/mcp",
       "headers": { "Authorization": "Bearer <token>" }
     }
@@ -118,7 +118,7 @@ MCP changes notify the open desktop UI to refresh. Replies use the same send pat
 
 ## Local storage
 
-Mail, account credentials, rules and sync metadata are AES-256-GCM encrypted in the app-data folder's `mail` directory. The app-data folder is `%APPDATA%/Aggregate Mail` on Windows and `~/Library/Application Support/Aggregate Mail` on macOS. Electron safeStorage protects the database key using Windows DPAPI or the macOS Keychain. The renderer is sandboxed and has no Node access. Mail/configuration endpoints require a random desktop-session token, in addition to origin and CSRF checks.
+Mail, account credentials, rules and sync metadata are AES-256-GCM encrypted in the app-data folder's `mail` directory. The app-data folder is `%APPDATA%/Emc²` on Windows and `~/Library/Application Support/Emc²` on macOS. Renamed from Aggregate Mail in `0.1.4`. The first launch under the new name moves the `mail` directory, `settings.env` and `Local State` from the old app-data folder into the new one, leaves the old folder behind, and records `.renamed-to-emc2` so it never runs twice. Electron safeStorage protects the database key using Windows DPAPI or the macOS Keychain. The renderer is sandboxed and has no Node access. Mail/configuration endpoints require a random desktop-session token, in addition to origin and CSRF checks.
 
 Developer OAuth settings and any optional Jev or OpenAI key are stored in the app-data folder's `settings.env`. Protect your operating-system account and app-data folder; these settings are not encrypted. Never commit them or attach them to issues. Ignore rules and packaging exclusions cover local environment files, private keys and mail databases. `.env.example` contains placeholders only. Review source changes, commit metadata, logs, screenshots and packaged contents before sharing; exclusions cannot detect every secret embedded in source.
 

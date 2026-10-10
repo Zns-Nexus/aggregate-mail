@@ -64,7 +64,7 @@ jobs:
       - name: Check desktop startup
         if: runner.os != 'Linux'
         timeout-minutes: 1
-        run: npm run check:desktop -- --user-data-dir="${{ runner.temp }}/aggregate-mail-check"
+        run: npm run check:desktop -- --user-data-dir="${{ runner.temp }}/emc2-check"
       - name: Create installer
         run: npx --no-install electron-builder ${{ matrix.args }} --publish never
       - name: Upload installer

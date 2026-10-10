@@ -2169,14 +2169,14 @@ function McpSection({
           ["Token", settings.token],
           [
             "Claude Code",
-            `claude mcp add --transport http aggregate-mail ${endpoint} --header "Authorization: Bearer ${settings.token}"`,
+            `claude mcp add --transport http emc2 ${endpoint} --header "Authorization: Bearer ${settings.token}"`,
           ],
           [
             "JSON config",
             JSON.stringify(
               {
                 mcpServers: {
-                  "aggregate-mail": {
+                  "emc2": {
                     url: endpoint,
                     headers: { Authorization: `Bearer ${settings.token}` },
                   },

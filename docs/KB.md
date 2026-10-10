@@ -6,7 +6,7 @@
 
 ## Desktop targets
 
-Aggregate Mail shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
+Emc² shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
 
 The macOS target disables app and DMG signing and notarization. The release workflow calls cross-platform CI and publishes installers for version tags. Building a package does not publish it or prove Gatekeeper acceptance.
 
@@ -23,7 +23,7 @@ For a packaged Apple silicon build, use the logged-in macOS desktop session. Qui
 
 ```sh
 check_dir=$(mktemp -d)
-open -n -W "release/mac-arm64/Aggregate Mail.app" \
+open -n -W "release/mac-arm64/Emc².app" \
   --stdout "$check_dir/stdout.log" --stderr "$check_dir/stderr.log" \
   --args --check-startup --user-data-dir="$check_dir/profile"
 cat "$check_dir/stdout.log" "$check_dir/stderr.log"
@@ -92,4 +92,8 @@ The hierarchy, restrained colors, button focus outlines and reduced-motion rule 
 
 ## Working checkout
 
-Create a new worktree and feature branch for each new Aggregate Mail task. Bind the T3 Code thread to that worktree before task work. Preserve the main checkout. See [ADR 0005](adr/0005-task-worktrees.md), based on the owner's instruction from 2026-10-09.
+Create a new worktree and feature branch for each new Emc² task. Bind the T3 Code thread to that worktree before task work. Preserve the main checkout. See [ADR 0005](adr/0005-task-worktrees.md), based on the owner's instruction from 2026-10-09.
+
+## Application rename
+
+Version 0.1.4 publishes the application as Emc². `desktop/migrate.ts` moves `mail`, `settings.env` and `Local State` from the pre-rename app-data folder into the new one on first launch and writes `.renamed-to-emc2` so the step never repeats. `desktop/migrate.test.ts` covers the carry, the single run, the no-overwrite case and the two no-op cases; run it with `npm test`. Installers are named `Emc²-<version>-<os>-<arch>.<ext>`. The Windows application id stays `dev.screen.aggregate-mail`, and the local MCP server is named `emc2`.
