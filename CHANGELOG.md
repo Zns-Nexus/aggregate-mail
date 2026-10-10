@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore the mail context menu in the feature client: right-click or Shift+F10 on rows and opened messages for existing mail actions.
+
 - Replace client action icons with consistent rounded outlines and use a vector Gmail mark in account filters, Settings and sender badges.
 
 - Sync Gmail labels, filter cached mail by label, and edit existing custom labels on opened messages.

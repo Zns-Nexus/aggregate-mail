@@ -61,6 +61,8 @@ Segoe UI Variable on Windows, SF Pro on macOS. 13px throughout the inbox, 15px s
 
 ## Behavior
 
+Right-click a mail row or opened message for Open, Reply, Done, Snooze and Teach sorting; snoozed mail also offers Return to inbox. Right-click selects the target without marking it read. Shift+F10 or the Menu key opens the same menu at the focused message. Arrow keys, Home and End navigate enabled actions; Escape or Tab dismisses and restores focus. The menu stays within the viewport and closes on outside pointer input, external scrolling, resize, window blur, or a view change. Provider writes are disabled while busy or syncing.
+
 Ctrl+Plus (including Ctrl+Equals and numpad Plus) chooses comfortable rows; Ctrl+Minus chooses compact rows. These shortcuts suppress page zoom outside editable fields and dialogs; `d` still toggles density. Opening mail requests provider read status independently of other UI actions. Merely selecting a row does not mark it read. Failed read requests leave the message unread and show a notice; reopening retries.
 
 Motion is short and eased out (cubic-bezier(0.22, 1, 0.36, 1)), never looping. The tab underline slides in 320ms. Switching views slides the list 14px toward the chosen tab with rows fading in on a 12ms stagger capped at six rows so the list settles with the pane; opening mail rises 8px; Settings rises 10px; the sender panel crossfades; dialogs scale up from 0.98. Reduced-motion settings turn all of it off. Focus shows a 1px accent outline. Message bodies render as plain text; remote images are never loaded.

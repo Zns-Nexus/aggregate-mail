@@ -10,7 +10,10 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { ContextMenu, mailMenuRequest } from "./ContextMenu";
 import {
   ChevronDown,
   ArrowRight,
@@ -315,6 +318,8 @@ export function App() {
   const [accountFilter, setAccountFilter] = useState("all");
   const [labelFilter, setLabelFilter] = useState("all");
   const [labelMail, setLabelMail] = useState<Mail | null>(null);
+  const [contextMenu, setContextMenu] = useState<ReturnType<typeof mailMenuRequest> | null>(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -607,8 +612,19 @@ export function App() {
     void changeMessage(mail, "archive");
     setOpened(false);
   };
+  const showMailMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>, mail: Mail) => {
+    setSelectedId(mail.id);
+    setContextMenu(mailMenuRequest(event, mail.id));
+  };
+  const mailMenuKey = (event: ReactKeyboardEvent<HTMLElement>, mail: Mail) => {
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.stopPropagation();
+      showMailMenu(event, mail);
+    }
+  };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (contextMenu) return;
       const target = event.target;
       if (
         target instanceof HTMLElement &&
@@ -736,6 +752,11 @@ export function App() {
     else if (row.offsetHeight + offset > list.scrollTop + list.clientHeight)
       list.scrollTop = offset + row.offsetHeight - list.clientHeight;
   }, [selected?.id, paneKey]);
+  useEffect(closeContextMenu, [paneKey, settings, closeContextMenu]);
+  const menuMail = contextMenu && state.messages.find((mail) => mail.id === contextMenu.mailId);
+  useEffect(() => {
+    if (contextMenu && !menuMail) closeContextMenu();
+  }, [contextMenu, menuMail, closeContextMenu]);
   return (
     <PrivacyContext.Provider
       value={{ on: privacy, revealed, toggle: toggleAddress }}
@@ -978,7 +999,7 @@ export function App() {
             >
               <div key={paneKey} className={`pane ${pane.current.motion}`}>
                 {opened && selected ? (
-                  <article className="message">
+                  <article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
                     <button className="back" onClick={() => setOpened(false)}>
                       <kbd>esc</kbd>Back
                     </button>
@@ -1039,6 +1060,9 @@ export function App() {
                           className={`row r${m.relevance} ${layout}${current ? " selected" : ""}${m.unread ? " unread" : ""}`}
                           onClick={() => setSelectedId(m.id)}
                           onDoubleClick={() => openMail(m)}
+                          onContextMenu={(event) => showMailMenu(event, m)}
+                          onKeyDown={(event) => mailMenuKey(event, m)}
+                          aria-haspopup="menu"
                           aria-label={`${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`}
                           aria-current={current ? "true" : undefined}
                           style={{ "--i": Math.min(i, 6) } as CSSProperties}
@@ -1183,6 +1207,22 @@ export function App() {
               </div>
             </aside>
           </main>
+        )}
+        {contextMenu && menuMail && (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            anchor={contextMenu.anchor}
+            onClose={closeContextMenu}
+            actions={[
+              { label: "Open", key: "Enter", run: () => openMail(menuMail) },
+              { label: "Reply", key: "r", disabled: busy, run: () => startCompose(menuMail) },
+              { label: "Done", key: "e", disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
+              { label: "Snooze", key: "s", disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
+              ...(isSnoozed(menuMail) ? [{ label: "Return to inbox", disabled: busy || syncing, run: () => void changeMessage(menuMail, "unsnooze") }] : []),
+              { label: "Teach sorting", key: "m", disabled: busy || syncing, run: () => setTeach(menuMail) },
+            ]}
+          />
         )}
         {labelMail && (
           <Dialog title="Gmail labels" onClose={() => { if (!busy) setLabelMail(null); }}>
