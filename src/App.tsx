@@ -58,6 +58,7 @@ const empty: State = {
   jevProvider: "typesafe",
   aiConfigured: false,
   lastSync: null,
+  syncing: false,
 };
 const providerNames: Record<Provider, string> = {
   gmail: "Gmail",
@@ -399,6 +400,7 @@ export function App() {
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
     setState(data);
+    setSyncing(data.syncing || syncLock.current);
     setLoaded(true);
     return data;
   }, [api]);
@@ -408,15 +410,30 @@ export function App() {
     setSyncing(true);
     try {
       const result = await api<{ errors: string[] }>("/sync", "POST");
-      await reload();
       if (result.errors.length) setNotice(result.errors.join("\n"));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Sync failed.");
     } finally {
       syncLock.current = false;
-      setSyncing(false);
+      try { await reload(); }
+      catch (error) {
+        setSyncing(false);
+        setNotice(error instanceof Error ? error.message : "Sync failed.");
+      }
     }
   }, [api, reload]);
+  useEffect(() => {
+    if (!syncing) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { await reload(); }
+      catch (error) { if (!stopped) setNotice(error instanceof Error ? error.message : "Sync failed."); }
+      if (!stopped) timer = setTimeout(() => void poll(), 1000);
+    };
+    timer = setTimeout(() => void poll(), 1000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [syncing, reload]);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("error")) {
@@ -427,7 +444,7 @@ export function App() {
       history.replaceState({}, "", "/");
     void reload()
       .then((data) => {
-        if (data.accounts.length) void sync();
+        if (data.accounts.length && !params.has("connected")) void sync();
       })
       .catch((error) => setNotice(error.message));
   }, [reload, sync]);
@@ -442,10 +459,9 @@ export function App() {
         if (error) setNotice(error);
         else
           void reload()
-            .then(() => sync())
             .catch((error) => setNotice(error.message));
       }),
-    [reload, sync],
+    [reload],
   );
   useEffect(
     () =>
@@ -909,7 +925,6 @@ export function App() {
             busy={busy}
             perform={perform}
             api={api}
-            sync={sync}
             onNotice={setNotice}
             windowSide={windowSide}
             onWindowSide={placeWindowControls}
@@ -1488,7 +1503,6 @@ function SettingsPage({
   busy,
   perform,
   api,
-  sync,
   onNotice,
   windowSide,
   onWindowSide,
@@ -1497,7 +1511,6 @@ function SettingsPage({
   busy: boolean;
   perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
   api: Api;
-  sync: () => Promise<void>;
   onNotice: (text: string) => void;
   windowSide: "left" | "right";
   onWindowSide: (side: "left" | "right") => void;
@@ -1751,7 +1764,6 @@ function SettingsPage({
             void perform(async () => {
               await api("/accounts/imap", "POST", input);
               setConnecting(null);
-              void sync();
             }, "Account connected. Syncing your inbox.")
           }
         />

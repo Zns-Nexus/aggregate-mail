@@ -15,10 +15,11 @@ import {
   messageActionSchema,
 } from "./mail-actions.js";
 import { mountMcp, authorizeMcp } from "./mcp.js";
-import { classify, sortMail, SortingUnavailable, type Sorting } from "./sorting.js";
+import { classify, sortMail, SortingUnavailable } from "./sorting.js";
 import { companyLogo } from "./avatars.js";
 import { companySvg, isFreeMail, normalizeDomain, syncLogos } from "./logos.js";
 import { jevProviderOf } from "../shared/types.js";
+import type { Mail } from "../shared/types.js";
 
 const configPath = process.env.MAIL_CONFIG_PATH || ".env";
 if (existsSync(configPath)) loadEnvFile(configPath);
@@ -34,6 +35,10 @@ const allowedOrigins = new Set([
 ]);
 const csrf = randomBytes(32).toString("hex");
 let syncing = false;
+let syncRun: Promise<string[]> | undefined;
+let wakeSync: (() => void) | undefined;
+const pendingAccounts = new Set<string>();
+const scheduledAccounts = new Set<string>();
 let scanningLogos = false;
 const assertNotSyncing = () => {
   if (syncing)
@@ -67,7 +72,8 @@ app.use("/api", (req, res, next) => {
     syncing &&
     !["GET", "HEAD"].includes(req.method) &&
     !req.path.startsWith("/send") &&
-    req.path !== "/mcp"
+    req.path !== "/mcp" &&
+    !(req.method === "POST" && ["/accounts/imap", "/sync"].includes(req.path))
   )
     return res
       .status(409)
@@ -88,6 +94,7 @@ app.get("/api/state", (_req, res) => {
     jevProvider: jevProviderOf(process.env.TYPESAFE_PROVIDER),
     aiConfigured: !!process.env.OPENAI_API_KEY,
     lastSync: all("meta")[0]?.lastSync || null,
+    syncing,
   });
 });
 app.post("/api/config", (req, res) => {
@@ -239,6 +246,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
       provider: "gmail",
       credentials: { refreshToken },
     });
+    void requestSync([id], true);
     if (process.env.MAIL_DESKTOP_TOKEN) {
       desktopEvents.emit("oauth", null);
       res
@@ -301,6 +309,7 @@ app.post("/api/accounts/imap", async (req, res) => {
   };
   await validateImap(a);
   put("account", id, a);
+  void requestSync([id], true);
   res.json({ ok: true });
 });
 app.delete("/api/accounts/:id", (req, res) => {
@@ -311,81 +320,119 @@ app.delete("/api/accounts/:id", (req, res) => {
   res.json({ ok: true });
 });
 app.post("/api/sync", async (_req, res) => {
-  if (syncing)
-    return res.status(409).json({ error: "Sync is already running." });
-  syncing = true;
-  const errors: string[] = [];
-  try {
-    for (const a of all("account")) {
-      try {
-        const existing = new Map(
-          all("mail")
-            .filter((m) => m.accountId === a.id)
-            .map((m) => [m.id, m]),
-        );
-        const incoming = await providers[a.provider].list(a, existing);
-        const rules = all("rule");
-        const fresh = incoming.filter((m) => !existing.has(m.id));
-        const judged = new Map<string, Sorting>();
-        if (
-          fresh.length &&
-          (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)
-        ) {
-          // One judgement per message, in parallel: a first sync has hundreds.
-          let cursor = 0;
-          let stopped = false;
-          await Promise.all(
-            Array.from({ length: Math.min(6, fresh.length) }, async () => {
-              while (cursor < fresh.length && !stopped) {
-                const m = fresh[cursor++];
-                try {
-                  judged.set(m.id, await classify(m, rules));
-                } catch (error) {
-                  if (stopped) return;
-                  stopped = true;
-                  errors.push(
-                    error instanceof SortingUnavailable
-                      ? error.message
-                      : "AI sorting unavailable. Mail was synced using local sorting.",
-                  );
-                }
-              }
-            }),
-          );
-        }
-        for (const m of incoming) {
-          const previous = existing.get(m.id);
-          const sorting = previous
-            ? {
-                category: previous.category,
-                relevance: previous.relevance,
-                reason: previous.reason,
-              }
-            : (judged.get(m.id) ?? sortMail(m, rules));
-          put("mail", m.id, {
-            ...m,
-            ...sorting,
-            archived: false,
-            snoozedUntil: previous?.snoozedUntil || null,
-          });
-        }
-        const ids = new Set(incoming.map((m) => m.id));
-        for (const m of existing.values())
-          if (!m.archived && !ids.has(m.id))
-            put("mail", m.id, { ...m, archived: true });
-        put("account", a.id, { ...a, error: undefined });
-      } catch {
-        const error = `${a.email}: sync failed. Check your connection or reconnect the account.`;
-        errors.push(error);
-        put("account", a.id, { ...a, error });
-      }
-    }
-    put("meta", "sync", { lastSync: Date.now() });
-    res.json({ errors });
-  } finally {
-    syncing = false;
-  }
+  res.json({ errors: await requestSync(all("account").map((a) => a.id)) });
 });
+
+function requestSync(ids: string[], reconnect = false): Promise<string[]> {
+  for (const id of ids) {
+    if (reconnect || !scheduledAccounts.has(id)) pendingAccounts.add(id);
+    scheduledAccounts.add(id);
+  }
+  if (syncRun) {
+    wakeSync?.();
+    return syncRun;
+  }
+  syncing = true;
+  syncRun = Promise.resolve().then(async () => {
+    const errors: string[] = [];
+    const active = new Map<string, Promise<void>>();
+    try {
+      while (pendingAccounts.size || active.size) {
+        for (const id of pendingAccounts) {
+          if (active.size >= 2) break;
+          if (active.has(id)) continue;
+          pendingAccounts.delete(id);
+          const a = all("account").find((a) => a.id === id);
+          if (!a) continue;
+          active.set(id, syncAccount(a, errors)
+            .catch(() => { errors.push(`${a.email}: sync failed. Check your connection or reconnect the account.`); })
+            .finally(() => active.delete(id)));
+        }
+        if (active.size) {
+          // Wake for a new account too; keep every active run until it settles.
+          await Promise.race([...active.values(), new Promise<void>((resolve) => { wakeSync = resolve; })]);
+          wakeSync = undefined;
+        }
+      }
+      put("meta", "sync", { lastSync: Date.now() });
+      return errors;
+    } finally {
+      syncing = false;
+      syncRun = undefined;
+      scheduledAccounts.clear();
+      desktopEvents.emit("mail-changed");
+    }
+  });
+  return syncRun;
+}
+
+async function syncAccount(a: StoredAccount, errors: string[]) {
+  const currentAccount = () => all("account").find((current) => current.id === a.id);
+  const existing = new Map(
+    all("mail").filter((m) => m.accountId === a.id).map((m) => [m.id, m]),
+  );
+  const rules = all("rule");
+  const fresh = new Map<string, Mail>();
+  const received = new Set<string>();
+  const saveBatch: NonNullable<Parameters<typeof providers.gmail.list>[2]> = (batch) => {
+    if (!currentAccount()) return;
+    for (const m of batch) {
+      if (received.has(m.id)) continue;
+      received.add(m.id);
+      const previous = existing.get(m.id);
+      const saved = {
+        ...m,
+        ...(previous
+          ? { category: previous.category, relevance: previous.relevance, reason: previous.reason }
+          : sortMail(m, rules)),
+        archived: false,
+        snoozedUntil: previous?.snoozedUntil || null,
+      };
+      put("mail", m.id, saved);
+      if (!previous) fresh.set(m.id, saved);
+    }
+    desktopEvents.emit("mail-changed");
+  };
+  let error: string | undefined;
+  try {
+    const incoming = await providers[a.provider].list(a, existing, saveBatch);
+    if (!currentAccount()) return;
+    // Also support a provider returning its final batch without a progress callback.
+    saveBatch(incoming);
+    const ids = new Set(incoming.map((m) => m.id));
+    for (const m of existing.values())
+      if (!m.archived && !ids.has(m.id)) put("mail", m.id, { ...m, archived: true });
+  } catch {
+    error = `${a.email}: sync failed. Check your connection or reconnect the account.`;
+    errors.push(error);
+  }
+  if (fresh.size && (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)) {
+    const messages = [...fresh.values()];
+    let cursor = 0;
+    let stopped = false;
+    await Promise.all(Array.from({ length: Math.min(6, messages.length) }, async () => {
+      while (cursor < messages.length && !stopped && currentAccount()) {
+        const m = messages[cursor++];
+        try {
+          const sorting = await classify(m, rules);
+          if (currentAccount()) put("mail", m.id, { ...m, ...sorting });
+        } catch (sortingFailure) {
+          if (stopped) return;
+          stopped = true;
+          const warning = sortingFailure instanceof SortingUnavailable
+            ? sortingFailure.message
+            : "AI sorting unavailable. Mail was synced using local sorting.";
+          errors.push(warning);
+          if (!error) error = warning;
+        }
+      }
+    }));
+  }
+  const current = currentAccount();
+  // A reconnect owns its new credentials and status, even if the old run finishes later.
+  if (current && JSON.stringify(current.credentials) === JSON.stringify(a.credentials))
+    put("account", a.id, { ...current, error });
+}
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);
   if (!all("mail").some((m) => m.id === req.params.id))

@@ -106,7 +106,7 @@ export class SentCopyError extends Error {}
 export const providers: Record<
   Provider,
   {
-    list: (a: StoredAccount, cached: Map<string, Mail>) => Promise<Incoming[]>;
+    list: (a: StoredAccount, cached: Map<string, Mail>, onBatch?: (batch: Incoming[]) => void) => Promise<Incoming[]>;
     update: (
       a: StoredAccount,
       m: Mail,
@@ -116,35 +116,50 @@ export const providers: Record<
   }
 > = {
   gmail: {
-    async list(a, cached) {
-      const api = gmail(a);
+    async list(a, cached, onBatch) {
+      const auth = oauth();
+      auth.setCredentials({ refresh_token: a.credentials.refreshToken });
+      // Bound token refresh as well as message reads, using request cancellation.
+      auth.transporter.defaults.timeout = 30000;
+      auth.transporter.defaults.retry = false;
+      auth.transporter.defaults.retryConfig = { retry: 0 };
+      const api = google.gmail({ version: "v1", auth });
+      const options = { timeout: 30000, retry: false };
       const messages: Incoming[] = [];
+      const unreadIds = new Set<string>();
       let pageToken: string | undefined;
+      // Listing unread IDs replaces a metadata request for every cached message.
+      if (cached.size) {
+        do {
+          const page = await api.users.messages.list({
+            userId: "me", labelIds: ["INBOX", "UNREAD"], maxResults: 500, pageToken,
+          }, options);
+          for (const item of page.data.messages || []) unreadIds.add(item.id!);
+          pageToken = page.data.nextPageToken || undefined;
+        } while (pageToken);
+      }
       do {
         const page = await api.users.messages.list({
           userId: "me",
           labelIds: ["INBOX"],
           maxResults: 100,
           pageToken,
-        });
+        }, options);
         const items = page.data.messages || [];
         for (let offset = 0; offset < items.length; offset += 10) {
-          const batch = await Promise.all(
+          const results = await Promise.allSettled(
             items.slice(offset, offset + 10).map(async (item) => {
               const previous = cached.get(`${a.id}:${item.id}`);
+              if (previous) return {
+                ...previous, unread: unreadIds.has(item.id!),
+                threadId: item.threadId || previous.threadId,
+              };
               const result = await api.users.messages.get({
                 userId: "me",
                 id: item.id!,
-                format: previous ? "metadata" : "raw",
-                ...(previous ? { fields: "labelIds,threadId" } : {}),
-              });
+                format: "raw",
+              }, options);
               const unread = result.data.labelIds?.includes("UNREAD") || false;
-              if (previous)
-                return {
-                  ...previous,
-                  unread,
-                  threadId: result.data.threadId || undefined,
-                };
               return {
                 ...(await parse(
                   a,
@@ -157,7 +172,11 @@ export const providers: Record<
               };
             }),
           );
+          const batch = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
           messages.push(...batch);
+          onBatch?.(batch);
+          const failure = results.find((result) => result.status === "rejected");
+          if (failure?.status === "rejected") throw failure.reason;
         }
         pageToken = page.data.nextPageToken || undefined;
       } while (pageToken);
@@ -211,7 +230,7 @@ function smtp(a: StoredAccount) {
 }
 function imapProvider() {
   return {
-    async list(a: StoredAccount) {
+    async list(a: StoredAccount, cached: Map<string, Mail>, onBatch?: (batch: Incoming[]) => void) {
       const client = imap(a);
       try {
         await client.connect();
@@ -220,21 +239,31 @@ function imapProvider() {
           const result: Incoming[] = [];
           if (!client.mailbox || !client.mailbox.exists) return result;
           const validity = String(client.mailbox.uidValidity);
-          // shortcut: full inbox fetch each sync, upgrade to incremental UID sync for large mailboxes.
+          const missing: number[] = [];
+          let batch: Incoming[] = [];
+          // Drain flags first: ImapFlow cannot issue commands inside this iterator.
           for await (const m of client.fetch("1:*", {
             uid: true,
-            source: true,
             flags: true,
           })) {
-            if (m.source)
-              result.push(
-                await parse(
-                  a,
-                  `${validity}:${m.uid}`,
-                  m.source,
-                  !m.flags?.has("\\Seen"),
-                ),
-              );
+            const previous = cached.get(`${a.id}:${validity}:${m.uid}`);
+            if (previous) {
+              const incoming = { ...previous, unread: !m.flags?.has("\\Seen") };
+              result.push(incoming); batch.push(incoming);
+              if (batch.length === 100) { onBatch?.(batch); batch = []; }
+            } else missing.push(m.uid);
+          }
+          if (batch.length) onBatch?.(batch);
+          for (let offset = 0; offset < missing.length; offset += 10) {
+            batch = [];
+            for await (const m of client.fetch(missing.slice(offset, offset + 10).join(","), {
+              uid: true, source: true, flags: true,
+            }, { uid: true })) {
+              if (!m.source) throw new Error("Could not fetch this email. Sync and try again.");
+              batch.push(await parse(a, `${validity}:${m.uid}`, m.source, !m.flags?.has("\\Seen")));
+            }
+            result.push(...batch);
+            onBatch?.(batch);
           }
           return result;
         } finally {

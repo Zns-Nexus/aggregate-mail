@@ -17,6 +17,52 @@ The macOS target disables app and DMG signing and notarization. The release work
 
 ## Verification
 
+### Mailbox sync
+
+The [sync service](../server/index.ts) allows validated IMAP registration and
+Google OAuth callbacks during a pending sync. Each connection schedules its
+account immediately. Up to two accounts run at once; an additional account
+waits for a slot. Overlapping sync requests share that run. Reconnecting an
+active account queues one subsequent run with its current credentials. An old
+run cannot restore old credentials or recreate a removed account. Mail actions,
+account removal, configuration and Teach keep their existing sync guards.
+
+[Provider listing](../server/providers.ts) saves fetched batches before later
+pages or AI sorting finish. New mail first uses local sorting, then receives
+the configured AI classification. Cached sorting and snooze state are retained.
+Only a successful complete inbox listing marks absent cached messages archived.
+A partial failure retains cached mail and fetched batches, sorts new fetched
+mail, and reports an account error. AI failures keep local sorting and return
+a warning. The [renderer](../src/App.tsx) reloads state during sync, including
+once per second while pending. The service owns connection-triggered sync so
+connection callbacks do not start duplicate runs.
+
+Gmail reuses cached bodies and refreshes unread state with paginated inbox and
+unread-ID lists instead of one metadata request per cached message. Fresh raw
+reads run in batches of ten. Gmail reads and token refresh have a 30-second
+request timeout that aborts transport. Read batches settle every in-flight
+request before releasing their account slot. IMAP drains UID/flag enumeration
+before fetching missing bodies by UID, with no cached-body download. Neither
+provider caps the inbox or drops older mail.
+
+Run the synthetic service and provider regressions with:
+
+```sh
+node --import tsx --test server/sync.test.ts server/providers.test.ts
+```
+
+The [service tests](../server/sync.test.ts) cover registration during pending
+sync, the mocked Google callback, credential continuity, coalescing, progressive
+visibility, configured AI completion, cache preservation, retry and deleted
+accounts. The [provider tests](../server/providers.test.ts) check cached work,
+pagination, progressive batches, IMAP command order and actual transport abort
+against a synthetic loopback endpoint. They shorten the timeout clock while
+asserting the configured 30-second bound. These checks use synthetic accounts
+and mail. They do not prove real Gmail or Workspace authentication, real mailbox
+latency, native UI behavior, deployment or release readiness.
+
+### Desktop startup
+
 Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access and checks native menu roles on macOS. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
 
 ```sh

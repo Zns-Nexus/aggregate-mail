@@ -111,6 +111,7 @@ export type State = {
   jevProvider: JevProvider;
   aiConfigured: boolean;
   lastSync: number | null;
+  syncing: boolean;
 };
 
 // What a run of POST /api/logos/sync found across the senders in the store.
