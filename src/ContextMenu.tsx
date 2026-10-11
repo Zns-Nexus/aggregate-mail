@@ -34,7 +34,7 @@ export function ContextMenu({ x, y, anchor, actions, onClose }: {
     if (!menu) return;
     menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8))}px`;
-    menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
   }, [x, y]);
   useEffect(() => {
     const away = (event: PointerEvent) => {
