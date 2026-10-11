@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Integrate account setup, sync recovery, uncertain-send protection and reader navigation while preserving every original PR commit. Keep connection forms available during sync, context-menu Open working, and read-on-open active for history and Gmail IMAP All Mail.
+
 - Verify the exact archived IMAP Message-ID before marking mail read; reject missing or mismatched search candidates.
 - Mark mail read when moving through the open reader with j/k, and close the old reader when a number shortcut changes accounts.
 - Keep the synthetic IMAP store until process exit so Windows does not try to delete an open SQLite file during test cleanup.

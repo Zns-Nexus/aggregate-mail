@@ -89,4 +89,8 @@ test("IMAP read uses inbox UIDs or an exact archive Message-ID without opening a
   assert.deepEqual(seen, ["5", "77", "77"]);
   assert.equal(findMail(archived.id).unread, false);
   assert.equal(locked, false);
+  t.mock.method(ImapFlow.prototype, "list", async () => [{ path: "Saved", specialUse: "\\All" }]);
+  await providers["gmail-imap"].update({ ...account, provider: "gmail-imap" }, archived, "read");
+  assert.equal(opened.at(-1), "Saved");
+  assert.equal(seen.at(-1), "77");
 });

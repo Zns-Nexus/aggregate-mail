@@ -6,6 +6,8 @@ import type { Mail, State } from "../shared/types";
 
 async function mount(native = false) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/" });
+  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   let discard = true;
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
@@ -30,7 +32,7 @@ async function mount(native = false) {
     messages: [makeMail("a:1", "Alpha"), makeMail("a:2", "Beta"),
       makeMail("b:1", "Gamma", "b"), makeMail("a:3", "Other message", "a", "other")],
     labels: [], rules: [], googleConfigured: false, googleClientId: null, jevConfigured: false,
-    jevProvider: "typesafe", aiConfigured: false, lastSync: null,
+    jevProvider: "typesafe", aiConfigured: false, lastSync: null, syncing: false,
   };
   let changed: (() => void) | undefined;
   let navigate: ((direction: "back" | "forward") => void) | undefined;
@@ -97,6 +99,10 @@ async function mount(native = false) {
     title: () => container.querySelector(".message h1")?.textContent,
     native: async (direction: "back" | "forward") => { await act(async () => navigate?.(direction)); },
     refresh: async () => { await act(async () => changed?.()); },
+    menu: async (id: string) => {
+      const row = container.querySelector<HTMLElement>(`[id='mail-${id}']`)!;
+      await act(async () => row.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+    },
     subscriptions: () => subscriptions,
     discardDraft: (value: boolean) => { discard = value; },
     async close() {
@@ -112,6 +118,18 @@ async function mount(native = false) {
     },
   };
 }
+
+test("context menu Open navigates and marks read without a menu guard blocking it", async () => {
+  const app = await mount();
+  try {
+    await app.menu("a:1");
+    assert.equal(app.title(), undefined);
+    assert.equal(app.mutations.length, 0);
+    await app.click(app.container.querySelector<HTMLButtonElement>('[role="menuitem"]')!);
+    assert.equal(app.title(), "Alpha");
+    assert.equal(app.mutations.length, 1);
+  } finally { await app.close(); }
+});
 
 test("mounted App traverses intentional mail routes, restores context and truncates Forward", async () => {
   const app = await mount();
@@ -133,6 +151,11 @@ test("mounted App traverses intentional mail routes, restores context and trunca
     assert.equal(app.title(), "Alpha");
     assert.equal(app.container.querySelector(".message-images img"), null);
     assert.equal(app.mutations.length, mutationCount);
+    await app.click(app.back());
+    app.state.messages.find((mail) => mail.id === "a:1")!.unread = true;
+    await app.refresh();
+    await app.click(app.forward());
+    assert.equal(app.mutations.length, mutationCount + 1, "history reopening unread mail marks it read");
     const beta = [...app.container.querySelectorAll<HTMLButtonElement>(".context-list button")]
       .find((button) => button.textContent?.startsWith("Beta"))!;
     await app.click(beta);

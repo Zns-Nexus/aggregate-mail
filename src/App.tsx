@@ -480,19 +480,21 @@ export function App() {
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
-  const navigationBlocked = !!(compose || teach || snooze || shortcuts || settings || labelMail || connecting || contextMenu);
+  const navigationBlocked = !!(compose || teach || snooze || shortcuts || settings || labelMail || connecting);
   const navigate = (patch: Partial<MailLocation>, search = false) => {
     if (navigationBlocked) return false;
     navigation.visit(patch, search);
     return true;
   };
   const travel = (direction: -1 | 1) => {
-    if (navigationBlocked) return;
+    if (navigationBlocked || contextMenu) return;
     navigation.travel(direction, (target) => {
       const accountExists = target.accountFilter === "all" ||
         state.accounts.some((account) => account.id === target.accountFilter);
       const mailExists = state.messages.some((mail) => mail.id === target.selectedId &&
         state.accounts.some((account) => account.id === mail.accountId));
+      const mail = state.messages.find((mail) => mail.id === target.selectedId);
+      if (target.opened && mailExists && mail) markRead(mail);
       setSearching(!!target.query);
       return { ...target, accountFilter: accountExists ? target.accountFilter : "all",
         selectedId: mailExists ? target.selectedId : null, opened: target.opened && mailExists };
@@ -1459,13 +1461,13 @@ export function App() {
         {connecting === "choose" ? (
           <Dialog title="Connect account" onClose={() => setConnecting(null)}>
             <p className="dialog-copy">Choose your email provider.</p>
-            <ProviderChoices googleConfigured={state.googleConfigured} busy={busy || syncing} onChoose={setConnecting} />
+            <ProviderChoices googleConfigured={state.googleConfigured} busy={busy} onChoose={setConnecting} />
           </Dialog>
         ) : connecting && (
           <ConnectDialog
             key={connecting}
             provider={connecting}
-            busy={busy || syncing}
+            busy={busy}
             onClose={() => setConnecting(null)}
             onBack={() => setConnecting("choose")}
             onConnect={async (input) => {

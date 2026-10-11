@@ -48,7 +48,7 @@ test("account onboarding keeps transport identities and Gmail mailbox semantics"
   });
   t.mock.method(google.auth.OAuth2.prototype, "getToken", async () => ({ tokens: { refresh_token: "synthetic-refresh" } }));
   let googleEmail = "user@workspace.example";
-  t.mock.method(google, "gmail", () => ({ users: { getProfile: async () => ({ data: { emailAddress: googleEmail } }) } }), {});
+  t.mock.method(google, "gmail", () => ({ users: { getProfile: async () => ({ data: { emailAddress: googleEmail } }), labels: { list: async () => ({ data: { labels: [] } }) } } }), {});
   const { startServer } = await import("./index.js");
   const { all, put, closeStore } = await import("./store.js");
   const { providers } = await import("./providers.js");

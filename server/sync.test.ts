@@ -60,6 +60,7 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
     mock.method(ImapFlow.prototype, "mailboxOpen", async () => ({}));
     mock.method(ImapFlow.prototype, "close", () => {});
     mock.method(nodemailer, "createTransport", () => ({ verify: async () => true }));
+    mock.method(google, "gmail", () => ({ users: { labels: { list: async () => ({ data: { labels: [] } }) } } }), {});
     let onMailChanged: (() => void) | undefined;
     const server = await startServer(0, undefined, () => onMailChanged?.());
     const address = server.address();
@@ -96,6 +97,7 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
         const pending = request("/sync");
         await entered.promise;
         let duplicate: Promise<Response> | undefined;
+        let queuedRead: Promise<Response> | undefined;
         try {
           assert.equal((await add("second@example.com")).status, 200);
           await secondStarted.promise;
@@ -106,13 +108,14 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
           assert.equal((await state()).syncing, true);
           duplicate = request("/sync");
           assert.equal((await request("/rules", { sender: "sender@example.com", instruction: "Keep", category: "important", relevance: 2 })).status, 409);
-          assert.equal((await request(`/messages/${first.id}:one`, { action: "read" }, "PATCH")).status, 409);
+          queuedRead = request(`/messages/${first.id}:one`, { action: "read" }, "PATCH");
           assert.equal((await networkFetch(`${origin}/api/sync`, { method: "POST", headers: { "X-Desktop-Token": "synthetic-token" } })).status, 403);
           assert.equal((await networkFetch(`${origin}/api/state`)).status, 403);
           assert.equal((await networkFetch(`${origin}/api/state`, { headers: { ...headers, Origin: "https://untrusted.example" } })).status, 403);
         } finally {
           release.resolve();
           releaseSecond.resolve();
+          if (queuedRead) assert.equal((await queuedRead).status, 404);
           await pending;
           if (duplicate) assert.equal((await duplicate).status, 200);
         }
@@ -134,7 +137,7 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
         };
         mock.method(google.auth.OAuth2.prototype, "getToken", async () => ({ tokens: { refresh_token: "new-synthetic" } }));
         let profileEmail = a.email;
-        const gmailMock = mock.method(google, "gmail", () => ({ users: { getProfile: async () => ({ data: { emailAddress: profileEmail } }) } }), {});
+        const gmailMock = mock.method(google, "gmail", () => ({ users: { getProfile: async () => ({ data: { emailAddress: profileEmail } }), labels: { list: async () => ({ data: { labels: [] } }) } } }), {});
         const connectGoogle = async () => {
           const entry = await networkFetch(`${origin}/api/oauth/google`, { redirect: "manual" });
           const location = entry.headers.get("location")!;

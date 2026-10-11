@@ -27,6 +27,7 @@ const mail = (a: StoredAccount, remoteId = "42:1"): Mail => ({
   id: `${a.id}:${remoteId}`, remoteId, accountId: a.id, sender: "Synthetic", address: "sender@example.com", to: a.email,
   subject: "Saved", body: "Saved body", preview: "Saved body", date: 1700000000000, unread: false,
   archived: false, snoozedUntil: 1800000000000, category: "important", relevance: 2, reason: "Taught sorting",
+  ...(a.provider === "gmail" ? { labelIds: ["INBOX"] } : {}),
 });
 type ImapRuntime = ImapFlow & { state: number; states: { SELECTED: number }; socket: { destroyed: boolean };
   exec: (...args: unknown[]) => Promise<unknown>; throttleWait: (delay: number) => Promise<boolean>; autoidle: () => void; emitError: (error: Error) => void };
@@ -109,7 +110,7 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
             }
             lists++;
             return new Response(JSON.stringify(mode === "transient" ? { error: { message: privateText } }
-              : { messages: String(url).includes("UNREAD") ? [] : [{ id: "one" }] }), {
+              : String(url).includes("/labels") ? { labels: [] } : { messages: String(url).includes("UNREAD") ? [] : [{ id: "one" }] }), {
               status: mode === "transient" ? 503 : 200, headers: { "Content-Type": "application/json" },
             });
           };
@@ -130,7 +131,7 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
         await post();
         assert.equal((await state()).accounts[0].error, undefined);
         assert.deepEqual(all("account")[0].credentials, a.credentials);
-        assert.deepEqual(all("mail"), [cached]);
+        assert.deepEqual(all("mail"), [{ ...cached, labelIds: ["INBOX"] }]);
       });
       await t.test("403 quota differs from policy; structured IMAP auth, read and unknown stay safe", async () => {
         const a = fixture(); put("account", a.id, a); put("mail", `${a.id}:42:1`, mail(a));
@@ -196,7 +197,7 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
         put("account", a.id, a); put("mail", cached.id, cached);
         const stalled = deferred(), release = deferred();
         let gets = 0;
-        mock.method(google, "gmail", () => ({ users: { messages: {
+        mock.method(google, "gmail", () => ({ users: { labels: { list: async () => ({ data: { labels: [] } }) }, messages: {
           list: async (input: { labelIds: string[] }) => ({ data: { messages: input.labelIds.includes("UNREAD") ? []
             : Array.from({ length: 100 }, (_, i) => ({ id: String(i) })) } }),
           get: async (input: { id: string }) => {
@@ -443,7 +444,7 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
           return statement;
         });
         mock.method(DatabaseSync.prototype, "exec", function (this: DatabaseSync, sql: string) { if (sql === "COMMIT") commits++; return originalExec.call(this, sql); });
-        mock.method(google, "gmail", () => ({ users: { messages: {
+        mock.method(google, "gmail", () => ({ users: { labels: { list: async () => ({ data: { labels: [] } }) }, messages: {
           list: async (input: { labelIds: string[]; pageToken?: string }) => {
             lists++; const offset = Number(input.pageToken || 0);
             if (input.labelIds.includes("UNREAD") && !changed) return { data: {} };
@@ -462,7 +463,7 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
             return statement;
           });
           mock.method(DatabaseSync.prototype, "exec", function (this: DatabaseSync, sql: string) { if (sql === "COMMIT") commits++; return originalExec.call(this, sql); });
-          mock.method(google, "gmail", () => ({ users: { messages: {
+          mock.method(google, "gmail", () => ({ users: { labels: { list: async () => ({ data: { labels: [] } }) }, messages: {
             list: async (input: { labelIds: string[]; pageToken?: string }) => {
               lists++; const offset = Number(input.pageToken || 0);
               return { data: { messages: rows.slice(offset, offset + (input.labelIds.includes("UNREAD") ? 500 : 100)).map((m) => ({ id: m.remoteId })),

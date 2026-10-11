@@ -107,11 +107,14 @@ export function oauth() {
 function gmail(a: StoredAccount) {
   const auth = oauth();
   auth.setCredentials({ refresh_token: a.credentials.refreshToken });
+  auth.transporter.defaults.timeout = 30000;
+  auth.transporter.defaults.retry = false;
+  auth.transporter.defaults.retryConfig = { retry: 0 };
   return google.gmail({ version: "v1", auth });
 }
 
 export async function listGmailLabels(a: StoredAccount): Promise<GmailLabel[]> {
-  const result = await gmail(a).users.labels.list({ userId: "me" });
+  const result = await syncOperation(a.provider, "list", () => gmail(a).users.labels.list({ userId: "me" }, { timeout: 30000, retry: false }));
   return (result.data.labels || []).flatMap((label) =>
     label.id && label.name && (label.type === "user" || label.type === "system")
       ? [{ id: label.id, accountId: a.id, name: label.name, type: label.type }]
@@ -501,8 +504,9 @@ function imapProvider() {
       try {
         await client.connect();
         const mailbox = m.archived && action === "read"
-          ? (await client.list()).find((folder) => folder.specialUse === "\\Archive")?.path || "Archive"
+          ? (await client.list()).find((folder) => folder.specialUse === (a.provider === "gmail-imap" ? "\\All" : "\\Archive"))?.path || (a.provider === "gmail-imap" ? null : "Archive")
           : "INBOX";
+        if (!mailbox) throw new Error("Gmail All Mail is unavailable. Enable it in IMAP before marking archived mail read.");
         const lock = await client.getMailboxLock(mailbox);
         try {
           const [validity, originalUid] = m.remoteId.split(":");

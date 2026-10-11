@@ -196,10 +196,10 @@ After SMTP accepts the message, Sent-copy and connection cleanup failures become
 Focused synthetic regressions:
 
 ```sh
-node --import tsx --test src/compose-send.test.tsx server/providers.test.ts
+node --import tsx --test src/compose-send.test.tsx server/send-provider.test.ts
 ```
 
-[Renderer regressions](../src/compose-send.test.tsx) execute the compose submission function, form event handlers and rendered status text. A loopback HTTP server records a submission and drops its response, then verifies canceled and confirmed resends. Tests cover uncertainty through edits, shared pointer/keyboard form handling, validation, close prompts, overlapping submissions and refresh failure. [Provider regressions](../server/providers.test.ts) run the real provider and shared send operation with synthetic SMTP and IMAP adapters. They cover accepted SMTP, Sent-copy and cleanup warnings, invalid input and SMTP failure without an IMAP connection. These tests do not drive a native window, verify browser event dispatch or prove real mail delivery.
+[Renderer regressions](../src/compose-send.test.tsx) execute the compose submission function, form event handlers and rendered status text. A loopback HTTP server records a submission and drops its response, then verifies canceled and confirmed resends. Tests cover uncertainty through edits, shared pointer/keyboard form handling, validation, close prompts, overlapping submissions and refresh failure. [Provider regressions](../server/send-provider.test.ts) run the real provider and shared send operation with synthetic SMTP and IMAP adapters. They cover accepted SMTP, Sent-copy and cleanup warnings, invalid input and SMTP failure without an IMAP connection. These tests do not drive a native window, verify browser event dispatch or prove real mail delivery.
 
 Attempt identifiers, persistent receipts, automatic recovery, automatic retries and a durable outbox are deferred. Send uncertainty exists only on the open in-memory draft. Sources: [compose](../src/App.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
 
@@ -248,11 +248,11 @@ Sources: [message rendering](../src/App.tsx), [navigation policy](../desktop/nav
 
 ### Back and Forward
 
-The [navigation hook](../src/navigation.ts) keeps visited view, account, search,
+The [navigation hook](../src/navigation.ts) keeps visited view, account, Gmail label filter, search,
 selection and reader state in memory. [App](../src/App.tsx) records tab and
 account changes, search edits and intentional message opens. Selecting a row
 does not add a visit. Consecutive search edits share one visit. Back and Forward
-restore context without marking mail read or calling a mail mutation. A new
+restore context and request read status when reopening unread mail. A new
 visit after Back removes the forward branch. Missing messages return to the
 list; missing account filters return to All. Drafts and dialogs block traversal.
 Escape retains the existing close-email, close-dialog and draft-confirmation
@@ -307,7 +307,7 @@ Older cached mail lacks image metadata. The authenticated, CSRF-protected
 optional image metadata to its existing encrypted JSON record and leaves its
 body and current mailbox state intact. Later requests reuse that metadata,
 including an empty list. Gmail retrieves raw MIME by the stable Gmail ID; its
-cached inbox sync continues to request metadata only. IMAP validates INBOX
+cached inbox sync refreshes unread status and label membership using lists, without downloading cached bodies. IMAP validates INBOX
 UIDVALIDITY and fetches that UID without setting Seen. It also checks Message-ID
 when one is cached. Older archived IMAP messages fail before connecting because
 the stored UID belongs to the former INBOX. Newly parsed images remain usable

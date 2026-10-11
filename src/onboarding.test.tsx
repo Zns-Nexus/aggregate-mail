@@ -7,9 +7,9 @@ import { App, ConnectDialog, SettingsPage } from "./App";
 import type { Provider, State } from "../shared/types";
 
 const state: State = {
-  accounts: [], messages: [], rules: [], googleConfigured: false,
+  accounts: [], messages: [], labels: [], rules: [], googleConfigured: false,
   googleClientId: null, jevConfigured: false, jevProvider: "typesafe",
-  aiConfigured: false, lastSync: null,
+  aiConfigured: false, lastSync: null, syncing: false,
 };
 const settings = (googleConfigured: boolean) => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -168,12 +168,13 @@ function mockApp(connection = Promise.resolve(new Response("{}"))) {
   window.desktop = {
     platform: "darwin", oauthUrl: "/api/oauth/google", windowCommand: () => {},
     onWindowState: () => () => {}, onMailChanged: () => () => {},
+    onNavigation: () => () => {},
     onAccountConnected: (callback) => { connected = callback; return () => { connected = undefined; }; },
   };
   globalThis.fetch = async (url, init) => {
     const path = String(url);
     calls.push(`${init?.method} ${path}`);
-    if (path === "/api/state") return new Response(JSON.stringify({ ...state, googleConfigured: true, csrf: "synthetic-csrf" }));
+    if (path === "/api/state") return new Response(JSON.stringify({ ...state, syncing: true, googleConfigured: true, csrf: "synthetic-csrf" }));
     if (path === "/api/sync") return new Response('{"errors":[]}');
     if (path === "/api/accounts/imap" && init?.method === "POST") return connection;
     throw new Error(`Unexpected API request: ${path}`);
@@ -183,7 +184,7 @@ function mockApp(connection = Promise.resolve(new Response("{}"))) {
     googleConnected: async () => {
       assert.ok(connected, "App registered the actual desktop callback");
       await act(async () => connected!(null));
-      assert.ok(calls.includes("POST /api/sync"), "callback completed reload and sync");
+      assert.ok(calls.includes("GET /api/state"), "callback refreshed server-scheduled sync state");
     },
   };
 }
@@ -222,6 +223,7 @@ for (const provider of ["icloud", "imap"] as const) {
         await api.googleConnected();
         assert.equal(element(container, "form"), originalForm, "same form stays mounted");
         assertDetails(container);
+        if (!pending) assert.equal(element<HTMLButtonElement>(container, '.form-actions button.button').disabled, false, "another account can connect during sync");
         if (pending) {
           assert.equal(element<HTMLButtonElement>(container, '.form-actions button.button').disabled, true);
           assert.match(originalForm.textContent!, /Checking connection/);

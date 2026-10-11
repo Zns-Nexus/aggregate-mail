@@ -47,7 +47,7 @@ test("MIME parsing keeps text and extracts bounded safe metadata without sender 
   assert.deepEqual(noImages.images, []);
 });
 
-test("Gmail keeps cached metadata sync and loads exactly one stable ID on demand, including archives", async (t) => {
+test("Gmail skips cached bodies and loads exactly one stable ID on demand, including archives", async (t) => {
   const requests: object[] = [];
   t.mock.method(google as unknown as { gmail: () => unknown }, "gmail", () => ({ users: { messages: {
     list: async () => ({ data: { messages: [{ id: "abc" }] } }),
@@ -60,7 +60,7 @@ test("Gmail keeps cached metadata sync and loads exactly one stable ID on demand
   const cached = await providers.gmail.list(account, new Map([[mail.id, mail]]));
   assert.equal(cached[0].body, mail.body);
   assert.equal(cached[0].images, undefined);
-  assert.deepEqual(requests, [{ userId: "me", id: "abc", format: "metadata", fields: "labelIds,threadId" }]);
+  assert.deepEqual(requests, []);
   requests.length = 0;
   assert.deepEqual(await providers.gmail.images(account, { ...mail, archived: true }), [photo]);
   assert.deepEqual(requests, [{ userId: "me", id: "abc", format: "raw" }]);
