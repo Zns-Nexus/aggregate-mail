@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ImapFlow, type FetchMessageObject } from "imapflow";
@@ -11,7 +11,7 @@ test("IMAP read uses inbox UIDs or an exact archive Message-ID without opening a
   const directory = mkdtempSync(path.join(tmpdir(), "emc2-imap-read-"));
   process.env.MAIL_DATA_DIR = directory;
   process.env.MAIL_DATA_KEY = Buffer.alloc(32, 8).toString("base64");
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // shortcut: the store holds SQLite until exit; add cleanup when it exposes a close operation.
   const { put } = await import("./store.js");
   const { findMail, updateMessage } = await import("./mail-actions.js");
   t.mock.method(ImapFlow.prototype, "connect", async () => {});

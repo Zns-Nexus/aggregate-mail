@@ -4,6 +4,7 @@
 
 - Verify the exact archived IMAP Message-ID before marking mail read; reject missing or mismatched search candidates.
 - Mark mail read when moving through the open reader with j/k, and close the old reader when a number shortcut changes accounts.
+- Keep the synthetic IMAP store until process exit so Windows does not try to delete an open SQLite file during test cleanup.
 
 - Keep sender provider badges visible in compact rows and give Gmail/IMAP badges opaque rounded-square backgrounds instead of empty circular outlines.
 
