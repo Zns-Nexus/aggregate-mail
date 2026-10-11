@@ -9,6 +9,12 @@ worktree steps in [CONTRIBUTING.md](../CONTRIBUTING.md). The issue or pull
 request is the task record for scope, owner, branches, checks and status. See
 [ADR 0007](adr/0007-contributor-coordination.md) for the reason for this process.
 
+## Client appearance and read actions
+
+The renderer uses macOS-style dark chrome on every desktop platform: black outer background, rounded mail/sender panes, grouped Settings controls and rounded menus/dialogs. Native window-control spacing and IPC remain unchanged. `src/style.css` defines shared surface/radius tokens. Pane and menu transitions are brief opacity/transform animations; there are no looping effects or wheel-event handlers. Scroll containers use native smooth programmatic scrolling and contained overscroll. New panes reset instantly, and reduced-motion preferences disable smooth scrolling and shorten animations.
+
+Right-click mail rows or opened messages to use Mark as read without opening the message. Already-read mail disables that item. Explicit read and read-on-open both use `markMailRead` in `src/mail-ui.ts`, coalesce pending requests and call the existing read endpoint independently of other UI busy state. Requests wait behind server sync; failures keep unread state and can be retried from the menu or by reopening mail. Other context-menu provider writes remain disabled during sync.
+
 ## Desktop targets
 
 Emc² shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).

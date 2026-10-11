@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { GmailLabel, Mail } from "../shared/types";
 import { LabelForm, PrivacyContext } from "./App";
-import { customLabels, densityShortcut, markReadOnOpen, matchesLabel, selectedMail } from "./mail-ui";
+import { customLabels, densityShortcut, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
 
 const mail: Mail = {
   id: "a:1", accountId: "a", remoteId: "1", sender: "Sender",
@@ -57,18 +57,18 @@ test("opening archived unread mail requests read, coalesces duplicate opens and 
   let finish = () => {};
   const gate = new Promise<void>((resolve) => { finish = resolve; });
   const update = async () => { calls++; await gate; };
-  const first = markReadOnOpen(mail, pending, update);
-  await markReadOnOpen(mail, pending, update);
+  const first = markMailRead(mail, pending, update);
+  await markMailRead(mail, pending, update);
   assert.equal(calls, 1);
   assert.equal(pending.has(mail.id), true);
   finish();
   await first;
   assert.equal(pending.size, 0);
-  await assert.rejects(markReadOnOpen(mail, pending, async () => { throw new Error("offline"); }), /offline/);
+  await assert.rejects(markMailRead(mail, pending, async () => { throw new Error("offline"); }), /offline/);
   assert.equal(pending.size, 0);
-  await markReadOnOpen(mail, pending, async () => { calls++; });
+  await markMailRead(mail, pending, async () => { calls++; });
   assert.equal(calls, 2);
-  await markReadOnOpen({ ...mail, unread: false }, pending, update);
+  await markMailRead({ ...mail, unread: false }, pending, update);
   assert.equal(calls, 2);
 });
 

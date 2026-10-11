@@ -26,4 +26,4 @@ qsgWf9eTSH3hwijq.mp4. Full machine transcript in .reference/transcript.txt. Gmai
 
 ## Brand Commitments
 
-Follow the video's compact black interface. White text. No decorative cards, pills, or slogans. No live browser testing, per user instruction.
+Use a compact macOS-style dark interface with white primary text, rounded working panes and controls, and short, smooth state transitions. Preserve comfortable and compact inbox density, keyboard navigation and reduced-motion support. No decorative cards, pills, or slogans. No live browser testing, per user instruction.

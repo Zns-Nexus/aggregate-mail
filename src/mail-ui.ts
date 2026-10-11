@@ -20,8 +20,8 @@ export function selectedMail(messages: Mail[], filtered: Mail[], id: string | nu
     : filtered.find((mail) => mail.id === id) || filtered[0];
 }
 
-// Read-on-open runs independently of UI action busy state; the server orders it after sync.
-export async function markReadOnOpen(mail: Mail, pending: Set<string>, update: () => Promise<unknown>) {
+// Explicit read and read-on-open share pending requests; the server orders them after sync.
+export async function markMailRead(mail: Mail, pending: Set<string>, update: () => Promise<unknown>) {
   if (!mail.unread || pending.has(mail.id)) return;
   pending.add(mail.id);
   try {

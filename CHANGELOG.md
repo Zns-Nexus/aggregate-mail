@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add explicit Mark as read to the mail context menu, sharing queued provider updates and retryable errors with read-on-open.
+- Adopt macOS-style dark chrome across the toolbar, inbox, sender pane, Settings, menus and dialogs, with rounded controls, smooth programmatic scrolling and reduced-motion support.
+
 - Restore the mail context menu in the feature client: right-click or Shift+F10 on rows and opened messages for existing mail actions.
 
 - Replace client action icons with consistent rounded outlines and use a vector Gmail mark in account filters, Settings and sender badges.

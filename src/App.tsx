@@ -27,7 +27,7 @@ import {
   Settings,
   Mail as MailIcon,
 } from "./icons";
-import { customLabels, densityShortcut, matchesLabel, markReadOnOpen, selectedMail } from "./mail-ui";
+import { customLabels, densityShortcut, matchesLabel, markMailRead, selectedMail } from "./mail-ui";
 import { jevProviders, logoDomain } from "../shared/types";
 import type {
   Account,
@@ -556,19 +556,22 @@ export function App() {
         until,
       }),
     );
+  const markRead = (mail: Mail) => {
+    void markMailRead(mail, pendingReads.current, async () => {
+      await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "read" });
+      await reload();
+    }).catch((error: unknown) => setNotice(
+      error instanceof Error ? `${error.message} Use Mark as read or reopen the email to retry.`
+        : "Could not mark this email as read. Use Mark as read or reopen it to retry.",
+    ));
+  };
   const openMail = (mail: Mail) => {
     setSelectedId(mail.id);
     setOpened(true);
     setRecent((ids) =>
       [mail.id, ...ids.filter((id) => id !== mail.id)].slice(0, 6),
     );
-    void markReadOnOpen(mail, pendingReads.current, async () => {
-      await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "read" });
-      await reload();
-    }).catch((error: unknown) => setNotice(
-      error instanceof Error ? `${error.message} Open the email again to retry marking it read.`
-        : "Could not mark this email as read. Open it again to retry.",
-    ));
+    markRead(mail);
   };
   const jumpTo = (mail: Mail) => {
     setView(
@@ -735,7 +738,7 @@ export function App() {
     };
   // A new pane starts at its top; the next effect restores the chosen row.
   useLayoutEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = 0;
+    listRef.current?.scrollTo({ top: 0, behavior: "instant" });
   }, [paneKey]);
   useEffect(() => {
     const list = listRef.current;
@@ -1216,6 +1219,7 @@ export function App() {
             onClose={closeContextMenu}
             actions={[
               { label: "Open", key: "Enter", run: () => openMail(menuMail) },
+              { label: "Mark as read", disabled: !menuMail.unread, run: () => markRead(menuMail) },
               { label: "Reply", key: "r", disabled: busy, run: () => startCompose(menuMail) },
               { label: "Done", key: "e", disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
               { label: "Snooze", key: "s", disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
