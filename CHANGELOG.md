@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add visible Back and Forward controls and side mouse buttons for visited inbox contexts and emails, with session-only history and draft/dialog guards.
+- Keep hidden-address bars within their text lines so adjacent sender details do not overlap.
+- Make email bodies easier to read with bounded paragraph spacing, 15px text and a wrapping sender header, without changing stored text.
+- Add per-message Show images for supported remote HTTPS images, blocked by default. Older cached mail loads image metadata on demand; older archived IMAP mail fails safely instead of reusing an INBOX UID.
+
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 
 ## 0.1.4

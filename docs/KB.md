@@ -65,7 +65,7 @@ See [README](../README.md#ci) for usage and [ADR 0002](adr/0002-cross-platform-c
 
 ## Email links
 
-Message bodies stay plain text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The app never renders email HTML or loads body images.
+Message bodies stay plain text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The app never renders email HTML. Remote body images require per-message activation, as described below.
 
 The existing mailparser dependency converts HTML-only email links to text containing their destinations. No mailbox resync or storage migration is needed for URLs already in cached bodies.
 
@@ -77,7 +77,92 @@ Verification for source revision `dbe8b870e3ec1140c1385d49118fcbf8f5b917a9`: sev
 
 Sources: [message rendering](../src/App.tsx), [navigation policy](../desktop/navigation.ts), [mail parsing](../server/providers.ts), [design](../DESIGN.md).
 
+## Email reader and opt-in images
+
+### Back and Forward
+
+The [navigation hook](../src/navigation.ts) keeps visited view, account, search,
+selection and reader state in memory. [App](../src/App.tsx) records tab and
+account changes, search edits and intentional message opens. Selecting a row
+does not add a visit. Consecutive search edits share one visit. Back and Forward
+restore context without marking mail read or calling a mail mutation. A new
+visit after Back removes the forward branch. Missing messages return to the
+list; missing account filters return to All. Drafts and dialogs block traversal.
+Escape retains the existing close-email, close-dialog and draft-confirmation
+behavior. Closing or changing the reader clears remote-image consent.
+
+On Windows and Linux, [Electron main](../desktop/main.ts) forwards the
+documented `app-command` values `browser-backward` and `browser-forward`
+through the [preload bridge](../desktop/preload.ts). The renderer suppresses
+DOM side-button events on those platforms so one gesture cannot traverse
+twice. Elsewhere, DOM mouse button 3 means Back and button 4 means Forward;
+only mouseup traverses, while mousedown and auxclick suppress defaults.
+
+Synthetic mounted [App tests](../src/navigation.test.tsx) exercise traversal,
+mail-to-mail visits, filter/search restoration, forward truncation, missing or
+changed mail, consent reset, guards, source selection and listener cleanup.
+The [preload test](../desktop/preload.test.ts) checks direction validation and
+unsubscribe behavior. Run `npm test`, `npm run build` and the isolated
+`npm run check:desktop` recipe above for desktop changes. DOM and bridge tests
+do not prove physical mouse delivery, native Windows/macOS behavior or visual
+layout. Installed-app proof remains separate.
+
+The reader splits blank-line runs, including whitespace-only lines, into one
+paragraph break. It preserves single line breaks, indentation, text links and
+address masking. This changes display only; cached body strings are unchanged.
+The body uses 15px text at 1.45 line height within a 65ch column. Sender details
+and the date wrap within the header.
+
+Show images is a native button. Before activation the reader creates no body
+image elements and makes no image-metadata request. Activation shows loading,
+then responsive images, a failure message or a no-supported-images message.
+Hide images removes them. Message changes and reader closure clear consent;
+late responses cannot reveal images in a different message.
+
+New MIME parsing records at most 50 unique image URLs and 500 characters of alt
+text per image. Only explicit HTTPS sources with public-looking DNS names, no
+credentials and the default port are accepted. HTTP, local hostnames, IP
+literals, relative URLs, data URLs and CID sources are excluded. The renderer
+checks sources again. Images use `referrerPolicy="no-referrer"`; the server never
+fetches an image URL. Sender HTML, styles, scripts, event handlers and layout
+are neither stored nor rendered. The renderer CSP permits HTTPS in `img-src`
+while retaining the existing script, connection and sandbox restrictions.
+
+Loading remote images can expose the reader's IP address and send cookies to
+the image host. URL filtering does not verify DNS resolution or redirect
+chains. Consent therefore applies only to the current reader opening and is
+never saved as a preference. Images can contain readable addresses even when
+address hiding masks text and alt captions. Embedded CID images remain
+unsupported; showing them would require a separate bounded attachment path.
+
+Older cached mail lacks image metadata. The authenticated, CSRF-protected
+`POST /api/messages/:id/images` retrieves only the requested message, writes
+optional image metadata to its existing encrypted JSON record and leaves its
+body and current mailbox state intact. Later requests reuse that metadata,
+including an empty list. Gmail retrieves raw MIME by the stable Gmail ID; its
+cached inbox sync continues to request metadata only. IMAP validates INBOX
+UIDVALIDITY and fetches that UID without setting Seen. It also checks Message-ID
+when one is cached. Older archived IMAP messages fail before connecting because
+the stored UID belongs to the former INBOX. Newly parsed images remain usable
+after archive. No bulk cache refill or database migration is needed.
+
+Automated synthetic scenarios cover paragraph normalization, existing links and
+masking, MIME extraction, URL rejection, cached Gmail metadata sync, targeted
+Gmail retrieval, IMAP identity failures, API authentication/origin/CSRF gates,
+cache reuse, and preservation of text and concurrent archive/read state.
+Mounted DOM scenarios cover blocked entry, activation, loading, image failure,
+provider failure and manual retry, no images, and switching during a pending
+request. Run `npm test` and `npm run build`. DOM tests do not load remote images
+or prove native keyboard activation, visual layout, live providers or installed
+desktop behavior. Browser testing remains prohibited by PRODUCT.md.
+
+Sources: [reader](../src/App.tsx), [styles](../src/style.css),
+[shared image policy](../shared/types.ts), [providers](../server/providers.ts),
+[API](../server/index.ts), [image decision](adr/0009-opt-in-message-images.md).
+
 ## UI review, 2026-10-09
+
+The reader follow-up caps hidden-address bars at 0.9em high and one line, with the existing container-width limit. A synthetic CSS comparison at 728px and 360px confirmed that normal and long bars fit inside their line boxes without horizontal overflow. This checks isolated layout, not the installed application.
 
 Baseline: `b04679ac3e6fa62e60acd37dab1d03c1d3f2f981`. Scope: inbox, open message, address privacy, and Settings provider dropdown. Method: source inspection and T3 Code browser interaction using synthetic mail at 1280 x 800 and 900 x 600. The Windows application and real mailbox operations were not exercised.
 

@@ -13,6 +13,7 @@ import {
 } from "react";
 import {
   ArrowDown2,
+  ArrowLeft,
   ArrowRight,
   Check,
   CloseCircle,
@@ -23,13 +24,15 @@ import {
   Settings,
   Sms as MailIcon,
 } from "iconsax-react";
-import { jevProviders, logoDomain } from "../shared/types";
+import { useMailNavigation, type MailLocation } from "./navigation";
+import { imageSource, jevProviders, logoDomain } from "../shared/types";
 import type {
   Account,
   Category,
   JevProvider,
   LogoSummary,
   Mail,
+  MailImage,
   Provider,
   State,
   McpSettings,
@@ -256,6 +259,79 @@ export function MessageBody({ text }: { text: string }) {
   parts.push(<Redact key="tail" text={text.slice(last)} />);
   return <>{parts}</>;
 }
+export function MessageText({ text }: { text: string }) {
+  return <>{text.replace(/\r\n?/g, "\n").split(/\n(?:[ \t\u00a0]*\n)+/)
+    .filter((paragraph) => paragraph.trim())
+    .map((paragraph, index) => <p key={index}><MessageBody text={paragraph} /></p>)}</>;
+}
+function ReaderImage({ image, index }: { image: MailImage; index: number }) {
+  const { on } = useContext(PrivacyContext);
+  const [status, setStatus] = useState("loading");
+  return <figure>
+    {status !== "error" && <img
+      src={image.src}
+      alt={on ? hideAddresses(image.alt) : image.alt}
+      referrerPolicy="no-referrer"
+      decoding="async"
+      onLoad={() => setStatus("loaded")}
+      onError={() => setStatus("error")}
+    />}
+    <figcaption>
+      {status === "loading" ? `Loading image ${index + 1}…` :
+        status === "error" ? `Image ${index + 1} could not be loaded.` :
+        <Redact text={image.alt || `Image ${index + 1}`} />}
+    </figcaption>
+  </figure>;
+}
+type ImageProps = {
+  mail: Pick<Mail, "id" | "images">;
+  loadImages: (id: string) => Promise<{ images: MailImage[] }>;
+};
+export function MessageImages(props: ImageProps) {
+  return <ImageConsent key={props.mail.id} {...props} />;
+}
+function ImageConsent({ mail, loadImages }: ImageProps) {
+  const [status, setStatus] = useState("blocked");
+  const [images, setImages] = useState<MailImage[]>([]);
+  const active = useRef(true);
+  const region = useId();
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const show = async () => {
+    setStatus("loading");
+    try {
+      const result = mail.images ?? (await loadImages(mail.id)).images;
+      if (!active.current) return;
+      setImages(result.flatMap((image) => {
+        const src = imageSource(image.src);
+        return src ? [{ src, alt: image.alt }] : [];
+      }));
+      setStatus("shown");
+    } catch {
+      if (active.current) setStatus("error");
+    }
+  };
+  return <section className="message-images" aria-label="Email images">
+    <div className="image-controls">
+      <button className="button" type="button"
+        aria-expanded={status === "shown"} aria-controls={region}
+        disabled={status === "loading"}
+        onClick={() => status === "shown" ? setStatus("blocked") : void show()}>
+        {status === "loading" ? "Loading images…" : status === "shown" ? "Hide images" :
+          status === "error" ? "Try images again" : "Show images"}
+      </button>
+      <span>Remote images can tell the sender you opened this email.</span>
+    </div>
+    <div id={region} aria-live="polite">
+      {status === "error" && <p>Images could not be loaded. The email may be unavailable or archived.</p>}
+      {status === "shown" && (images.length ? images.map((image, index) =>
+        <ReaderImage key={image.src} image={image} index={index} />) :
+        <p>No supported remote images in this email. Embedded images are not shown.</p>)}
+    </div>
+  </section>;
+}
 function ProviderIcon({ provider }: { provider: Provider }) {
   return (
     <span className={`provider-icon ${provider}`} aria-hidden="true">
@@ -305,17 +381,56 @@ function Avatar({
 
 export function App() {
   const [state, setState] = useState(empty);
-  const [view, setView] = useState<View>("important");
-  const [accountFilter, setAccountFilter] = useState("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const navigation = useMailNavigation();
+  const { view, accountFilter, selectedId, query, opened } = navigation.location;
+  const setSelectedId = (selectedId: string | null) =>
+    navigation.update((current) => ({ ...current, selectedId }));
+  const setOpened = (opened: boolean) =>
+    navigation.update((current) => ({ ...current, opened }));
   const [searching, setSearching] = useState(false);
   const [settings, setSettings] = useState(false);
-  const [opened, setOpened] = useState(false);
   const [compose, setCompose] = useState<Compose | null>(null);
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
+  const navigationBlocked = !!(compose || teach || snooze || shortcuts || settings);
+  const navigate = (patch: Partial<MailLocation>, search = false) => {
+    if (navigationBlocked) return false;
+    navigation.visit(patch, search);
+    return true;
+  };
+  const travel = (direction: -1 | 1) => {
+    if (navigationBlocked) return;
+    navigation.travel(direction, (target) => {
+      const accountExists = target.accountFilter === "all" ||
+        state.accounts.some((account) => account.id === target.accountFilter);
+      const mailExists = state.messages.some((mail) => mail.id === target.selectedId &&
+        state.accounts.some((account) => account.id === mail.accountId));
+      setSearching(!!target.query);
+      return { ...target, accountFilter: accountExists ? target.accountFilter : "all",
+        selectedId: mailExists ? target.selectedId : null, opened: target.opened && mailExists };
+    });
+  };
+  useEffect(() => {
+    const native = !!window.desktop?.onNavigation &&
+      ["win32", "linux"].includes(window.desktop.platform);
+    const unsubscribe = native ? window.desktop?.onNavigation((direction) =>
+      travel(direction === "back" ? -1 : 1)) : undefined;
+    const mouse = (event: MouseEvent) => {
+      if (event.button !== 3 && event.button !== 4) return;
+      event.preventDefault();
+      if (!native && event.type === "mouseup") travel(event.button === 3 ? -1 : 1);
+    };
+    window.addEventListener("mousedown", mouse, true);
+    window.addEventListener("mouseup", mouse, true);
+    window.addEventListener("auxclick", mouse, true);
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener("mousedown", mouse, true);
+      window.removeEventListener("mouseup", mouse, true);
+      window.removeEventListener("auxclick", mouse, true);
+    };
+  });
   const [motion, setMotion] = useState<Motion>("forward");
   // Privacy blurs email addresses; re-enabling it hides revealed ones again.
   const [privacy, setPrivacy] = useState(
@@ -460,17 +575,16 @@ export function App() {
     requestAnimationFrame(() => searchRef.current?.focus());
   };
   const closeSearch = () => {
+    if (navigationBlocked) return;
     setSearching(false);
-    setQuery("");
+    navigate({ query: "", opened: false }, true);
   };
   const switchView = (next: View) => {
     if (next !== view)
       setMotion(
         viewOrder.indexOf(next) > viewOrder.indexOf(view) ? "forward" : "back",
       );
-    setView(next);
-    setOpened(false);
-    setSelectedId(null);
+    navigate({ view: next, opened: false, selectedId: null });
   };
   const now = Date.now();
   const isSnoozed = (m: Mail) =>
@@ -492,7 +606,10 @@ export function App() {
         .includes(query.toLowerCase());
     })
     .sort((a, b) => b.date - a.date);
-  const selected = filtered.find((m) => m.id === selectedId) || filtered[0];
+  const selected = opened
+    ? state.messages.find((m) => m.id === selectedId &&
+        state.accounts.some((account) => account.id === m.accountId))
+    : filtered.find((m) => m.id === selectedId) || filtered[0];
   const accountOf = (m: Mail) =>
     state.accounts.find((a) => a.id === m.accountId);
   const selectedAccount = selected && accountOf(selected);
@@ -531,21 +648,18 @@ export function App() {
         until,
       }),
     );
-  const openMail = (mail: Mail) => {
-    setSelectedId(mail.id);
-    setOpened(true);
+  const openMail = (mail: Mail, context: Partial<MailLocation> = {}) => {
+    if (!navigate({ ...context, selectedId: mail.id, opened: true })) return;
     setRecent((ids) =>
       [mail.id, ...ids.filter((id) => id !== mail.id)].slice(0, 6),
     );
     if (mail.unread && !mail.archived) void changeMessage(mail, "read");
   };
   const jumpTo = (mail: Mail) => {
-    setView(
-      mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
-    );
-    setAccountFilter("all");
-    setQuery("");
-    openMail(mail);
+    openMail(mail, {
+      view: mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
+      accountFilter: "all", query: "",
+    });
   };
   const startCompose = (reply?: Mail) => {
     if (!state.accounts.length) {
@@ -624,7 +738,10 @@ export function App() {
               ),
             )
           ];
-        if (next) setSelectedId(next.id);
+        if (next) {
+          if (opened) openMail(next);
+          else setSelectedId(next.id);
+        }
       } else if (
         inbox &&
         event.key === "Enter" &&
@@ -645,8 +762,9 @@ export function App() {
         switchView(view === "important" ? "other" : "important");
       } else if (inbox && /^[0-9]$/.test(event.key)) {
         const a = state.accounts[Number(event.key) - 1];
-        if (event.key === "0") setAccountFilter("all");
-        else if (a) setAccountFilter(a.id);
+        if (event.key === "0" || a)
+          navigate({ accountFilter: event.key === "0" ? "all" : a.id,
+            selectedId: null, opened: false });
       }
     };
     window.addEventListener("keydown", handler);
@@ -783,7 +901,7 @@ export function App() {
                 <button
                   className={accountFilter === "all" ? "active" : undefined}
                   aria-pressed={accountFilter === "all"}
-                  onClick={() => setAccountFilter("all")}
+                  onClick={() => navigate({ accountFilter: "all", selectedId: null, opened: false })}
                 >
                   <kbd>0</kbd>All
                 </button>
@@ -800,9 +918,7 @@ export function App() {
                     className={accountFilter === a.id ? "active" : undefined}
                     aria-pressed={accountFilter === a.id}
                     onClick={() => {
-                      setAccountFilter(a.id);
-                      setSelectedId(null);
-                      setOpened(false);
+                      navigate({ accountFilter: a.id, selectedId: null, opened: false });
                     }}
                   >
                     {i < 9 && <kbd>{i + 1}</kbd>}
@@ -834,8 +950,7 @@ export function App() {
                       if (e.key === "Escape") closeSearch();
                     }}
                     onChange={(e) => {
-                      setQuery(e.target.value);
-                      setOpened(false);
+                      navigate({ query: e.target.value, opened: false, selectedId: null }, true);
                     }}
                   />
                   <button aria-label="Close search" onClick={closeSearch}>
@@ -921,12 +1036,20 @@ export function App() {
               className={`list ${density}`}
               aria-label={`${viewNames[view]} mail`}
             >
+              <nav className="mail-navigation" aria-label="Mail history">
+                <button type="button" disabled={navigationBlocked || !navigation.canBack}
+                  onClick={() => travel(-1)}>
+                  <ArrowLeft color="currentColor" size={16} aria-hidden="true" />Back
+                </button>
+                <button type="button" disabled={navigationBlocked || !navigation.canForward}
+                  onClick={() => travel(1)}>
+                  Forward<ArrowRight color="currentColor" size={16} aria-hidden="true" />
+                </button>
+                {opened && selected && <span><kbd>Esc</kbd> Close email</span>}
+              </nav>
               <div key={paneKey} className={`pane ${pane.current.motion}`}>
                 {opened && selected ? (
                   <article className="message">
-                    <button className="back" onClick={() => setOpened(false)}>
-                      <kbd>esc</kbd>Back
-                    </button>
                     <h1>
                       <Redact text={selected.subject || "(no subject)"} />
                     </h1>
@@ -949,12 +1072,14 @@ export function App() {
                       <time>{new Date(selected.date).toLocaleString()}</time>
                     </div>
                     <div className="message-body">
-                      <MessageBody
+                      <MessageText
                         text={
                           selected.body || "This email has no plain-text body."
                         }
                       />
                     </div>
+                    <MessageImages mail={selected}
+                      loadImages={(id) => api(`/messages/${encodeURIComponent(id)}/images`, "POST")} />
                   </article>
                 ) : filtered.length ? (
                   filtered.map((m, i) => {
@@ -1225,7 +1350,7 @@ export function App() {
               {[
                 ["j / k", "Next / previous email"],
                 ["Enter", "Open email"],
-                ["Esc", "Back"],
+                ["Esc", "Close email or dialog"],
                 ["i / o / Tab", "Important / Other"],
                 ["0–9", "Filter by account"],
                 ["/", "Search"],

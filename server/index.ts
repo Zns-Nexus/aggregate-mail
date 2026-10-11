@@ -13,6 +13,7 @@ import {
   sendMail,
   updateMessage,
   messageActionSchema,
+  findMail,
 } from "./mail-actions.js";
 import { mountMcp, authorizeMcp } from "./mcp.js";
 import { classify, sortMail, SortingUnavailable, type Sorting } from "./sorting.js";
@@ -386,6 +387,17 @@ app.post("/api/sync", async (_req, res) => {
     syncing = false;
   }
 });
+app.post("/api/messages/:id/images", async (req, res) => {
+  const mail = findMail(req.params.id);
+  if (mail.images !== undefined) return res.json({ images: mail.images });
+  const a = account(mail.accountId);
+  const images = await providers[a.provider].images(a, mail);
+  // Read current state again so an overlapping mail action is not overwritten.
+  assertNotSyncing();
+  const current = findMail(mail.id);
+  put("mail", mail.id, { ...current, images });
+  res.json({ images });
+});
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);
   if (!all("mail").some((m) => m.id === req.params.id))
@@ -432,7 +444,7 @@ const staticPath = process.env.MAIL_STATIC_DIR || path.resolve("dist");
 app.use((_req, res, next) => {
   res.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   );
   next();
 });
