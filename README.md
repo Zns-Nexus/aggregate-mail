@@ -74,7 +74,7 @@ iCloud requires an [app-specific password](https://support.apple.com/en-ie/10252
 - Snooze is local to this client. Messages return to their category after the chosen time.
 - Compose and reply send plain text from the selected account. IMAP mail gets a Sent copy. If copying fails after delivery, the draft closes with a warning rather than encouraging a duplicate send.
 - Sync runs on opening, manually, and every five minutes while open. It fetches the full inbox; large mailboxes can take time. Gmail reuses cached bodies and checks labels. Incremental mailbox sync is not included.
-- Bodies render as text, preventing remote tracking images and scripts. HTTP and HTTPS URLs are clickable and open in your default browser on desktop. Address privacy mode masks URLs containing email addresses; turn it off to open those links. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
+- Bodies render as text without executing sender scripts. Remote images stay blocked until you activate Show images for that message; loading them can tell the sender you opened it. HTTP and HTTPS URLs are clickable and open in your default browser on desktop. Address privacy mode masks URLs containing email addresses; turn it off to open those links. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
 - Drafts remain in memory. Closing warns about unsent content; a crash does not preserve drafts.
 
 ## MCP

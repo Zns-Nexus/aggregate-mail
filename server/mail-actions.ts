@@ -24,7 +24,7 @@ export async function updateMessage(
   id: string,
   input: z.infer<typeof messageActionSchema>,
 ) {
-  const m = findMail(id);
+  let m = findMail(id);
   if (
     input.action === "snooze" &&
     (!input.until ||
@@ -35,6 +35,8 @@ export async function updateMessage(
   if (input.action === "read" || input.action === "archive") {
     const a = account(m.accountId);
     await providers[a.provider].update(a, m, input.action);
+    // Preserve image metadata and local changes saved during the provider wait.
+    m = findMail(id);
   }
   const updated = {
     ...m,

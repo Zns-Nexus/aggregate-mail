@@ -109,7 +109,8 @@ test("image API protects access, caches one message and preserves concurrent mai
   process.env.MAIL_CONFIG_PATH = path.join(directory, "settings.env");
   process.env.MAIL_DESKTOP_TOKEN = "test-only-images-token";
   const { startServer } = await import("./index.js");
-  const { all, put } = await import("./store.js");
+  const { all, put, remove } = await import("./store.js");
+  const { updateMessage } = await import("./mail-actions.js");
   put("account", account.id, account);
   put("mail", mail.id, mail);
   put("mail", "a:other", { ...mail, id: "a:other", remoteId: "other" });
@@ -151,6 +152,53 @@ test("image API protects access, caches one message and preserves concurrent mai
     assert.match(csp, /img-src 'self' data: https:/);
     assert.match(csp, /script-src 'self'; style-src 'self'/);
     assert.match(csp, /connect-src 'self'; object-src 'none'/);
+
+    t.mock.method(providers.gmail, "images", async () => [photo]);
+    for (const action of ["read", "archive"] as const) {
+      await t.test(`${action} completion preserves images cached during the provider wait`, async (t) => {
+        put("mail", mail.id, mail);
+        let complete!: () => void, started!: () => void;
+        const pending = new Promise<void>((resolve) => { complete = resolve; });
+        const entered = new Promise<void>((resolve) => { started = resolve; });
+        t.mock.method(providers.gmail, "update", async (_a: StoredAccount, m: Mail) => {
+          assert.equal(m.images, undefined);
+          started();
+          await pending;
+        });
+        const request = fetch(`${base}/api/messages/${encodeURIComponent(mail.id)}`, {
+          method: "PATCH", headers: { ...authorized, "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        try {
+          await entered;
+          const response = await fetch(route, { method: "POST", headers: authorized });
+          assert.equal(response.status, 200);
+          assert.deepEqual(await response.json(), { images: [photo] });
+          complete();
+          assert.equal((await request).status, 200);
+          const stored = all("mail").find((m) => m.id === mail.id)!;
+          assert.deepEqual(stored.images, [photo]);
+          assert.equal(stored.body, mail.body);
+          assert.equal(stored.unread, action !== "read");
+          assert.equal(stored.archived, action === "archive");
+          assert.deepEqual(await (await fetch(route, { method: "POST", headers: authorized })).json(), { images: [photo] });
+        } finally {
+          complete();
+          await request;
+        }
+      });
+    }
+    await t.test("a pending mail action does not recreate a removed message", async (t) => {
+      put("mail", mail.id, mail);
+      let complete!: () => void;
+      const pending = new Promise<void>((resolve) => { complete = resolve; });
+      t.mock.method(providers.gmail, "update", () => pending);
+      const update = updateMessage(mail.id, { action: "archive" });
+      remove("mail", mail.id);
+      complete();
+      await assert.rejects(update, /Message not found/);
+      assert.equal(all("mail").some((m) => m.id === mail.id), false);
+    });
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

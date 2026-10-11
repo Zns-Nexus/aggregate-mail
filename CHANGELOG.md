@@ -6,6 +6,7 @@
 - Keep hidden-address bars within their text lines so adjacent sender details do not overlap.
 - Make email bodies easier to read with bounded paragraph spacing, 15px text and a wrapping sender header, without changing stored text.
 - Add per-message Show images for supported remote HTTPS images, blocked by default. Older cached mail loads image metadata on demand; older archived IMAP mail fails safely instead of reusing an INBOX UID.
+- Preserve cached image metadata when an overlapping read or archive operation completes, and do not restore messages removed during that wait.
 
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 

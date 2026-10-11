@@ -146,6 +146,11 @@ when one is cached. Older archived IMAP messages fail before connecting because
 the stored UID belongs to the former INBOX. Newly parsed images remain usable
 after archive. No bulk cache refill or database migration is needed.
 
+Read and archive operations reread the cached message after the provider
+responds. Image metadata saved during that wait survives the action, and a
+message removed during the wait is not recreated. Deferred-provider tests
+cover both completion orders between image caching and mail actions.
+
 Automated synthetic scenarios cover paragraph normalization, existing links and
 masking, MIME extraction, URL rejection, cached Gmail metadata sync, targeted
 Gmail retrieval, IMAP identity failures, API authentication/origin/CSRF gates,
