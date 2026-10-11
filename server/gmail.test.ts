@@ -50,9 +50,10 @@ test("Gmail labels and ordered read-on-open requests use synthetic provider data
   let syncGate = Promise.resolve();
   let syncStarted = () => {};
   t.mock.method(api.users.messages, "list", async (params: gmail_v1.Params$Resource$Users$Messages$List) => {
-    assert.deepEqual(params.labelIds, ["INBOX"]);
     syncStarted();
     await syncGate;
+    if (params.labelIds?.length === 2) return { data: { messages: [...remote].filter(([, labels]) => params.labelIds!.every((id) => labels.includes(id))).map(([id]) => ({ id })) } };
+    assert.deepEqual(params.labelIds, ["INBOX"]);
     return { data: { messages: [{ id: params.pageToken ? "fresh" : "cached" }], nextPageToken: params.pageToken ? undefined : "page2" } };
   });
   t.mock.method(api.users.messages, "get", async (params: gmail_v1.Params$Resource$Users$Messages$Get) => {

@@ -6,16 +6,20 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type Dispatch,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type SetStateAction,
 } from "react";
 import { ContextMenu, mailMenuRequest } from "./ContextMenu";
 import {
   ChevronDown,
+  ArrowLeft,
   ArrowRight,
   Check,
   Close,
@@ -27,8 +31,9 @@ import {
   Settings,
   Mail as MailIcon,
 } from "./icons";
-import { customLabels, densityShortcut, matchesLabel, markMailRead, selectedMail } from "./mail-ui";
-import { jevProviders, logoDomain } from "../shared/types";
+import { customLabels, densityShortcut, matchesLabel, markMailRead } from "./mail-ui";
+import { appPasswordHelp, imageSource, jevProviders, logoDomain, providerNames } from "../shared/types";
+import { useMailNavigation, type MailLocation } from "./navigation";
 import type {
   Account,
   Category,
@@ -36,16 +41,37 @@ import type {
   JevProvider,
   LogoSummary,
   Mail,
+  MailImage,
   Provider,
   State,
   McpSettings,
 } from "../shared/types";
 
+export function coalesceReload<T>(load: () => Promise<T>): () => Promise<T> {
+  let running: Promise<T> | undefined;
+  let pending = false;
+  return () => {
+    if (running) { pending = true; return running; }
+    running = Promise.resolve().then(async () => {
+      while (true) {
+        pending = false;
+        try {
+          const data = await load();
+          if (!pending) return data;
+        } catch (error) {
+          if (!pending) throw error;
+        }
+      }
+    }).finally(() => { running = undefined; });
+    return running;
+  };
+}
+
 type View = Category | "snoozed" | "archive";
 const viewOrder: View[] = ["important", "other", "snoozed", "archive"];
 // Direction the list pane enters from: tabs slide sideways, mail opens upward.
 type Motion = "forward" | "back" | "open" | "close";
-type Compose = {
+export type Compose = {
   accountId: string;
   to: string;
   subject: string;
@@ -53,7 +79,51 @@ type Compose = {
   inReplyTo?: string;
   threadId?: string;
   references?: string[];
+  sendUnknown?: boolean;
 };
+const unknownSendNotice =
+  "Send status unknown. This message may already have been sent. Sending again may send a duplicate.";
+
+export async function sendCompose(
+  draft: Compose,
+  { lock, send, reload, setDraft, setBusy, setNotice, confirm }: {
+    lock: { current: boolean };
+    send: (draft: Compose) => Promise<{ warning?: string }>;
+    reload: () => Promise<unknown>;
+    setDraft: Dispatch<SetStateAction<Compose | null>>;
+    setBusy: (busy: boolean) => void;
+    setNotice: (notice: string) => void;
+    confirm: (message: string) => boolean;
+  },
+) {
+  if (lock.current) return;
+  if (
+    draft.sendUnknown &&
+    !confirm("This message may already have been sent. Sending again may send a duplicate. Send again?")
+  )
+    return;
+  lock.current = true;
+  setBusy(true);
+  try {
+    const result = await send(draft);
+    setDraft(null);
+    const sentNotice = result.warning || "Email sent.";
+    setNotice(sentNotice);
+    try {
+      await reload();
+    } catch {
+      setNotice(`${sentNotice}\nInbox refresh failed. Refresh the inbox separately.`);
+    }
+  } catch {
+    setDraft((current) =>
+      current ? { ...current, sendUnknown: true } : current,
+    );
+    setNotice(unknownSendNotice);
+  } finally {
+    lock.current = false;
+    setBusy(false);
+  }
+}
 const empty: State = {
   accounts: [],
   messages: [],
@@ -65,14 +135,9 @@ const empty: State = {
   jevProvider: "typesafe",
   aiConfigured: false,
   lastSync: null,
+  syncing: false,
 };
-const providerNames: Record<Provider, string> = {
-  gmail: "Gmail",
-  icloud: "iCloud Mail",
-  fastmail: "Fastmail",
-  yahoo: "Yahoo Mail",
-  imap: "Custom IMAP",
-};
+type ImapProvider = Exclude<Provider, "gmail">;
 const viewNames: Record<View, string> = {
   important: "Important",
   other: "Other",
@@ -263,10 +328,83 @@ export function MessageBody({ text }: { text: string }) {
   parts.push(<Redact key="tail" text={text.slice(last)} />);
   return <>{parts}</>;
 }
+export function MessageText({ text }: { text: string }) {
+  return <>{text.replace(/\r\n?/g, "\n").split(/\n(?:[ \t\u00a0]*\n)+/)
+    .filter((paragraph) => paragraph.trim())
+    .map((paragraph, index) => <p key={index}><MessageBody text={paragraph} /></p>)}</>;
+}
+function ReaderImage({ image, index }: { image: MailImage; index: number }) {
+  const { on } = useContext(PrivacyContext);
+  const [status, setStatus] = useState("loading");
+  return <figure>
+    {status !== "error" && <img
+      src={image.src}
+      alt={on ? hideAddresses(image.alt) : image.alt}
+      referrerPolicy="no-referrer"
+      decoding="async"
+      onLoad={() => setStatus("loaded")}
+      onError={() => setStatus("error")}
+    />}
+    <figcaption>
+      {status === "loading" ? `Loading image ${index + 1}…` :
+        status === "error" ? `Image ${index + 1} could not be loaded.` :
+        <Redact text={image.alt || `Image ${index + 1}`} />}
+    </figcaption>
+  </figure>;
+}
+type ImageProps = {
+  mail: Pick<Mail, "id" | "images">;
+  loadImages: (id: string) => Promise<{ images: MailImage[] }>;
+};
+export function MessageImages(props: ImageProps) {
+  return <ImageConsent key={props.mail.id} {...props} />;
+}
+function ImageConsent({ mail, loadImages }: ImageProps) {
+  const [status, setStatus] = useState("blocked");
+  const [images, setImages] = useState<MailImage[]>([]);
+  const active = useRef(true);
+  const region = useId();
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const show = async () => {
+    setStatus("loading");
+    try {
+      const result = mail.images ?? (await loadImages(mail.id)).images;
+      if (!active.current) return;
+      setImages(result.flatMap((image) => {
+        const src = imageSource(image.src);
+        return src ? [{ src, alt: image.alt }] : [];
+      }));
+      setStatus("shown");
+    } catch {
+      if (active.current) setStatus("error");
+    }
+  };
+  return <section className="message-images" aria-label="Email images">
+    <div className="image-controls">
+      <button className="button" type="button"
+        aria-expanded={status === "shown"} aria-controls={region}
+        disabled={status === "loading"}
+        onClick={() => status === "shown" ? setStatus("blocked") : void show()}>
+        {status === "loading" ? "Loading images…" : status === "shown" ? "Hide images" :
+          status === "error" ? "Try images again" : "Show images"}
+      </button>
+      <span>Remote images can tell the sender you opened this email.</span>
+    </div>
+    <div id={region} aria-live="polite">
+      {status === "error" && <p>Images could not be loaded. The email may be unavailable or archived.</p>}
+      {status === "shown" && (images.length ? images.map((image, index) =>
+        <ReaderImage key={image.src} image={image} index={index} />) :
+        <p>No supported remote images in this email. Embedded images are not shown.</p>)}
+    </div>
+  </section>;
+}
 function ProviderIcon({ provider }: { provider: Provider }) {
   return (
-    <span className={`provider-icon ${provider}`} aria-hidden="true">
-      {provider === "gmail" ? (
+    <span className={`provider-icon ${provider === "gmail-imap" ? "gmail" : provider}`} aria-hidden="true">
+      {provider === "gmail" || provider === "gmail-imap" ? (
         <Gmail />
       ) : provider === "icloud" ? (
         <Cloud />
@@ -312,23 +450,76 @@ function Avatar({
   );
 }
 
+export function selectMail(
+  messages: Mail[],
+  filtered: Mail[],
+  selectedId: string | null,
+  opened: boolean,
+) {
+  return opened
+    ? messages.find((m) => m.id === selectedId)
+    : filtered.find((m) => m.id === selectedId) || filtered[0];
+}
+
 export function App() {
   const [state, setState] = useState(empty);
-  const [view, setView] = useState<View>("important");
-  const [accountFilter, setAccountFilter] = useState("all");
-  const [labelFilter, setLabelFilter] = useState("all");
+  const navigation = useMailNavigation();
+  const { view, accountFilter, labelFilter, selectedId, query, opened } = navigation.location;
+  const setSelectedId = (selectedId: string | null) =>
+    navigation.update((current) => ({ ...current, selectedId }));
+  const setOpened = (opened: boolean) =>
+    navigation.update((current) => ({ ...current, opened }));
+  const [searching, setSearching] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const setLabelFilter = (labelFilter: string) => navigation.update(current => ({ ...current, labelFilter }));
   const [labelMail, setLabelMail] = useState<Mail | null>(null);
   const [contextMenu, setContextMenu] = useState<ReturnType<typeof mailMenuRequest> | null>(null);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [settings, setSettings] = useState(false);
-  const [opened, setOpened] = useState(false);
+  const [connecting, setConnecting] = useState<ImapProvider | "choose" | null>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
+  const navigationBlocked = !!(compose || teach || snooze || shortcuts || settings || labelMail || connecting);
+  const navigate = (patch: Partial<MailLocation>, search = false) => {
+    if (navigationBlocked) return false;
+    navigation.visit(patch, search);
+    return true;
+  };
+  const travel = (direction: -1 | 1) => {
+    if (navigationBlocked || contextMenu) return;
+    navigation.travel(direction, (target) => {
+      const accountExists = target.accountFilter === "all" ||
+        state.accounts.some((account) => account.id === target.accountFilter);
+      const mailExists = state.messages.some((mail) => mail.id === target.selectedId &&
+        state.accounts.some((account) => account.id === mail.accountId));
+      const mail = state.messages.find((mail) => mail.id === target.selectedId);
+      if (target.opened && mailExists && mail) markRead(mail);
+      setSearching(!!target.query);
+      return { ...target, accountFilter: accountExists ? target.accountFilter : "all",
+        selectedId: mailExists ? target.selectedId : null, opened: target.opened && mailExists };
+    });
+  };
+  useEffect(() => {
+    const native = !!window.desktop?.onNavigation &&
+      ["win32", "linux"].includes(window.desktop.platform);
+    const unsubscribe = native ? window.desktop?.onNavigation((direction) =>
+      travel(direction === "back" ? -1 : 1)) : undefined;
+    const mouse = (event: MouseEvent) => {
+      if (event.button !== 3 && event.button !== 4) return;
+      event.preventDefault();
+      if (!native && event.type === "mouseup") travel(event.button === 3 ? -1 : 1);
+    };
+    window.addEventListener("mousedown", mouse, true);
+    window.addEventListener("mouseup", mouse, true);
+    window.addEventListener("auxclick", mouse, true);
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener("mousedown", mouse, true);
+      window.removeEventListener("mouseup", mouse, true);
+      window.removeEventListener("auxclick", mouse, true);
+    };
+  });
   const [motion, setMotion] = useState<Motion>("forward");
   // Privacy blurs email addresses; re-enabling it hides revealed ones again.
   const [privacy, setPrivacy] = useState(
@@ -393,6 +584,7 @@ export function App() {
   const pendingReads = useRef(new Set<string>());
   const loadRevision = useRef(0);
   const syncLock = useRef(false);
+  const sendLock = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const api = useCallback(
     async <T,>(url: string, method = "GET", body?: unknown): Promise<T> => {
@@ -410,30 +602,46 @@ export function App() {
     },
     [],
   );
-  const reload = useCallback(async () => {
+  const reload = useMemo(() => coalesceReload(async () => {
     const revision = ++loadRevision.current;
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
     if (revision !== loadRevision.current) return data;
     setState(data);
+    setSyncing(data.syncing || syncLock.current);
     setLoaded(true);
     return data;
-  }, [api]);
+  }), [api]);
   const sync = useCallback(async () => {
     if (syncLock.current) return;
     syncLock.current = true;
     setSyncing(true);
     try {
       const result = await api<{ errors: string[] }>("/sync", "POST");
-      await reload();
       if (result.errors.length) setNotice(result.errors.join("\n"));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Sync failed.");
     } finally {
       syncLock.current = false;
-      setSyncing(false);
+      try { await reload(); }
+      catch (error) {
+        setSyncing(false);
+        setNotice(error instanceof Error ? error.message : "Sync failed.");
+      }
     }
   }, [api, reload]);
+  useEffect(() => {
+    if (!syncing) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { await reload(); }
+      catch (error) { if (!stopped) setNotice(error instanceof Error ? error.message : "Sync failed."); }
+      if (!stopped) timer = setTimeout(() => void poll(), 1000);
+    };
+    timer = setTimeout(() => void poll(), 1000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [syncing, reload]);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("error")) {
@@ -444,7 +652,7 @@ export function App() {
       history.replaceState({}, "", "/");
     void reload()
       .then((data) => {
-        if (data.accounts.length) void sync();
+        if (data.accounts.length && !params.has("connected")) void sync();
       })
       .catch((error) => setNotice(error.message));
   }, [reload, sync]);
@@ -457,12 +665,13 @@ export function App() {
     () =>
       window.desktop?.onAccountConnected((error) => {
         if (error) setNotice(error);
-        else
+        else {
+          setConnecting(current => current === "choose" ? null : current);
           void reload()
-            .then(() => sync())
             .catch((error) => setNotice(error.message));
+        }
       }),
-    [reload, sync],
+    [reload],
   );
   useEffect(
     () =>
@@ -477,17 +686,16 @@ export function App() {
     requestAnimationFrame(() => searchRef.current?.focus());
   };
   const closeSearch = () => {
+    if (navigationBlocked) return;
     setSearching(false);
-    setQuery("");
+    navigate({ query: "", opened: false }, true);
   };
   const switchView = (next: View) => {
     if (next !== view)
       setMotion(
         viewOrder.indexOf(next) > viewOrder.indexOf(view) ? "forward" : "back",
       );
-    setView(next);
-    setOpened(false);
-    setSelectedId(null);
+    navigate({ view: next, opened: false, selectedId: null });
   };
   const labels = state.labels.filter((label) =>
     accountFilter === "all" || label.accountId === accountFilter);
@@ -516,7 +724,10 @@ export function App() {
         .includes(query.toLowerCase());
     })
     .sort((a, b) => b.date - a.date);
-  const selected = selectedMail(state.messages, filtered, selectedId, opened);
+  const selected = opened
+    ? state.messages.find((m) => m.id === selectedId &&
+        state.accounts.some((account) => account.id === m.accountId))
+    : filtered.find((m) => m.id === selectedId) || filtered[0];
   const accountOf = (m: Mail) =>
     state.accounts.find((a) => a.id === m.accountId);
   const selectedAccount = selected && accountOf(selected);
@@ -565,26 +776,22 @@ export function App() {
         : "Could not mark this email as read. Use Mark as read or reopen it to retry.",
     ));
   };
-  const openMail = (mail: Mail) => {
-    setSelectedId(mail.id);
-    setOpened(true);
+  const openMail = (mail: Mail, context: Partial<MailLocation> = {}) => {
+    if (!navigate({ ...context, selectedId: mail.id, opened: true })) return;
     setRecent((ids) =>
       [mail.id, ...ids.filter((id) => id !== mail.id)].slice(0, 6),
     );
     markRead(mail);
   };
   const jumpTo = (mail: Mail) => {
-    setView(
-      mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
-    );
-    setAccountFilter("all");
-    setLabelFilter("all");
-    setQuery("");
-    openMail(mail);
+    openMail(mail, {
+      view: mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
+      accountFilter: "all", labelFilter: "all", query: "",
+    });
   };
   const startCompose = (reply?: Mail) => {
     if (!state.accounts.length) {
-      setSettings(true);
+      setConnecting("choose");
       return;
     }
     if (compose) return;
@@ -636,7 +843,7 @@ export function App() {
       )
         return;
       const nextDensity = densityShortcut(event);
-      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail) {
+      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
         event.preventDefault();
         setDensity(nextDensity);
         return;
@@ -651,7 +858,7 @@ export function App() {
         setSettings(false);
         return;
       }
-      if (compose || teach || snooze || shortcuts || labelMail) return;
+      if (compose || teach || snooze || shortcuts || labelMail || connecting) return;
       const inbox = !settings;
       if (event.key === "/") {
         event.preventDefault();
@@ -702,11 +909,7 @@ export function App() {
       } else if (inbox && /^[0-9]$/.test(event.key)) {
         const a = state.accounts[Number(event.key) - 1];
         const nextAccount = event.key === "0" ? "all" : a?.id;
-        if (nextAccount && nextAccount !== accountFilter) {
-          setAccountFilter(nextAccount);
-          setSelectedId(null);
-          setOpened(false);
-        }
+        if (nextAccount && nextAccount !== accountFilter) navigate({ accountFilter: nextAccount, labelFilter: "all", selectedId: null, opened: false });
       }
     };
     window.addEventListener("keydown", handler);
@@ -714,7 +917,8 @@ export function App() {
   });
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
-      if (compose?.body || compose?.to || compose?.subject) e.preventDefault();
+      if (compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
+        e.preventDefault();
     };
     window.addEventListener("beforeunload", handle);
     return () => window.removeEventListener("beforeunload", handle);
@@ -848,7 +1052,7 @@ export function App() {
                 <button
                   className={accountFilter === "all" ? "active" : undefined}
                   aria-pressed={accountFilter === "all"}
-                  onClick={() => setAccountFilter("all")}
+                  onClick={() => navigate({ accountFilter: "all", selectedId: null, opened: false })}
                 >
                   <kbd>0</kbd>All
                 </button>
@@ -865,9 +1069,7 @@ export function App() {
                     className={accountFilter === a.id ? "active" : undefined}
                     aria-pressed={accountFilter === a.id}
                     onClick={() => {
-                      setAccountFilter(a.id);
-                      setSelectedId(null);
-                      setOpened(false);
+                      navigate({ accountFilter: a.id, selectedId: null, opened: false });
                     }}
                   >
                     {i < 9 && <kbd>{i + 1}</kbd>}
@@ -900,9 +1102,7 @@ export function App() {
                     }),
                   ]}
                   onChange={(value) => {
-                    setLabelFilter(value);
-                    setSelectedId(null);
-                    setOpened(false);
+                    navigate({ labelFilter: value, selectedId: null, opened: false });
                   }}
                 />
               </div>
@@ -920,8 +1120,7 @@ export function App() {
                       if (e.key === "Escape") closeSearch();
                     }}
                     onChange={(e) => {
-                      setQuery(e.target.value);
-                      setOpened(false);
+                      navigate({ query: e.target.value, opened: false, selectedId: null }, true);
                     }}
                   />
                   <button aria-label="Close search" onClick={closeSearch}>
@@ -995,7 +1194,7 @@ export function App() {
             busy={busy}
             perform={perform}
             api={api}
-            sync={sync}
+            onConnectAccount={setConnecting}
             onNotice={setNotice}
             windowSide={windowSide}
             onWindowSide={placeWindowControls}
@@ -1007,12 +1206,20 @@ export function App() {
               className={`list ${density}`}
               aria-label={`${viewNames[view]} mail`}
             >
+              <nav className="mail-navigation" aria-label="Mail history">
+                <button type="button" disabled={navigationBlocked || !navigation.canBack}
+                  onClick={() => travel(-1)}>
+                  <ArrowLeft color="currentColor" size={16} aria-hidden="true" />Back
+                </button>
+                <button type="button" disabled={navigationBlocked || !navigation.canForward}
+                  onClick={() => travel(1)}>
+                  Forward<ArrowRight color="currentColor" size={16} aria-hidden="true" />
+                </button>
+                {opened && selected && <span><kbd>Esc</kbd> Close email</span>}
+              </nav>
               <div key={paneKey} className={`pane ${pane.current.motion}`}>
                 {opened && selected ? (
                   <article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
-                    <button className="back" onClick={() => setOpened(false)}>
-                      <kbd>esc</kbd>Back
-                    </button>
                     <h1>
                       <Redact text={selected.subject || "(no subject)"} />
                     </h1>
@@ -1043,12 +1250,14 @@ export function App() {
                       </div>
                     )}
                     <div className="message-body">
-                      <MessageBody
+                      <MessageText
                         text={
                           selected.body || "This email has no plain-text body."
                         }
                       />
                     </div>
+                    <MessageImages mail={selected}
+                      loadImages={(id) => api(`/messages/${encodeURIComponent(id)}/images`, "POST")} />
                   </article>
                 ) : filtered.length ? (
                   filtered.map((m, i) => {
@@ -1127,7 +1336,7 @@ export function App() {
                       (!state.accounts.length ? (
                         <button
                           className="link"
-                          onClick={() => setSettings(true)}
+                          onClick={() => setConnecting("choose")}
                         >
                           Connect an account <ArrowRight color="currentColor" size={11} />
                         </button>
@@ -1249,31 +1458,50 @@ export function App() {
             />
           </Dialog>
         )}
+        {connecting === "choose" ? (
+          <Dialog title="Connect account" onClose={() => setConnecting(null)}>
+            <p className="dialog-copy">Choose your email provider.</p>
+            <ProviderChoices googleConfigured={state.googleConfigured} busy={busy} onChoose={setConnecting} />
+          </Dialog>
+        ) : connecting && (
+          <ConnectDialog
+            key={connecting}
+            provider={connecting}
+            busy={busy}
+            onClose={() => setConnecting(null)}
+            onBack={() => setConnecting("choose")}
+            onConnect={async (input) => {
+              await api("/accounts/imap", "POST", input);
+              setConnecting(null);
+              setNotice("Account connected. Syncing your inbox.");
+              try {
+                await reload();
+                void sync();
+              } catch {
+                setNotice("Account connected, but refreshing the inbox failed. Reload the app to sync.");
+              }
+            }}
+          />
+        )}
         {compose && (
           <ComposePanel
             draft={compose}
             setDraft={setCompose}
             accounts={state.accounts}
             busy={busy}
-            onClose={() => {
+            onClose={() => setCompose(null)}
+            onSend={() => {
               if (busy) return;
-              if (
-                !(compose.body || compose.to || compose.subject) ||
-                confirm("Discard this unsent draft?")
-              )
-                setCompose(null);
+              void sendCompose(compose, {
+                lock: sendLock,
+                send: (draft) => api("/send", "POST", draft),
+                reload,
+                setDraft: setCompose,
+                setBusy,
+                setNotice,
+                confirm: (message) => confirm(message),
+              });
             }}
-            onSend={() =>
-              void perform(async () => {
-                const result = await api<{ warning?: string }>(
-                  "/send",
-                  "POST",
-                  compose,
-                );
-                setCompose(null);
-                setNotice(result.warning || "Email sent.");
-              })
-            }
           />
         )}
         {teach && (
@@ -1353,7 +1581,7 @@ export function App() {
               {[
                 ["j / k", "Next / previous email"],
                 ["Enter", "Open email"],
-                ["Esc", "Back"],
+                ["Esc", "Close email or dialog"],
                 ["i / o / Tab", "Important / Other"],
                 ["0–9", "Filter by account"],
                 ["/", "Search"],
@@ -1441,7 +1669,7 @@ function Dialog({
       }
       if (e.key !== "Tab") return;
       const controls = ref.current?.querySelectorAll<HTMLElement>(
-        "button:not(:disabled), input, select, textarea",
+        "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]",
       );
       if (!controls?.length) return;
       const first = controls[0],
@@ -1480,7 +1708,7 @@ function Dialog({
     </div>
   );
 }
-function ComposePanel({
+export function ComposePanel({
   draft,
   setDraft,
   accounts,
@@ -1496,11 +1724,23 @@ function ComposePanel({
   onSend: () => void;
 }) {
   return (
-    <Dialog title={draft.inReplyTo ? "Reply" : "New message"} onClose={onClose}>
+    <Dialog
+      title={draft.inReplyTo ? "Reply" : "New message"}
+      onClose={() => {
+        if (busy) return;
+        if (
+          draft.sendUnknown
+            ? confirm("Discard this draft? This message may already have been sent.")
+            : !(draft.body || draft.to || draft.subject) || confirm("Discard this unsent draft?")
+        )
+          onClose();
+      }}
+    >
       <form
         className="compose-form"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!e.currentTarget.reportValidity()) return;
           onSend();
         }}
       >
@@ -1547,6 +1787,9 @@ function ComposePanel({
           value={draft.body}
           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
         />
+        {draft.sendUnknown && (
+          <p className="dialog-copy" role="status">{unknownSendNotice}</p>
+        )}
         <div className="form-actions">
           <span>
             Plain text ·{" "}
@@ -1646,12 +1889,44 @@ function TeachDialog({
 }
 
 type Api = <T>(url: string, method?: string, body?: unknown) => Promise<T>;
-function SettingsPage({
+function ProviderChoices({ googleConfigured, busy, onChoose }: {
+  googleConfigured: boolean;
+  busy: boolean;
+  onChoose: (provider: ImapProvider) => void;
+}) {
+  return (
+    <>
+      {googleConfigured && (
+        <div className="provider-row">
+          <ProviderIcon provider="gmail" />
+          <strong>Gmail</strong>
+          <span>Gmail and Workspace</span>
+          {busy ? <span>Wait for the current action</span> : (
+            <a className="action" href={window.desktop?.oauthUrl || "/api/oauth/google"}>
+              Continue with Google <ArrowRight color="currentColor" size={11} />
+            </a>
+          )}
+        </div>
+      )}
+      {(["gmail-imap", "icloud", "fastmail", "yahoo", "imap"] as const).map((provider) => (
+        <div key={provider} className="provider-row">
+          <ProviderIcon provider={provider} />
+          <strong>{provider === "gmail-imap" ? "Gmail / Workspace" : providerNames[provider]}</strong>
+          <span>{provider === "imap" ? "TLS IMAP and SMTP" : "Email and app password"}</span>
+          <button className="action" disabled={busy} onClick={() => onChoose(provider)}>
+            {provider === "gmail-imap" ? "Use app password" : "Connect"} <ArrowRight color="currentColor" size={11} />
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+export function SettingsPage({
   state,
   busy,
   perform,
   api,
-  sync,
+  onConnectAccount,
   onNotice,
   windowSide,
   onWindowSide,
@@ -1660,15 +1935,11 @@ function SettingsPage({
   busy: boolean;
   perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
   api: Api;
-  sync: () => Promise<void>;
+  onConnectAccount: (provider: ImapProvider) => void;
   onNotice: (text: string) => void;
   windowSide: "left" | "right";
   onWindowSide: (side: "left" | "right") => void;
 }) {
-  const [connecting, setConnecting] = useState<Exclude<
-    Provider,
-    "gmail"
-  > | null>(null);
   const privacy = useContext(PrivacyContext).on;
   return (
     <main className="settings">
@@ -1688,15 +1959,23 @@ function SettingsPage({
                 <span
                   className={a.error ? "attention" : undefined}
                   title={
-                    a.error
-                      ? privacy
-                        ? hideAddresses(a.error)
-                        : a.error
-                      : undefined
+                    [a.error && (privacy ? hideAddresses(a.error) : a.error),
+                      a.syncFailure && `${a.syncFailure.phase}: ${a.syncFailure.code}${a.syncFailure.status ? ` (${a.syncFailure.status})` : ""}`,
+                      a.syncWarning && "Mail result retained; connection cleanup failed."].filter(Boolean).join("\n") || undefined
                   }
                 >
-                  {a.error ? "Needs attention" : "Connected"}
+                  {a.syncStatus === "queued" ? "Retry queued" : a.syncStatus === "running" ? "Syncing" : a.error ? "Needs attention" : "Connected"}
                 </span>
+                <button
+                  className="link"
+                  disabled={busy || !!a.syncStatus}
+                  onClick={() => void perform(async () => {
+                    const result = await api<{ status: "queued" | "running" }>(`/accounts/${encodeURIComponent(a.id)}/reconnect`, "POST");
+                    onNotice(result.status === "running" ? "Connection retry running. Check this account's status for the result." : "Connection retry queued. Check this account's status for the result.");
+                  })}
+                >
+                  Retry connection
+                </button>
                 <button
                   className="link"
                   disabled={busy}
@@ -1719,40 +1998,8 @@ function SettingsPage({
           ) : (
             <p className="muted">No accounts connected.</p>
           )}
-          <h2>Add another</h2>
-          <div className="provider-row">
-            <ProviderIcon provider="gmail" />
-            <strong>Gmail</strong>
-            <span>Gmail and Google Workspace</span>
-            <a
-              className="action"
-              href={window.desktop?.oauthUrl || "/api/oauth/google"}
-            >
-              Continue with Google <ArrowRight color="currentColor" size={11} />
-            </a>
-          </div>
-          {(["icloud", "fastmail", "yahoo", "imap"] as const).map(
-            (provider) => (
-              <div key={provider} className="provider-row">
-                <ProviderIcon provider={provider} />
-                <strong>{providerNames[provider]}</strong>
-                <span>
-                  {provider === "imap"
-                    ? "Any TLS IMAP and SMTP server"
-                    : provider === "icloud"
-                      ? "Email and app-specific password"
-                      : "Email and app password"}
-                </span>
-                <button
-                  className="action"
-                  disabled={busy}
-                  onClick={() => setConnecting(provider)}
-                >
-                  Connect <ArrowRight color="currentColor" size={11} />
-                </button>
-              </div>
-            ),
-          )}
+          <h2>Connect account</h2>
+          <ProviderChoices googleConfigured={state.googleConfigured} busy={busy} onChoose={onConnectAccount} />
         </section>
         <section>
           <h1>
@@ -1803,58 +2050,61 @@ function SettingsPage({
           <h1>
             <span>3</span>Connection
           </h1>
-          {!state.googleConfigured && (
-            <div className="setup">
-              <ol>
-                <li>
-                  In Google Cloud, enable the Gmail API and configure an OAuth
-                  consent screen.
-                </li>
-                <li>
-                  Create a Web application OAuth client. Add your email as a
-                  test user.
-                </li>
-                <li>
-                  Register this redirect URI:{" "}
-                  <code>
-                    {
-                      new URL(
-                        window.desktop?.oauthUrl || "/api/oauth/google",
-                        location.origin,
-                      ).href
-                    }
-                    /callback
-                  </code>
-                </li>
-                <li>
-                  Save the client ID and secret below, then use Continue with
-                  Google.
-                </li>
-              </ol>
-              <a
-                className="action"
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open Google Cloud <ArrowRight color="currentColor" size={11} />
-              </a>
-              <p className="muted">
-                Access requested: read mail, update labels and send mail.
-                Credentials stay on this computer.
-              </p>
-            </div>
-          )}
-          <ConfigurationForm
-            api={api}
-            perform={perform}
-            busy={busy}
-            googleConfigured={state.googleConfigured}
-            googleClientId={state.googleClientId}
-            aiConfigured={state.aiConfigured}
-            jevConfigured={state.jevConfigured}
-            jevProvider={state.jevProvider}
-          />
+          <details>
+            <summary>Advanced connection setup</summary>
+            {!state.googleConfigured && (
+              <div className="setup">
+                <ol>
+                  <li>
+                    In Google Cloud, enable the Gmail API and configure an OAuth
+                    consent screen.
+                  </li>
+                  <li>
+                    Create a Web application OAuth client. Add your email as a
+                    test user.
+                  </li>
+                  <li>
+                    Register this redirect URI:{" "}
+                    <code>
+                      {
+                        new URL(
+                          window.desktop?.oauthUrl || "/api/oauth/google",
+                          location.origin,
+                        ).href
+                      }
+                      /callback
+                    </code>
+                  </li>
+                  <li>
+                    Save the client ID and secret below, then use Continue with
+                    Google.
+                  </li>
+                </ol>
+                <a
+                  className="action"
+                  href="https://console.cloud.google.com/apis/credentials"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Google Cloud <ArrowRight color="currentColor" size={11} />
+                </a>
+                <p className="muted">
+                  Access requested: read mail, update labels and send mail.
+                  Credentials stay on this computer.
+                </p>
+              </div>
+            )}
+            <ConfigurationForm
+              api={api}
+              perform={perform}
+              busy={busy}
+              googleConfigured={state.googleConfigured}
+              googleClientId={state.googleClientId}
+              aiConfigured={state.aiConfigured}
+              jevConfigured={state.jevConfigured}
+              jevProvider={state.jevProvider}
+            />
+          </details>
         </section>
         <section>
           <h1>
@@ -1905,20 +2155,6 @@ function SettingsPage({
           </p>
         </section>
       </div>
-      {connecting && (
-        <ConnectDialog
-          provider={connecting}
-          busy={busy}
-          onClose={() => setConnecting(null)}
-          onConnect={(input) =>
-            void perform(async () => {
-              await api("/accounts/imap", "POST", input);
-              setConnecting(null);
-              void sync();
-            }, "Account connected. Syncing your inbox.")
-          }
-        />
-      )}
     </main>
   );
 }
@@ -2150,51 +2386,73 @@ function ConfigurationForm({
     </form>
   );
 }
-function ConnectDialog({
+export function ConnectDialog({
   provider,
   busy,
   onClose,
   onConnect,
+  onBack,
 }: {
-  provider: Exclude<Provider, "gmail">;
+  provider: ImapProvider;
   busy: boolean;
   onClose: () => void;
-  onConnect: (input: unknown) => void;
+  onConnect: (input: unknown) => Promise<void>;
+  onBack?: () => void;
 }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const submitting = useRef(false);
+  const unavailable = busy || pending;
   return (
-    <Dialog title={`Connect ${providerNames[provider]}`} onClose={onClose}>
+    <Dialog title={`Connect ${providerNames[provider]}`} onClose={() => { if (!submitting.current) onClose(); }}>
       <form
         className="settings-form"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
+          if (busy || submitting.current) return;
           const data = new FormData(e.currentTarget);
-          onConnect({
-            provider,
-            email: data.get("email"),
-            password: data.get("password"),
-            ...(provider === "imap"
-              ? {
-                  username: data.get("username") || undefined,
-                  imapHost: data.get("imapHost"),
-                  smtpHost: data.get("smtpHost"),
-                  imapPort: Number(data.get("imapPort")),
-                  smtpPort: Number(data.get("smtpPort")),
-                }
-              : {}),
-          });
+          submitting.current = true;
+          setPending(true);
+          setError("");
+          try {
+            await onConnect({
+              provider,
+              email: data.get("email"),
+              password: data.get("password"),
+              ...(provider === "imap"
+                ? {
+                    username: data.get("username") || undefined,
+                    imapHost: data.get("imapHost"),
+                    smtpHost: data.get("smtpHost"),
+                    imapPort: Number(data.get("imapPort")),
+                    smtpPort: Number(data.get("smtpPort")),
+                  }
+                : {}),
+            });
+          } catch (error) {
+            setError(error instanceof Error ? error.message : "Connection failed. Check your details and try again.");
+          } finally {
+            submitting.current = false;
+            setPending(false);
+          }
         }}
       >
         <p className="dialog-copy">
           {provider === "imap"
             ? "Connect using TLS IMAP and SMTP. Server settings come from your email provider."
-            : "Generate an app-specific password in your provider’s account settings. Your regular password may not work."}
+            : provider === "gmail-imap"
+              ? "For Gmail and Google Workspace, use a 16-letter Google app password, not your regular password. App passwords require 2-Step Verification and depend on account and admin policy. If unavailable, use configured Google sign-in or contact your administrator."
+              : "Generate an app password in your provider account settings. Do not use your regular password."}
         </p>
+        {appPasswordHelp[provider] && (
+          <a className="link" href={appPasswordHelp[provider]} target="_blank" rel="noopener noreferrer">How to create an app password</a>
+        )}
         <label>
           Email
           <input name="email" type="email" autoComplete="username" required />
         </label>
         <label>
-          App-specific password
+          {provider === "imap" ? "Password" : "App password"}
           <input name="password" type="password" autoComplete="off" required />
         </label>
         {provider === "imap" && (
@@ -2241,10 +2499,12 @@ function ConnectDialog({
             </div>
           </>
         )}
+        {error && <p className="attention" role="alert"><Redact text={error} /></p>}
         <div className="form-actions">
           <span>Encrypted on this computer.</span>
-          <button className="button" disabled={busy}>
-            {busy ? "Checking connection" : "Connect"}
+          {onBack && <button className="link" type="button" disabled={unavailable} onClick={onBack}>Back</button>}
+          <button className="button" disabled={unavailable}>
+            {pending ? "Checking connection" : busy ? "Wait for the current action" : "Connect"}
           </button>
         </div>
       </form>

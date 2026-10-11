@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Integrate account setup, sync recovery, uncertain-send protection and reader navigation while preserving every original PR commit. Keep connection forms available during sync, context-menu Open working, and read-on-open active for history and Gmail IMAP All Mail.
+
 - Verify the exact archived IMAP Message-ID before marking mail read; reject missing or mismatched search candidates.
 - Mark mail read when moving through the open reader with j/k, and close the old reader when a number shortcut changes accounts.
 - Keep the synthetic IMAP store until process exit so Windows does not try to delete an open SQLite file during test cleanup.
@@ -18,7 +20,30 @@
 - Sync Gmail labels, filter cached mail by label, and edit existing custom labels on opened messages.
 - Add Ctrl+Plus and Ctrl+Minus shortcuts for comfortable and compact inbox density.
 - Mark opened unread mail read without dropping requests during other actions or sync; include archived Gmail mail and safely locate archived IMAP mail by Message-ID, with retryable errors.
+- Open guided account setup directly from the inbox, with provider defaults, app-password help and errors that keep the form open for correction.
+- Keep another provider's connection form open when Google sign-in finishes, including while its connection check is pending.
+- Close the onboarding test database before removing its temporary directory so fixture cleanup works on Windows.
+- Add Gmail and Google Workspace connections through TLS IMAP/SMTP with a Google app password, alongside configured Google sign-in. Keep the two connection methods separate and avoid duplicate Gmail Sent copies.
+- Allow connecting additional mailboxes during sync and preserve renewed account credentials when an older sync finishes.
+- Show fetched mail with local sorting while sync continues, then apply the configured AI sorting.
+- Keep the opened message and reply target when background sorting moves mail to another category.
+- Replace cached Gmail metadata reads with unread-ID lists, skip cached IMAP body downloads, and bound Gmail read and token-refresh waits.
+- Add Retry connection in Settings using encrypted saved credentials. Duplicate requests share account work; a failed account can retry while another account syncs.
+- Report fixed sync error categories and safe failure details. Contain IMAP transport errors, reject incomplete mailbox listings before archiving cached mail, and keep cleanup warnings separate from the sync outcome.
+- Skip unchanged mail writes, commit changed batches in one transaction, and coalesce renderer refreshes. Keep fresh Gmail batches visible while later downloads run, including a final refresh queued during a failed read.
+- Keep AI sorting limited to committed mail after a batch rollback and classify IMAP connection/greeting timeouts and closed connections as transient failures.
+- Make the background AI-failure regression wait for sync completion without starting another sync that can clear the expected warning.
+- Add visible Back and Forward controls and side mouse buttons for visited inbox contexts and emails, with session-only history and draft/dialog guards.
+- Keep hidden-address bars within their text lines so adjacent sender details do not overlap.
+- Make email bodies easier to read with bounded paragraph spacing, 15px text and a wrapping sender header, without changing stored text.
+- Add per-message Show images for supported remote HTTPS images, blocked by default. Older cached mail loads image metadata on demand; older archived IMAP mail fails safely instead of reusing an INBOX UID.
+- Preserve cached image metadata when an overlapping read or archive operation completes, and do not restore messages removed during that wait.
+
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
+- Keep uncertain sends as "Send status unknown" with the draft and a possible-delivery warning. Require duplicate-risk confirmation before sending again, including keyboard submission, and retain uncertainty through draft edits.
+- Keep the native application-close prompt neutral about whether a draft was sent.
+- Preserve confirmed send success when saving the Sent copy, closing its connection or refreshing the inbox fails. Treat an IMAP logout result of `false` as a cleanup warning.
+- Close the synthetic send-test database before deleting its temporary files so Windows cleanup can release the directory.
 
 ## 0.1.4
 

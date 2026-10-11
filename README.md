@@ -23,7 +23,35 @@ These packages are unsigned and not notarized. Packaging explicitly skips signin
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 
-## Gmail OAuth
+## Connect an account
+
+Select **Connect an account** in the empty inbox or add an account from Settings.
+Choose your provider. Known providers fill in the incoming and outgoing server
+settings; custom IMAP keeps those fields available.
+
+For Gmail and Google Workspace, use **Continue with Google** when Google OAuth
+is configured. Otherwise, the connection dialog offers an app-password option
+with a link to Google's account settings. Enter your email address and a
+dedicated [Google app password](https://support.google.com/accounts/answer/185833),
+not your normal Google password. This option needs no Google Cloud project.
+It requires 2-Step Verification and may be unavailable because of Workspace
+administrator policy, security-key-only verification or Advanced Protection.
+Google recommends OAuth when it is available.
+
+The app checks both incoming and outgoing access before saving an IMAP account.
+If a check fails, correct the connection form and retry. Account credentials
+stay in the encrypted local store. Gmail saves its own Sent copies; the
+app-password connection does not append another copy.
+
+Existing Gmail OAuth accounts keep their connection method and cached mail.
+The app does not switch an existing account between OAuth and IMAP during
+reconnection, because those methods use different message identifiers.
+
+### Advanced Google OAuth setup
+
+The source build does not include a shared Google OAuth client. A maintainer
+or self-hosting user can configure one once, then use Google sign-in for
+eligible personal Gmail and Workspace accounts.
 
 1. Create a project in [Google Cloud](https://console.cloud.google.com/apis/credentials) and enable the Gmail API.
 2. Configure the consent screen and add your Google accounts as test users.
@@ -57,11 +85,21 @@ TYPESAFE_MODEL=<model id>
 
 A call sends `state` (sender, subject and up to 220 characters of preview) with typed `questions` asking for a category, a relevance level and a row label. `server/sorting.ts` holds those questions, and a non-`http(s)` endpoint is refused before anything is sent.
 
-## Other accounts
+## Other providers
 
-Use Connect beside iCloud, Fastmail or Yahoo and supply an app-specific password. IMAP and SMTP connections are validated before saving. Custom IMAP supports a separate incoming username, a TLS IMAP host/port, and SMTP on port 465 with TLS or 587 with required STARTTLS.
+Choose iCloud, Fastmail or Yahoo and follow the dialog's app-password link.
+Custom IMAP supports a separate incoming username, a TLS IMAP host/port, and
+SMTP on port 465 with TLS or 587 with required STARTTLS.
 
 iCloud requires an [app-specific password](https://support.apple.com/en-ie/102525). Enter credentials only in the connection form, never in source or chat.
+
+### Sync recovery
+
+Use Retry connection beside an account in Settings to sync with its encrypted saved credentials. It keeps the account ID, cached mail, taught sorting and snooze state. Duplicate clicks share queued or running work. A failed account can retry while another account is still syncing. The account shows Retry queued or Syncing and retains its previous error until its run finishes.
+
+Retry connection cannot repair rejected credentials. For a Google sign-in rejection, use Continue with Google. For an IMAP authentication rejection, use Connect to replace the app password. Access failures point to provider permissions or administrator policy. Connection failures can be retried later; unreadable mail has a separate error. Failure details show only a fixed category, operation, allowlisted code and optional HTTP status, without raw provider errors or credentials.
+
+A partial listing retains cached mail and batches already fetched. Only a complete inbox listing archives cached messages absent from the provider. A cleanup warning preserves the sync result. Fresh Gmail mail appears in groups of up to ten while later downloads run; cached-only changes share page writes. Unchanged messages are not rewritten. Renderer notifications share one active read and one pending refresh, including a refresh requested during a failed read. These changes add no automatic provider retry. Real account recovery and native Settings interaction still need separate verification.
 
 ## Inbox
 
@@ -74,7 +112,7 @@ iCloud requires an [app-specific password](https://support.apple.com/en-ie/10252
 - Snooze is local to this client. Messages return to their category after the chosen time.
 - Compose and reply send plain text from the selected account. IMAP mail gets a Sent copy. If copying fails after delivery, the draft closes with a warning rather than encouraging a duplicate send.
 - Sync runs on opening, manually, and every five minutes while open. It fetches the full inbox; large mailboxes can take time. Gmail reuses cached bodies and checks labels. Incremental mailbox sync is not included.
-- Bodies render as text, preventing remote tracking images and scripts. HTTP and HTTPS URLs are clickable and open in your default browser on desktop. Address privacy mode masks URLs containing email addresses; turn it off to open those links. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
+- Bodies render as text without executing sender scripts. Remote images stay blocked until you activate Show images for that message; loading them can tell the sender you opened it. HTTP and HTTPS URLs are clickable and open in your default browser on desktop. Address privacy mode masks URLs containing email addresses; turn it off to open those links. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
 - Drafts remain in memory. Closing warns about unsent content; a crash does not preserve drafts.
 
 ## MCP

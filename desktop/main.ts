@@ -166,6 +166,10 @@ else {
         window?.webContents.send("window-state", !!window?.isMaximized());
       window.on("maximize", reportWindowState);
       window.on("unmaximize", reportWindowState);
+      window.on("app-command", (_event, command) => {
+        if (command === "browser-backward" || command === "browser-forward")
+          window?.webContents.send("mail-navigation", command === "browser-backward" ? "back" : "forward");
+      });
       window.webContents.setWindowOpenHandler(({ url }) => {
         if (isExternalLink(url, origin)) void shell.openExternal(url);
         return { action: "deny" };
@@ -183,7 +187,7 @@ else {
             buttons: ["Keep editing", "Discard draft"],
             defaultId: 0,
             cancelId: 0,
-            message: "Discard your unsent draft?",
+            message: "Discard your draft?",
           }) === 1
         )
           event.preventDefault();

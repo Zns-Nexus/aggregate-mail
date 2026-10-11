@@ -1,9 +1,32 @@
-export type Provider = "gmail" | "icloud" | "fastmail" | "yahoo" | "imap";
+export type Provider = "gmail" | "gmail-imap" | "icloud" | "fastmail" | "yahoo" | "imap";
+export const providerNames: Record<Provider, string> = {
+  gmail: "Gmail",
+  "gmail-imap": "Gmail",
+  icloud: "iCloud Mail",
+  fastmail: "Fastmail",
+  yahoo: "Yahoo Mail",
+  imap: "Custom IMAP",
+};
+export const appPasswordHelp: Partial<Record<Provider, string>> = {
+  "gmail-imap": "https://support.google.com/accounts/answer/185833",
+  icloud: "https://support.apple.com/102654",
+  fastmail: "https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords",
+  yahoo: "https://help.yahoo.com/kb/SLN15241.html",
+};
+export type SyncFailure = {
+  kind: "auth" | "access" | "transient" | "message" | "unknown";
+  phase: "auth" | "connect" | "list" | "read" | "parse" | "sync" | "cleanup";
+  code: string;
+  status?: number;
+};
 export type Account = {
   id: string;
   email: string;
   provider: Provider;
   error?: string;
+  syncFailure?: SyncFailure;
+  syncWarning?: SyncFailure;
+  syncStatus?: "queued" | "running";
 };
 export type Category = "important" | "other";
 // Every System One style decision provider speaks the same request and answer
@@ -71,6 +94,7 @@ export function logoDomain(value: string) {
     return null;
   return personalMailDomains.has(domain) ? null : domain;
 }
+export type MailImage = { src: string; alt: string };
 export type Mail = {
   id: string;
   accountId: string;
@@ -81,6 +105,7 @@ export type Mail = {
   subject: string;
   preview: string;
   body: string;
+  images?: MailImage[];
   date: number;
   unread: boolean;
   labelIds?: string[];
@@ -113,6 +138,7 @@ export type State = {
   jevProvider: JevProvider;
   aiConfigured: boolean;
   lastSync: number | null;
+  syncing: boolean;
 };
 
 export type GmailLabel = {
@@ -135,3 +161,19 @@ export type McpSettings = {
   allowSending: boolean;
   token: string | null;
 };
+
+// Only explicit HTTPS URLs on public-looking DNS names can leave the reader.
+export function imageSource(value: string): string | null {
+  if (value.length > 2048 || /[\\\s\u0000-\u001f\u007f]/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" || url.username || url.password || url.port ||
+      !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(url.hostname) ||
+      /\.(?:localhost|local|internal|home|lan|onion)$/i.test(url.hostname)
+    ) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}

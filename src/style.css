@@ -541,7 +541,7 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .group {
   position: sticky;
-  top: 0;
+  top: 42px;
   z-index: 2;
   padding: 18px 20px 8px;
   background: var(--surface);
@@ -762,8 +762,11 @@ input[type="checkbox"][role="switch"]:disabled {
 .address.veiled {
   display: inline-block;
   max-width: 100%;
+  height: 0.9em;
   overflow: hidden;
-  vertical-align: bottom;
+  white-space: nowrap;
+  vertical-align: -0.05em;
+  border-radius: 3px;
   color: transparent;
   background: var(--veil);
   box-shadow: inset 0 0 0 1px var(--line-2);
@@ -891,16 +894,26 @@ input[type="checkbox"][role="switch"]:disabled {
   margin: 0 auto;
   width: 100%;
 }
-.back {
-  margin-bottom: 28px;
+.mail-navigation {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 42px;
+  background: var(--surface);
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
   font-size: 12.5px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
-.back:hover {
+.mail-navigation button:not(:disabled):hover {
   color: var(--text);
 }
-.back kbd {
-  color: var(--text-4);
+.mail-navigation span {
+  margin-left: auto;
+  color: var(--text-3);
 }
 .message h1 {
   font-size: 20px;
@@ -911,6 +924,8 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .message-from {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
   margin: 24px 0 32px;
 }
@@ -919,6 +934,8 @@ input[type="checkbox"][role="switch"]:disabled {
   height: 32px;
 }
 .message-from > div {
+  flex: 1 1 200px;
+  overflow-wrap: anywhere;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -934,18 +951,47 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .message-from time {
   margin-left: auto;
-  padding-left: 16px;
   font-size: 12px;
   color: var(--text-4);
   white-space: nowrap;
 }
 .message-body {
-  max-width: 70ch;
-  white-space: pre-wrap;
+  max-width: 65ch;
   overflow-wrap: anywhere;
-  font-size: 14px;
-  line-height: 1.7;
-  color: #cfcfcf;
+  font-size: 15px;
+  line-height: 1.45;
+  color: #dedede;
+}
+.message-body p {
+  margin: 0 0 0.85em;
+  white-space: pre-wrap;
+}
+.message-images {
+  max-width: 65ch;
+  overflow-wrap: anywhere;
+  margin-top: 24px;
+}
+.image-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.message-images figure {
+  margin: 16px 0;
+}
+.message-images img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.message-images figcaption,
+.message-images p {
+  margin: 8px 0;
+  color: var(--text-2);
+  font-size: 13px;
 }
 .message-body a {
   color: inherit;
@@ -1225,6 +1271,15 @@ input[type="checkbox"][role="switch"]:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-4);
+}
+.dialog .provider-row {
+  height: auto;
+  min-height: 44px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dialog .provider-row strong {
+  width: auto;
 }
 .action {
   gap: 5px;

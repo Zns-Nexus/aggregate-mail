@@ -30,6 +30,10 @@ export function ArrowRight(props: IconProps) {
   return <Outline {...props}><path d="M4 12h16m-6-6 6 6-6 6" /></Outline>;
 }
 
+export function ArrowLeft(props: IconProps) {
+  return <Outline {...props}><path d="M20 12H4m6-6-6 6 6 6" /></Outline>;
+}
+
 export function Check(props: IconProps) {
   return <Outline {...props}><path d="m5 12 4 4L19 6" /></Outline>;
 }

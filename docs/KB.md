@@ -21,7 +21,150 @@ Emc² shares its React renderer, Electron main process and bundled mail service 
 
 The macOS target disables app and DMG signing and notarization. The release workflow calls cross-platform CI and publishes installers for version tags. Building a package does not publish it or prove Gatekeeper acceptance.
 
+## Account setup
+
+The empty inbox opens the account connection dialog directly. Settings uses
+the same connection path. Known providers supply their server settings; users
+enter an email address and provider-issued app password. Only custom IMAP
+requires manual hosts and ports. Connection errors stay in the dialog so users
+can correct their input.
+
+Google sign-in completion dismisses the provider chooser only. It preserves
+another provider's open form and any pending connection check. A pending check
+blocks duplicate submissions and form dismissal; a failed check leaves the
+entered details available for correction and retry.
+
+`src/onboarding.test.tsx` mounts the React forms in a synthetic DOM with the
+test-only `happy-dom` dependency. It exercises the desktop callback, pending
+submissions, retained input, inline errors and retry without a browser or accounts.
+
+The server onboarding fixture stops its HTTP server and calls `closeStore()`
+before removing the temporary directory. Windows requires the SQLite handle
+to be closed before its files can be deleted. The application does not call
+this test cleanup helper.
+
+Gmail supports two separate transports: `gmail` uses the existing Gmail API
+OAuth flow; `gmail-imap` uses `imap.gmail.com:993` and `smtp.gmail.com:465` over
+TLS. The latter accepts personal Gmail and Workspace addresses when Google
+permits app passwords. It does not require a Google Cloud project. Google
+recommends OAuth, and administrators or account security policy can prevent
+app-password access. See [Google's requirements](https://support.google.com/accounts/answer/185833).
+
+Account creation validates incoming and outgoing access before writing the
+encrypted account record. Reconnecting cannot silently change between Google
+transports or mix their cached message IDs. Gmail IMAP sends rely on Google's
+Sent copy and do not append a second copy. Other providers retain the existing
+Sent-copy behavior, including the warning after successful delivery when
+copying to Sent fails.
+
+Source builds still require OAuth client configuration for Google browser
+sign-in. No shared client, cloud relay or provider-registration automation is
+included. See [connection instructions](../README.md#connect-an-account) and
+[ADR 0008](adr/0008-guided-account-connections.md). Synthetic tests do not prove
+live provider eligibility, login, mail delivery or installed desktop behavior.
+
 ## Verification
+
+### Mailbox sync
+
+The [sync service](../server/index.ts) allows validated IMAP registration and
+Google OAuth callbacks during a pending sync. Each connection schedules its
+account immediately. Up to two accounts run at once; an additional account
+waits for a slot. Overlapping sync requests share that run. Replacing an
+active account's credentials queues one subsequent run with its current
+credentials. An old run cannot restore old credentials or recreate a removed account. Mail actions,
+account removal, configuration and Teach keep their existing sync guards.
+
+Settings, Retry connection calls `POST /api/accounts/:id/reconnect` with no
+account data. The route reads the encrypted saved credentials server-side and
+calls `requestSync([id])`; it does not validate SMTP or replace credentials.
+Desktop-session, Host, origin and CSRF checks still apply. Unknown IDs return
+404 and account data returns 400. Accepted requests return 202 with only the
+target account's queued/running status and prior failure. Duplicate requests
+share work; an account that has finished can retry while peers remain active.
+Its previous error remains until that account finishes. Authentication rejection
+requires Google sign-in or an app-password replacement through the existing
+connection form. No new automatic provider retry is added.
+
+[Provider listing](../server/providers.ts) saves fetched batches before later
+pages or AI sorting finish. New mail first uses local sorting, then receives
+the configured AI classification. Cached sorting and snooze state are retained.
+Only a successful complete inbox listing marks absent cached messages archived.
+A partial failure retains cached mail and fetched batches, sorts new fetched
+mail, and reports an account error. AI failures keep local sorting and return
+a warning. Sync failures use fixed messages for authentication, access,
+transient connection/provider, message-read and unknown failures. Stored details
+contain only an operation, allowlisted code and optional numeric HTTP status;
+raw exceptions, response bodies and credentials are excluded. IMAP error
+emissions reject the pending listing operation and close its connection.
+Known IMAP connection and greeting timeouts normalize to `ETIMEDOUT`;
+`NoConnection` and `EConnectionClosed` normalize to `CONNECTION_CLOSED`.
+These failures remain transient, including disconnects during message reads.
+Throwing or false logout produces a separate cleanup warning and preserves
+the primary listing result or failure.
+
+Mail batches skip deeply equal cached records and write changed records in one
+SQLite transaction using the existing encryption. A failed transaction rolls
+back the whole batch. Only committed fresh mail enters AI sorting, so sorting
+cannot restore a failed batch. Earlier committed batches still receive AI
+sorting after a later batch fails. The [renderer](../src/App.tsx) reloads state during sync,
+including once per second while pending. Reload notifications share one active
+read and one pending refresh. A failed active read still services a refresh
+requested during that read; failure alone does not schedule a retry.
+The service owns connection-triggered sync so connection callbacks do not
+start duplicate runs.
+
+An opened message is selected by ID from the full current cache, so background
+classification cannot switch the reader or reply to another message. Closing
+the reader restores selection within the filtered list. If the opened message
+is removed, it has no reply target. The [selection tests](../src/mail-selection.test.tsx)
+cover category changes with remaining or empty lists, removal and closed-reader
+selection. Run them with `node --import tsx --test src/mail-selection.test.tsx`.
+They check the message used by the reader and reply logic; they do not mount
+the UI or execute a reply.
+
+Gmail reuses cached bodies and refreshes unread state with paginated inbox and
+unread-ID lists instead of one metadata request per cached message. Fresh raw
+reads run in batches of ten and publish before later groups in the same page
+settle. Cached-only batches publish once per inbox page. Gmail reads and token
+refresh have a 30-second request timeout that aborts transport. Read batches settle every in-flight
+request before releasing their account slot. IMAP drains UID/flag enumeration
+before fetching missing bodies by UID, with no cached-body download. Before
+reconciling absent cache entries, IMAP requires unique UIDs and flags, an
+enumeration matching EXISTS, stable UIDVALIDITY/UIDNEXT, no observed mailbox
+change and every requested body UID exactly once. Missing bodies report a
+message-read failure. Incomplete snapshots retain cached mail. Neither
+provider caps the inbox or drops older mail.
+
+Run the synthetic service and provider regressions with:
+
+```sh
+node --import tsx --test server/sync.test.ts server/providers.test.ts server/sync-recovery.test.ts src/sync-reload.test.tsx src/mail-selection.test.tsx
+```
+
+The [service tests](../server/sync.test.ts) cover registration during pending
+sync, the mocked Google callback, credential continuity, coalescing, progressive
+visibility, configured AI completion, cache preservation, retry and deleted
+accounts. The background AI-failure case waits for the service's completion
+notification after AI starts and asserts one provider run. It does not issue
+another sync as a wait, which could arrive late and clear the expected warning.
+The [provider tests](../server/providers.test.ts) check cached work,
+pagination, progressive batches, IMAP command order and actual transport abort
+against a synthetic loopback endpoint. They shorten the timeout clock while
+asserting the configured 30-second bound. The
+[recovery tests](../server/sync-recovery.test.ts) exercise the actual loopback
+service with synthetic OAuth transport and ImapFlow command/emitter fixtures.
+They cover safe failures, guarded saved-credential reconnect, duplicate clicks,
+retry while a peer runs, incomplete listings, four library throttle attempts,
+cleanup outcomes, transaction rollback and unchanged/changed cache operation
+counts. They also block a later Gmail download group and check that earlier
+fresh mail is already in state. The
+[reload tests](../src/sync-reload.test.tsx) check the exported coalescing seam,
+including a queued refresh after rejection; they do not mount Settings.
+These checks use synthetic accounts and mail. They do not prove real Gmail or Workspace authentication, real mailbox
+latency, native UI behavior, deployment or release readiness.
+
+### Desktop startup
 
 Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access and checks native menu roles on macOS. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
 
@@ -43,6 +186,24 @@ cat "$check_dir/stdout.log" "$check_dir/stderr.log"
 Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. Intel builds use `release/mac/`. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
 
 The repository has no `scripts/documentation.py`; documentation checks currently require link and diff review.
+
+## Send outcomes
+
+Compose retains the draft after an untyped send failure, including transport loss, an unreadable response or HTTP 400. HTTP 400 alone does not establish rejection: the API uses that status for provider exceptions too. The draft shows "Send status unknown" and possible delivery. Editing fields does not clear this status. All form submissions share a duplicate-risk confirmation; canceling it makes no send request. Native form validation blocks invalid input before submission. The in-flight send lock prevents overlapping submissions before the busy state renders.
+
+After SMTP accepts the message, Sent-copy and connection cleanup failures become `SentCopyError` warnings. An IMAP append or logout result of `false` also produces a warning. The shared mail operation retains `{ ok: true, warning }` for both the API and MCP. A successful send clears compose before refreshing the inbox; a refresh failure adds a separate warning and preserves send success and any provider warning. These outcomes confirm provider acceptance, not recipient delivery.
+
+Focused synthetic regressions:
+
+```sh
+node --import tsx --test src/compose-send.test.tsx server/send-provider.test.ts
+```
+
+[Renderer regressions](../src/compose-send.test.tsx) execute the compose submission function, form event handlers and rendered status text. A loopback HTTP server records a submission and drops its response, then verifies canceled and confirmed resends. Tests cover uncertainty through edits, shared pointer/keyboard form handling, validation, close prompts, overlapping submissions and refresh failure. [Provider regressions](../server/send-provider.test.ts) run the real provider and shared send operation with synthetic SMTP and IMAP adapters. They cover accepted SMTP, Sent-copy and cleanup warnings, invalid input and SMTP failure without an IMAP connection. These tests do not drive a native window, verify browser event dispatch or prove real mail delivery.
+
+Attempt identifiers, persistent receipts, automatic recovery, automatic retries and a durable outbox are deferred. Send uncertainty exists only on the open in-memory draft. Sources: [compose](../src/App.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
+
+The provider fixture calls [closeStore](../server/store.ts) before deleting its temporary database directory. Windows cannot remove the directory while SQLite holds its files open.
 
 ## Public contribution boundary
 
@@ -71,7 +232,7 @@ See [README](../README.md#ci) for usage and [ADR 0002](adr/0002-cross-platform-c
 
 ## Email links
 
-Message bodies stay plain text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The app never renders email HTML or loads body images.
+Message bodies stay plain text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The app never renders email HTML. Remote body images require per-message activation, as described below.
 
 The existing mailparser dependency converts HTML-only email links to text containing their destinations. No mailbox resync or storage migration is needed for URLs already in cached bodies.
 
@@ -83,7 +244,97 @@ Verification for source revision `dbe8b870e3ec1140c1385d49118fcbf8f5b917a9`: sev
 
 Sources: [message rendering](../src/App.tsx), [navigation policy](../desktop/navigation.ts), [mail parsing](../server/providers.ts), [design](../DESIGN.md).
 
+## Email reader and opt-in images
+
+### Back and Forward
+
+The [navigation hook](../src/navigation.ts) keeps visited view, account, Gmail label filter, search,
+selection and reader state in memory. [App](../src/App.tsx) records tab and
+account changes, search edits and intentional message opens. Selecting a row
+does not add a visit. Consecutive search edits share one visit. Back and Forward
+restore context and request read status when reopening unread mail. A new
+visit after Back removes the forward branch. Missing messages return to the
+list; missing account filters return to All. Drafts and dialogs block traversal.
+Escape retains the existing close-email, close-dialog and draft-confirmation
+behavior. Closing or changing the reader clears remote-image consent.
+
+On Windows and Linux, [Electron main](../desktop/main.ts) forwards the
+documented `app-command` values `browser-backward` and `browser-forward`
+through the [preload bridge](../desktop/preload.ts). The renderer suppresses
+DOM side-button events on those platforms so one gesture cannot traverse
+twice. Elsewhere, DOM mouse button 3 means Back and button 4 means Forward;
+only mouseup traverses, while mousedown and auxclick suppress defaults.
+
+Synthetic mounted [App tests](../src/navigation.test.tsx) exercise traversal,
+mail-to-mail visits, filter/search restoration, forward truncation, missing or
+changed mail, consent reset, guards, source selection and listener cleanup.
+The [preload test](../desktop/preload.test.ts) checks direction validation and
+unsubscribe behavior. Run `npm test`, `npm run build` and the isolated
+`npm run check:desktop` recipe above for desktop changes. DOM and bridge tests
+do not prove physical mouse delivery, native Windows/macOS behavior or visual
+layout. Installed-app proof remains separate.
+
+The reader splits blank-line runs, including whitespace-only lines, into one
+paragraph break. It preserves single line breaks, indentation, text links and
+address masking. This changes display only; cached body strings are unchanged.
+The body uses 15px text at 1.45 line height within a 65ch column. Sender details
+and the date wrap within the header.
+
+Show images is a native button. Before activation the reader creates no body
+image elements and makes no image-metadata request. Activation shows loading,
+then responsive images, a failure message or a no-supported-images message.
+Hide images removes them. Message changes and reader closure clear consent;
+late responses cannot reveal images in a different message.
+
+New MIME parsing records at most 50 unique image URLs and 500 characters of alt
+text per image. Only explicit HTTPS sources with public-looking DNS names, no
+credentials and the default port are accepted. HTTP, local hostnames, IP
+literals, relative URLs, data URLs and CID sources are excluded. The renderer
+checks sources again. Images use `referrerPolicy="no-referrer"`; the server never
+fetches an image URL. Sender HTML, styles, scripts, event handlers and layout
+are neither stored nor rendered. The renderer CSP permits HTTPS in `img-src`
+while retaining the existing script, connection and sandbox restrictions.
+
+Loading remote images can expose the reader's IP address and send cookies to
+the image host. URL filtering does not verify DNS resolution or redirect
+chains. Consent therefore applies only to the current reader opening and is
+never saved as a preference. Images can contain readable addresses even when
+address hiding masks text and alt captions. Embedded CID images remain
+unsupported; showing them would require a separate bounded attachment path.
+
+Older cached mail lacks image metadata. The authenticated, CSRF-protected
+`POST /api/messages/:id/images` retrieves only the requested message, writes
+optional image metadata to its existing encrypted JSON record and leaves its
+body and current mailbox state intact. Later requests reuse that metadata,
+including an empty list. Gmail retrieves raw MIME by the stable Gmail ID; its
+cached inbox sync refreshes unread status and label membership using lists, without downloading cached bodies. IMAP validates INBOX
+UIDVALIDITY and fetches that UID without setting Seen. It also checks Message-ID
+when one is cached. Older archived IMAP messages fail before connecting because
+the stored UID belongs to the former INBOX. Newly parsed images remain usable
+after archive. No bulk cache refill or database migration is needed.
+
+Read and archive operations reread the cached message after the provider
+responds. Image metadata saved during that wait survives the action, and a
+message removed during the wait is not recreated. Deferred-provider tests
+cover both completion orders between image caching and mail actions.
+
+Automated synthetic scenarios cover paragraph normalization, existing links and
+masking, MIME extraction, URL rejection, cached Gmail metadata sync, targeted
+Gmail retrieval, IMAP identity failures, API authentication/origin/CSRF gates,
+cache reuse, and preservation of text and concurrent archive/read state.
+Mounted DOM scenarios cover blocked entry, activation, loading, image failure,
+provider failure and manual retry, no images, and switching during a pending
+request. Run `npm test` and `npm run build`. DOM tests do not load remote images
+or prove native keyboard activation, visual layout, live providers or installed
+desktop behavior. Browser testing remains prohibited by PRODUCT.md.
+
+Sources: [reader](../src/App.tsx), [styles](../src/style.css),
+[shared image policy](../shared/types.ts), [providers](../server/providers.ts),
+[API](../server/index.ts), [image decision](adr/0009-opt-in-message-images.md).
+
 ## UI review, 2026-10-09
+
+The reader follow-up caps hidden-address bars at 0.9em high and one line, with the existing container-width limit. A synthetic CSS comparison at 728px and 360px confirmed that normal and long bars fit inside their line boxes without horizontal overflow. This checks isolated layout, not the installed application.
 
 Baseline: `b04679ac3e6fa62e60acd37dab1d03c1d3f2f981`. Scope: inbox, open message, address privacy, and Settings provider dropdown. Method: source inspection and T3 Code browser interaction using synthetic mail at 1280 x 800 and 900 x 600. The Windows application and real mailbox operations were not exercised.
 
