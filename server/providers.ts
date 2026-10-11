@@ -35,7 +35,8 @@ export function syncError(error: unknown, provider: Provider, phase: SyncFailure
   const codes = ["invalid_grant", "invalid_token", "EAUTH", "AUTHENTICATIONFAILED", "ETHROTTLE", "ETIMEDOUT", "ETIMEOUT", "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "INCOMPLETE_LIST", "CONNECTION_CLOSED", "READ_FAILED", "PARSE_FAILED", "CLEANUP_FAILED"];
   const candidate = typeof detail === "string" ? detail : e?.code ?? e?.serverResponseCode;
   let code = typeof candidate === "string" && codes.includes(candidate) ? candidate : "UNKNOWN";
-  if ([e?.name, candidate].some((value) => value === "AbortError" || value === "TimeoutError")) code = "ETIMEDOUT";
+  if ([e?.name, candidate].some((value) => value === "AbortError" || value === "TimeoutError") || candidate === "CONNECT_TIMEOUT" || candidate === "GREETING_TIMEOUT") code = "ETIMEDOUT";
+  if (candidate === "NoConnection" || candidate === "EConnectionClosed") code = "CONNECTION_CLOSED";
   const auth = e?.authenticationFailed || status === 401 || ["invalid_grant", "invalid_token", "EAUTH", "AUTHENTICATIONFAILED"].includes(code);
   const transient = rateLimit || (status !== undefined && status >= 500) || ["ETHROTTLE", "ETIMEDOUT", "ETIMEOUT", "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "INCOMPLETE_LIST", "CONNECTION_CLOSED"].includes(code);
   const kind = auth ? "auth" : transient ? "transient" : status === 403 ? "access" : phase === "read" || phase === "parse" ? "message" : "unknown";

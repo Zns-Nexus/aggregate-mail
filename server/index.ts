@@ -411,9 +411,9 @@ async function syncAccount(a: StoredAccount, errors: string[]) {
         snoozedUntil: previous?.snoozedUntil || null,
       };
       if (!isDeepStrictEqual(previous, saved)) changed.push([m.id, saved]);
-      if (!previous) fresh.set(m.id, saved);
     }
     putBatch("mail", changed);
+    for (const [id, saved] of changed) if (!existing.has(id)) fresh.set(id, saved);
     if (changed.length) desktopEvents.emit("mail-changed");
   };
   let error: string | undefined;

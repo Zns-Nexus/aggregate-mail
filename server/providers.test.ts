@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { google } from "googleapis";
 import { ImapFlow } from "imapflow";
 import { createServer } from "node:http";
-import { providers, SyncError } from "./providers.js";
+import { providers, SyncError, syncError } from "./providers.js";
 import type { StoredAccount } from "./store.js";
 import type { Mail } from "../shared/types.js";
 
@@ -14,6 +14,20 @@ const cachedMail = (id: string): Mail => ({
   category: "other", relevance: 1, reason: "Taught sorting", archived: false, snoozedUntil: 1800000000000,
 });
 const raw = Buffer.from("From: Sender <sender@example.com>\r\nTo: inbox@example.com\r\nSubject: Fresh mail\r\n\r\nSynthetic body");
+
+test("known IMAP timeouts and body-read disconnects remain safe transient failures", () => {
+  for (const [input, phase, code] of [
+    ["CONNECT_TIMEOUT", "connect", "ETIMEDOUT"],
+    ["GREETING_TIMEOUT", "connect", "ETIMEDOUT"],
+    ["NoConnection", "read", "CONNECTION_CLOSED"],
+    ["EConnectionClosed", "read", "CONNECTION_CLOSED"],
+  ] as const) {
+    const error = syncError(Object.assign(new Error("Synthetic private transport details"), { code: input }), "imap", phase);
+    assert.deepEqual(error.failure, { kind: "transient", phase, code });
+    assert.match(error.message, /temporarily unavailable/);
+    assert.ok(!error.message.includes("Synthetic private"));
+  }
+});
 
 test("cached Gmail uses paginated inbox/unread lists without metadata gets, keeps older mail and exposes batches", async () => {
   const cached = new Map(Array.from({ length: 120 }, (_, i) => { const m = cachedMail(String(i)); return [m.id, m]; }));

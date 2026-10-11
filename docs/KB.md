@@ -49,12 +49,17 @@ transient connection/provider, message-read and unknown failures. Stored details
 contain only an operation, allowlisted code and optional numeric HTTP status;
 raw exceptions, response bodies and credentials are excluded. IMAP error
 emissions reject the pending listing operation and close its connection.
+Known IMAP connection and greeting timeouts normalize to `ETIMEDOUT`;
+`NoConnection` and `EConnectionClosed` normalize to `CONNECTION_CLOSED`.
+These failures remain transient, including disconnects during message reads.
 Throwing or false logout produces a separate cleanup warning and preserves
 the primary listing result or failure.
 
 Mail batches skip deeply equal cached records and write changed records in one
 SQLite transaction using the existing encryption. A failed transaction rolls
-back the whole batch. The [renderer](../src/App.tsx) reloads state during sync,
+back the whole batch. Only committed fresh mail enters AI sorting, so sorting
+cannot restore a failed batch. Earlier committed batches still receive AI
+sorting after a later batch fails. The [renderer](../src/App.tsx) reloads state during sync,
 including once per second while pending. Reload notifications share one active
 read and one pending refresh. A failed active read still services a refresh
 requested during that read; failure alone does not schedule a retry.

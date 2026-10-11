@@ -288,6 +288,49 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
           assert.equal(all("mail").length, 2, "rollback must leave the transaction slot usable");
         } finally { mocked.mock.restore(); db.close(); }
       });
+      await t.test("AI sorts only committed fresh mail when a later batch rolls back", async () => {
+        for (const earlierCommitted of [false, true]) {
+          for (const m of all("mail")) remove("mail", m.id);
+          const a = fixture(), cached = mail(a), earlier = mail(a, "42:2"), rejected = mail(a, "42:3");
+          put("account", a.id, a); put("mail", cached.id, cached);
+          const originalPrepare = DatabaseSync.prototype.prepare, networkFetch = globalThis.fetch;
+          const previousKey = process.env.TYPESAFE_API_KEY;
+          let writes = 0, aiCalls = 0;
+          mock.method(DatabaseSync.prototype, "prepare", function (this: DatabaseSync, sql: string) {
+            const statement = originalPrepare.call(this, sql);
+            if (sql === "INSERT OR REPLACE INTO records VALUES (?,?,?)") {
+              const run = statement.run.bind(statement);
+              statement.run = (...args) => {
+                if (args[0] === "mail" && ++writes === (earlierCommitted ? 3 : 2)) throw new Error("Synthetic batch write failure");
+                return run(...args as SQLInputValue[]);
+              };
+            }
+            return statement;
+          });
+          mock.method(providers.imap, "list", async (...[_a, _cached, onBatch]: Parameters<typeof providers.imap.list>) => {
+            if (earlierCommitted) onBatch?.([earlier]);
+            const batch = [{ ...cached, unread: true }, rejected];
+            onBatch?.(batch); return batch;
+          });
+          process.env.TYPESAFE_API_KEY = "synthetic-ai-key";
+          mock.method(globalThis, "fetch", async (...args: Parameters<typeof fetch>) => {
+            if (String(args[0]).startsWith(`${origin}/`)) return networkFetch(...args);
+            aiCalls++;
+            return new Response(JSON.stringify({ model: "synthetic", answers: {
+              category: { type: "choice", choice: "other" }, relevance: { type: "score", score: 0 }, reason: { type: "choice", choice: "Newsletter" },
+            } }), { headers: { "Content-Type": "application/json" } });
+          });
+          try {
+            const result = await sync(), records = all("mail");
+            assert.equal(result.errors.length, 1);
+            assert.deepEqual(records.find((m) => m.id === cached.id), cached);
+            assert.equal(records.some((m) => m.id === rejected.id), false, "AI must not restore a rolled-back message");
+            assert.equal(records.length, earlierCommitted ? 2 : 1);
+            assert.equal(aiCalls, earlierCommitted ? 1 : 0);
+            if (earlierCommitted) assert.equal(records.find((m) => m.id === earlier.id)?.reason, "Newsletter");
+          } finally { process.env.TYPESAFE_API_KEY = previousKey; mock.restoreAll(); }
+        }
+      });
       await t.test("reconnect guards and unknown/body inputs never replace or restore credentials", async () => {
         const a = fixture(); put("account", a.id, a);
         const route = `/accounts/${a.id}/reconnect`;
