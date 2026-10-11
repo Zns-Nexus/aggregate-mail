@@ -1,10 +1,12 @@
 import { google } from "googleapis";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
+import { Parser } from "htmlparser2";
+import { imageSource } from "../shared/types.js";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { z } from "zod";
-import type { GmailLabel, Mail, Provider, SyncFailure } from "../shared/types.js";
+import type { GmailLabel, Mail, MailImage, Provider, SyncFailure } from "../shared/types.js";
 import type { StoredAccount } from "./store.js";
 
 export class SyncError extends Error {
@@ -166,14 +168,14 @@ type Incoming = Omit<
   Mail,
   "category" | "relevance" | "reason" | "archived" | "snoozedUntil"
 >;
-async function parse(
+export async function parse(
   a: StoredAccount,
   remoteId: string,
   source: Buffer,
   unread: boolean,
   date?: number,
 ): Promise<Incoming> {
-  const m = await simpleParser(source);
+  const m = await simpleParser(source, { skipImageLinks: true });
   const from = m.from?.value[0];
   const body = m.text || "";
   return {
@@ -188,6 +190,7 @@ async function parse(
     subject: m.subject || "(No subject)",
     preview: body.replace(/\s+/g, " ").slice(0, 220),
     body,
+    images: extractImages(m.html || ""),
     date: date || m.date?.getTime() || Date.now(),
     unread,
     messageId: m.messageId,
@@ -196,6 +199,20 @@ async function parse(
     references:
       typeof m.references === "string" ? [m.references] : m.references,
   };
+}
+function extractImages(html: string): MailImage[] {
+  const images: MailImage[] = [];
+  const seen = new Set<string>();
+  new Parser({
+    onopentag(name, attributes) {
+      if (name !== "img" || images.length >= 50) return;
+      const src = imageSource(attributes.src || "");
+      if (!src || seen.has(src)) return;
+      seen.add(src);
+      images.push({ src, alt: (attributes.alt || "").slice(0, 500) });
+    },
+  }).end(html);
+  return images;
 }
 export async function validateImap(a: StoredAccount) {
   const client = imap(a);
@@ -214,7 +231,8 @@ export class SentCopyError extends Error {}
 export const providers: Record<
   Provider,
   {
-    list: (a: StoredAccount, cached: Map<string, Mail>, onBatch?: (batch: Incoming[]) => void, onWarning?: (warning: SyncFailure) => void) => Promise<Incoming[]>;
+    list: (a: StoredAccount, cached: Map<string, Mail>, onBatch?: (batch: Incoming[]) => void, onWarning?: (warning: SyncFailure) => void, labels?: GmailLabel[]) => Promise<Incoming[]>;
+    images: (a: StoredAccount, m: Mail) => Promise<MailImage[]>;
     update: (
       a: StoredAccount,
       m: Mail,
@@ -224,7 +242,7 @@ export const providers: Record<
   }
 > = {
   gmail: {
-    async list(a, cached, onBatch) {
+    async list(a, cached, onBatch, _onWarning, labels) {
       const auth = oauth();
       auth.setCredentials({ refresh_token: a.credentials.refreshToken });
       // Bound token refresh as well as message reads, using request cancellation.
@@ -246,6 +264,24 @@ export const providers: Record<
           pageToken = page.data.nextPageToken || undefined;
         } while (pageToken);
       }
+      const memberships = new Map<string, string[]>();
+      // Refresh labels by membership lists without downloading cached messages.
+      if (cached.size && labels) {
+        for (const label of labels.filter((label) => !["INBOX", "UNREAD"].includes(label.id))) {
+          do {
+            const page = await syncOperation(a.provider, "list", () => api.users.messages.list({
+              userId: "me", labelIds: ["INBOX", label.id], maxResults: 500, pageToken,
+            }, options));
+            for (const item of page.data.messages || []) {
+              if (!item.id || !cached.has(`${a.id}:${item.id}`)) continue;
+              const ids = memberships.get(item.id) || [];
+              ids.push(label.id);
+              memberships.set(item.id, ids);
+            }
+            pageToken = page.data.nextPageToken || undefined;
+          } while (pageToken);
+        }
+      }
       do {
         const page = await syncOperation(a.provider, "list", () => api.users.messages.list({
           userId: "me",
@@ -261,6 +297,7 @@ export const providers: Record<
               const previous = cached.get(`${a.id}:${item.id}`);
               if (previous) return {
                 ...previous, unread: unreadIds.has(item.id!),
+                ...(labels ? { labelIds: ["INBOX", ...(unreadIds.has(item.id!) ? ["UNREAD"] : []), ...(memberships.get(item.id!) || [])] } : {}),
                 ...(item.threadId ? { threadId: item.threadId } : {}),
               };
               const result = await syncOperation(a.provider, "read", () => api.users.messages.get({
@@ -297,6 +334,13 @@ export const providers: Record<
         pageToken = page.data.nextPageToken || undefined;
       } while (pageToken);
       return messages;
+    },
+    async images(a, m) {
+      const result = await gmail(a).users.messages.get({
+        userId: "me", id: m.remoteId, format: "raw",
+      });
+      if (!result.data.raw) throw new Error("Email source is unavailable.");
+      return (await parse(a, m.remoteId, Buffer.from(result.data.raw, "base64url"), m.unread)).images!;
     },
     async update(a, m, action) {
       await gmail(a).users.messages.modify({
@@ -424,6 +468,32 @@ function imapProvider() {
           client.close();
           onWarning?.({ kind: "unknown", phase: "cleanup", code: "CLEANUP_FAILED" });
         }
+      }
+    },
+    async images(a: StoredAccount, m: Mail) {
+      // An archived UID belongs to the old INBOX, never to the archive folder.
+      if (m.archived) throw new Error("Images are unavailable for this older archived IMAP email.");
+      const identifiers = /^(\d+):([1-9]\d*)$/.exec(m.remoteId);
+      if (!identifiers) throw new Error("Email identifiers are unavailable. Sync and try again.");
+      const client = imap(a);
+      try {
+        await client.connect();
+        const lock = await client.getMailboxLock("INBOX");
+        try {
+          if (!client.mailbox || String(client.mailbox.uidValidity) !== identifiers[1])
+            throw new Error("Mailbox identifiers changed. Sync before loading images.");
+          const result = await client.fetchOne(identifiers[2], { source: true }, { uid: true });
+          if (!result || !result.source) throw new Error("Email source is unavailable.");
+          const parsed = await parse(a, m.remoteId, result.source, m.unread);
+          if (m.messageId && parsed.messageId !== m.messageId)
+            throw new Error("Email identity changed. Images were not loaded.");
+          return parsed.images!;
+        } finally {
+          lock.release();
+        }
+      } finally {
+        if (client.usable) await client.logout();
+        else client.close();
       }
     },
     async update(a: StoredAccount, m: Mail, action: "archive" | "read") {

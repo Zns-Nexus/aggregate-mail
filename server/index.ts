@@ -15,6 +15,7 @@ import {
   updateMessage,
   messageActionSchema,
   runMailWork,
+  findMail,
 } from "./mail-actions.js";
 import { mountMcp, authorizeMcp } from "./mcp.js";
 import { classify, sortMail, SortingUnavailable } from "./sorting.js";
@@ -435,7 +436,14 @@ async function syncAccount(a: StoredAccount, errors: string[]) {
   let syncFailure: SyncFailure | undefined;
   let syncWarning: SyncFailure | undefined;
   try {
-    const incoming = await providers[a.provider].list(a, existing, saveBatch, (warning) => { syncWarning = warning; });
+    const labels = a.provider === "gmail" ? await listGmailLabels(a) : undefined;
+    if (!currentAccount()) return;
+    if (labels) {
+      putBatch("label", labels.map((label) => [`${a.id}:${label.id}`, label]));
+      for (const old of all("label").filter((label) => label.accountId === a.id && !labels.some((current) => current.id === label.id)))
+        remove("label", `${a.id}:${old.id}`);
+    }
+    const incoming = await providers[a.provider].list(a, existing, saveBatch, (warning) => { syncWarning = warning; }, labels);
     if (!currentAccount()) return;
     // Also support a provider returning its final batch without a progress callback.
     saveBatch(incoming);
@@ -477,6 +485,17 @@ async function syncAccount(a: StoredAccount, errors: string[]) {
   if (current && isDeepStrictEqual(current.credentials, a.credentials))
     put("account", a.id, { ...current, error, syncFailure, syncWarning });
 }
+app.post("/api/messages/:id/images", async (req, res) => {
+  const mail = findMail(req.params.id);
+  if (mail.images !== undefined) return res.json({ images: mail.images });
+  const a = account(mail.accountId);
+  const images = await providers[a.provider].images(a, mail);
+  // Read current state again so an overlapping mail action is not overwritten.
+  assertNotSyncing();
+  const current = findMail(mail.id);
+  put("mail", mail.id, { ...current, images });
+  res.json({ images });
+});
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);
   if (!all("mail").some((m) => m.id === req.params.id))
@@ -523,7 +542,7 @@ const staticPath = process.env.MAIL_STATIC_DIR || path.resolve("dist");
 app.use((_req, res, next) => {
   res.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   );
   next();
 });

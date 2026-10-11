@@ -31,6 +31,12 @@
 - Skip unchanged mail writes, commit changed batches in one transaction, and coalesce renderer refreshes. Keep fresh Gmail batches visible while later downloads run, including a final refresh queued during a failed read.
 - Keep AI sorting limited to committed mail after a batch rollback and classify IMAP connection/greeting timeouts and closed connections as transient failures.
 - Make the background AI-failure regression wait for sync completion without starting another sync that can clear the expected warning.
+- Add visible Back and Forward controls and side mouse buttons for visited inbox contexts and emails, with session-only history and draft/dialog guards.
+- Keep hidden-address bars within their text lines so adjacent sender details do not overlap.
+- Make email bodies easier to read with bounded paragraph spacing, 15px text and a wrapping sender header, without changing stored text.
+- Add per-message Show images for supported remote HTTPS images, blocked by default. Older cached mail loads image metadata on demand; older archived IMAP mail fails safely instead of reusing an INBOX UID.
+- Preserve cached image metadata when an overlapping read or archive operation completes, and do not restore messages removed during that wait.
+
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 - Keep uncertain sends as "Send status unknown" with the draft and a possible-delivery warning. Require duplicate-risk confirmation before sending again, including keyboard submission, and retain uncertainty through draft edits.
 - Keep the native application-close prompt neutral about whether a draft was sent.

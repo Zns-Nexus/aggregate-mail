@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("desktop", {
   platform: process.platform,
+  onNavigation: (callback: (direction: "back" | "forward") => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, direction: string) => {
+      if (direction === "back" || direction === "forward") callback(direction);
+    };
+    ipcRenderer.on("mail-navigation", listener);
+    return () => ipcRenderer.removeListener("mail-navigation", listener);
+  },
   onMailChanged: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("mail-changed", listener);
