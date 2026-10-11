@@ -232,11 +232,11 @@ See [README](../README.md#ci) for usage and [ADR 0002](adr/0002-cross-platform-c
 
 ## Email links
 
-Message bodies stay plain text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The app never renders email HTML. Remote body images require per-message activation, as described below.
+Plain-text fallback bodies stay text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The bounded formatted reader described below now supports a safe subset of sender layout. Remote body images require per-message activation, as described below.
 
 The existing mailparser dependency converts HTML-only email links to text containing their destinations. No mailbox resync or storage migration is needed for URLs already in cached bodies.
 
-Address privacy mode masks URLs containing literal or percent-encoded email addresses and omits their anchors. Turn address privacy off to open these links. Other address masking behavior stays unchanged.
+Address privacy mode masks URLs containing literal or percent-encoded email addresses and omits their anchors. Turn address privacy off to open these links. Personal-information hiding also covers known connected-recipient names and suppresses private destinations.
 
 The desktop navigation policy allows HTTP and HTTPS destinations outside the mail service origin. On the mail service origin, only the Google OAuth entry route may open externally. Local API routes and other URL schemes stay blocked.
 
@@ -291,15 +291,13 @@ text per image. Only explicit HTTPS sources with public-looking DNS names, no
 credentials and the default port are accepted. HTTP, local hostnames, IP
 literals, relative URLs, data URLs and CID sources are excluded. The renderer
 checks sources again. Images use `referrerPolicy="no-referrer"`; the server never
-fetches an image URL. Sender HTML, styles, scripts, event handlers and layout
-are neither stored nor rendered. The renderer CSP permits HTTPS in `img-src`
+fetches an image URL. The formatted reader stores bounded HTML in encrypted mail JSON and constructs allowed React elements. It discards scripts, active elements, sender stylesheets, event handlers and resource-loading CSS. See the formatted-content decision below. The renderer CSP permits HTTPS in `img-src`
 while retaining the existing script, connection and sandbox restrictions.
 
 Loading remote images can expose the reader's IP address and send cookies to
 the image host. URL filtering does not verify DNS resolution or redirect
 chains. Consent therefore applies only to the current reader opening and is
-never saved as a preference. Images can contain readable addresses even when
-address hiding masks text and alt captions. Embedded CID images remain
+never saved as a preference. Images can contain readable personal information, so privacy mode disables activation and removes all body images. Embedded CID images remain
 unsupported; showing them would require a separate bounded attachment path.
 
 Older cached mail lacks image metadata. The authenticated, CSRF-protected
@@ -331,6 +329,20 @@ desktop behavior. Browser testing remains prohibited by PRODUCT.md.
 Sources: [reader](../src/App.tsx), [styles](../src/style.css),
 [shared image policy](../shared/types.ts), [providers](../server/providers.ts),
 [API](../server/index.ts), [image decision](adr/0009-opt-in-message-images.md).
+
+## Formatted content, privacy and interaction settings
+
+[ADR 0013](adr/0013-safe-formatted-mail-and-personal-privacy.md) supersedes the plain-text-only part of ADR 0009 for the owner's approved formatted reader. `Mail.html` is optional: undefined means old cache, null means no supported HTML. The existing encrypted JSON store retains at most 256,000 UTF-16 code units. `POST /api/messages/:id/content` recovers one old record through the same authenticated, origin/CSRF-checked provider path as image metadata. It refuses unsafe old IMAP identities, rereads current records and preserves concurrent read/archive/image state. HTML recovery never fetches sender assets or changes provider read state.
+
+[The content parser](../shared/mail-content.ts) allows a bounded element, attribute and inline-style subset. It rejects scripts, forms, frames, SVG, sender stylesheets, fonts, event handlers, srcset, resource CSS, positioning and transforms. Node, depth and dimension limits bound work and layout. [FormattedMail](../src/FormattedMail.tsx) constructs React elements; it never injects sender HTML. Table layout, heading hierarchy, emphasis, colors and safe HTTP(S) links remain supported. Missing or rejected content uses cached plain text. CID attachments remain unsupported.
+
+[The reader](../src/App.tsx) loads missing formatting on open, shows cached text during loading or failure and offers one manual retry. Show images sits above the body. No body image element exists until activation; consent resets on closure, message change or privacy activation. Delayed content and image responses cannot reveal another message. Formatted images stay inline without a duplicate gallery. Privacy mode suppresses body images and private link destinations.
+
+[Privacy matching](../src/privacy.ts) learns names from optional account display names and the current To/Cc display names tied to connected account addresses. It covers full names, first names and surnames with Unicode-aware boundaries, case/whitespace variation and URL encoding. Sender-markup splits cannot expose a known name. Hidden bars have no private children, title or accessibility text. Explicit reveal applies to the clicked token; re-enabling privacy clears it. Unknown names that appear only in a body cannot be identified. A name that is also an ordinary word can hide that word while privacy is on. Editable compose fields retain their focus-to-reveal behavior.
+
+[Interaction preferences](../src/interaction.ts) store only opening mode and validated shortcuts under `emc2.interaction.v1` in localStorage. Double-click is the default. Single-click opens and marks unread mail read once; keyboard Enter remains available. Settings capture rejects conflicts, account-number keys, editing/system keys and consumed, repeated or composing events. Inbox matching excludes editable fields and dialogs. Help and tooltips reflect the saved bindings; Escape, body-only Tab, account filters and Mac Cmd+[ / Cmd+] retain fixed roles. Storage failure shows a notice and keeps the current in-memory choice.
+
+Tests use synthetic messages and accounts. The mounted App path covers Settings changes, custom-key dispatch, double/single-click transitions, read counts, history keys, recipient names in lists/headers/formatted content/attributes, image placement and privacy. Provider/API tests cover authentication, identity and cache races. Run `npm test` and `npm run build`. Native rendering, physical input, live providers and downloaded-app acceptance need separate proof. Browser testing remains prohibited by PRODUCT.md.
 
 ## UI review, 2026-10-09
 
@@ -371,10 +383,12 @@ Version 0.1.4 publishes the application as Emc². `desktop/migrate.ts` moves `ma
 
 ## Gmail labels, density and read-on-open
 
-Gmail sync now caches its label catalog as encrypted `label` records, keyed by account and label ID, and stores `labelIds` on mail. Existing mail without that optional field remains readable and gets labels on its next inbox sync. Disconnect removes the account's label cache. The filter is account-scoped and applies to the current view of cached mail. Sync still fetches Gmail's inbox; it does not backfill the remote archive. Label creation, renaming and deletion remain in Gmail.
+Gmail sync caches its label catalog as encrypted `label` records, keyed by account and label ID, and stores `labelIds` on mail. Existing mail without that optional field remains readable and gets labels on its next inbox sync. Disconnect removes the account's label cache. The filter is account-scoped and applies to the current view of cached mail. Sync still fetches Gmail's inbox; it does not backfill the remote archive. Label creation, renaming and deletion remain in Gmail.
 
 Edit labels on an opened Gmail message to replace its known custom labels. The server validates every requested label against that account's cached catalog and reads current provider metadata before modifying it. System labels and unknown labels are preserved. Gmail's existing `gmail.modify` permission is sufficient. Sources: [label listing](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels/list) and [message modification](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/modify).
 
-Ctrl+Plus, Ctrl+Equals and numpad Plus choose comfortable density; Ctrl+Minus and numpad Minus choose compact density. Editing fields and dialogs keep their normal key behavior. Opening unread mail uses the shared provider read operation without the UI busy gate. This includes j/k movement within the open reader and cached archived Gmail mail. Repeated opens coalesce while the request is pending. Read failures leave the unread flag intact and reopening retries. An opened message stays visible if marking it read removes it from the Unread label filter. An explicit number-key change to a different account clears the reader and selection; selecting the same account leaves them intact. Archived IMAP messages are located by a Message-ID search in the provider archive instead of reusing their old inbox UID. Because IMAP header search matches substrings, the sole candidate must also have an exactly matching parsed Message-ID before its read flag changes. Missing, ambiguous or mismatched candidates report an error without changing remote flags or local unread state. Sync and message mutations run in order on the server so stale sync metadata cannot undo a read. Other writes still return a sync conflict instead of bypassing the existing boundary.
+Ctrl+Plus, Ctrl+Equals and numpad Plus choose comfortable density; Ctrl+Minus and numpad Minus choose compact density. Editing fields and dialogs keep their normal key behavior. Opening unread mail uses the shared provider read operation independently of the UI busy gate. This includes reader navigation and cached archived Gmail mail. Repeated opens coalesce while a request is pending. Read failures leave the unread flag intact and reopening retries. An opened message stays visible if marking it read removes it from the Unread label filter. An explicit number-key change to a different account clears the reader and selection; selecting the same account leaves them intact. Archived IMAP messages are located by a Message-ID search in the provider archive instead of reusing their old inbox UID. Because IMAP header search matches substrings, the sole candidate must also have an exactly matching parsed Message-ID before its read flag changes. Missing, ambiguous or mismatched candidates report an error without changing remote flags or local unread state. Sync and message mutations run in order on the server so stale sync metadata cannot undo a read. Other writes still return a sync conflict instead of bypassing the existing boundary.
 
 `server/gmail.test.ts` uses mocked Gmail API methods with a temporary encrypted store to cover catalog refresh, message label sync, account isolation, custom label edits, provider failures, sync/read ordering, idempotent reads and disconnect cleanup. `server/imap-read.test.ts` covers inbox UID validation and exact archive Message-ID verification without a connection, including substring false positives and preservation of cached unread state on failure. The store holds SQLite open until process exit, so these tests leave synthetic files in the system temporary directory for the host or CI runner to clean up. `src/mail-ui.test.tsx` covers key recognition, account-scoped filters, label rendering/privacy and duplicate/retry read requests. `src/reader-keyboard.test.tsx` executes the App keyboard and open handlers with synthetic state to cover reader navigation, account changes, coalescing, retry and input guards. These tests do not mount the interface, authenticate real accounts or drive a browser.
+
+Snooze retains its message-specific privacy context. Rejected formatted trees and wrappers without readable text or supported images use the same readable text and consent-controlled gallery. Supported image-only mail keeps its inline image presentation. Image status styles do not override body paragraph sizing.

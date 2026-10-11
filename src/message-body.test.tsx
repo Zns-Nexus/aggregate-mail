@@ -12,7 +12,7 @@ const render = (text: string, privacy = false) => renderToStaticMarkup(
 test("the real body renderer links explicit HTTP URLs and preserves surrounding text", () => {
   assert.equal(
     render("  Read [https://example.com/document]\n<http://example.com/a?x=1&y=2>, (https://example.com/a_(b))."),
-    '  Read [<a href="https://example.com/document" target="_blank" rel="noopener noreferrer">https://example.com/document</a>]\n&lt;<a href="http://example.com/a?x=1&amp;y=2" target="_blank" rel="noopener noreferrer">http://example.com/a?x=1&amp;y=2</a>&gt;, (<a href="https://example.com/a_(b)" target="_blank" rel="noopener noreferrer">https://example.com/a_(b)</a>).',
+    '  Read [<a href="https://example.com/document" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">https://example.com/document</a>]\n&lt;<a href="http://example.com/a?x=1&amp;y=2" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">http://example.com/a?x=1&amp;y=2</a>&gt;, (<a href="https://example.com/a_(b)" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">https://example.com/a_(b)</a>).',
   );
 });
 
@@ -27,7 +27,7 @@ test("curly quotation marks stay outside link destinations", () => {
   for (const [open, close] of [["“", "”"], ["‘", "’"]]) {
     assert.equal(
       render(`See ${open}https://example.com/report${close}.`),
-      `See ${open}<a href="https://example.com/report" target="_blank" rel="noopener noreferrer">https://example.com/report</a>${close}.`,
+      `See ${open}<a href="https://example.com/report" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">https://example.com/report</a>${close}.`,
     );
   }
 });
@@ -41,7 +41,7 @@ test("privacy masks encoded addresses even when another URL byte is not UTF-8", 
 test("balanced brackets and nested parentheses stay in URLs, prose punctuation stays outside", () => {
   assert.equal(
     render("HTTP://[::1]/a_(b(c))!"),
-    '<a href="HTTP://[::1]/a_(b(c))" target="_blank" rel="noopener noreferrer">HTTP://[::1]/a_(b(c))</a>!',
+    '<a href="HTTP://[::1]/a_(b(c))" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">HTTP://[::1]/a_(b(c))</a>!',
   );
 });
 

@@ -33,6 +33,10 @@
 - Skip unchanged mail writes, commit changed batches in one transaction, and coalesce renderer refreshes. Keep fresh Gmail batches visible while later downloads run, including a final refresh queued during a failed read.
 - Keep AI sorting limited to committed mail after a batch rollback and classify IMAP connection/greeting timeouts and closed connections as transient failures.
 - Make the background AI-failure regression wait for sync completion without starting another sync that can clear the expected warning.
+- Recover formatted email for older cached mail through the authenticated content API without changing body text or current mailbox state. Render a bounded safe subset of sender formatting; Show images remains blocked until per-opening activation.
+- Add editable keyboard shortcuts and a single-click or double-click opening choice in Settings, with double-click as the default.
+- Hide connected recipient names, first names and surnames alongside addresses in previews, headers and email content. Remove hidden values from rendered text, tooltips and accessibility labels; suppress private link destinations and body images in privacy mode.
+- Keep recipient names hidden in Snooze, preserve supported images when empty or rejected formatted content falls back, and retain 15px paragraph text without image-status styling.
 - Add visible Back and Forward controls and side mouse buttons for visited inbox contexts and emails, with session-only history and draft/dialog guards.
 - Keep hidden-address bars within their text lines so adjacent sender details do not overlap.
 - Make email bodies easier to read with bounded paragraph spacing, 15px text and a wrapping sender header, without changing stored text.

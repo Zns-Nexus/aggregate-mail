@@ -757,8 +757,7 @@ input[type="checkbox"][role="switch"]:disabled {
 .address:not(.veiled):hover {
   box-shadow: inset 0 -1px 0 var(--line-2);
 }
-/* The color declaration sits on this element, so the row's own text color
-   inherited from an ancestor can never show through the bar. */
+/* Hidden values are absent from the DOM; each fixed-width bar fits its line. */
 .address.veiled {
   display: inline-block;
   max-width: 100%;
@@ -967,9 +966,9 @@ input[type="checkbox"][role="switch"]:disabled {
   white-space: pre-wrap;
 }
 .message-images {
-  max-width: 65ch;
+  max-width: 900px;
   overflow-wrap: anywhere;
-  margin-top: 24px;
+  margin-top: 20px;
 }
 .image-controls {
   display: flex;
@@ -988,7 +987,7 @@ input[type="checkbox"][role="switch"]:disabled {
   height: auto;
 }
 .message-images figcaption,
-.message-images p {
+.message-images p[role="status"] {
   margin: 8px 0;
   color: var(--text-2);
   font-size: 13px;
@@ -1703,3 +1702,20 @@ input[type="checkbox"][role="switch"]:disabled {
     width: 96px;
   }
 }
+
+.message-images .message-body { margin-top: 18px; }
+.message-body:has(.formatted-mail) { max-width: 100%; }
+.formatted-mail { color: #dedede; }
+.formatted-mail p { white-space: normal; }
+.formatted-mail-fallback { white-space: pre-wrap; }
+.formatted-mail table { max-width: 100%; }
+.formatted-mail :is(h1, h2, h3, h4, h5, h6) { margin: 1em 0 0.5em; line-height: 1.3; }
+.formatted-mail-image { display: inline-block; max-width: 100%; }
+.formatted-mail-image-status { display: inline-block; margin: 6px 0; color: var(--text-2); font-size: 13px; }
+[data-interaction-settings] > div { display: grid; grid-template-columns: minmax(0, 1fr) 150px; align-items: center; gap: 16px; padding: 6px 0; }
+[data-interaction-settings] :is(input, select) { width: 100%; }
+[data-interaction-settings] > label { display: block; margin-bottom: 8px; }
+[data-interaction-settings] > select { max-width: 230px; }
+[data-interaction-settings] > p { margin: 10px 0; }
+[data-interaction-settings] [role="status"]:empty { display: none; }
+.address:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }

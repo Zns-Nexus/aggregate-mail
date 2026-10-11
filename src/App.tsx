@@ -34,6 +34,11 @@ import {
 import { customLabels, densityShortcut, matchesLabel, markMailRead } from "./mail-ui";
 import { appPasswordHelp, imageSource, jevProviders, logoDomain, providerNames } from "../shared/types";
 import { useMailNavigation, type MailLocation } from "./navigation";
+import { FormattedMail } from "./FormattedMail";
+import { privateMailLink } from "../shared/mail-content";
+import { collectPrivateNames, redactPrivateText, segmentPrivateText } from "./privacy";
+import { InteractionSettings } from "./InteractionSettings";
+import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel, type InteractionPreferences } from "./interaction";
 import type {
   Account,
   Category,
@@ -192,14 +197,20 @@ const dayGroup = (date: number) => {
   if (date >= start.getTime() - 30 * day) return "This month";
   return "Earlier";
 };
-// Privacy blurs email addresses until each one is clicked.
-export const PrivacyContext = createContext({
-  on: false,
-  revealed: new Set<string>(),
-  toggle: (_address: string) => {},
-});
-const addressPattern = /[^\s<>()"',;:]+@[^\s<>()"',;:]+\.[a-z]{2,}/gi;
-const hideAddresses = (text: string) => text.replace(addressPattern, "••••••••");
+// Hidden tokens have no private text in the DOM until explicitly revealed.
+export const PrivacyContext = createContext<{
+  on: boolean;
+  revealed: Set<string>;
+  toggle: (value: string) => void;
+  accounts?: readonly Account[];
+  names?: readonly string[];
+}>({ on: false, revealed: new Set(), toggle() {} });
+function MailPrivacy({ mail, children }: { mail: Mail; children: ReactNode }) {
+  const context = useContext(PrivacyContext);
+  return <PrivacyContext.Provider value={{ ...context, names: collectPrivateNames(context.accounts || [], mail) }}>
+    {children}
+  </PrivacyContext.Provider>;
+}
 // Windows and Linux have no traffic lights, so the window runs frameless and
 // these drive it over IPC. macOS keeps its native lights.
 // Guarded so the module still loads under Node for the renderer tests.
@@ -252,40 +263,35 @@ function TrafficLights({
     </div>
   );
 }
-function Address({ value, children }: { value: string; children?: ReactNode }) {
+function Address({ value, children, kind = "address" }: { value: string; children?: ReactNode; kind?: "address" | "name" }) {
   const { on, revealed, toggle } = useContext(PrivacyContext);
   const key = value.toLowerCase();
   if (!on) return <>{children ?? value}</>;
   const shown = revealed.has(key);
-  return (
-    <span
-      className={shown ? "address" : "address veiled"}
-      title={shown ? "Click to blur this address" : "Click to reveal"}
-      onClick={(e) => {
-        e.stopPropagation();
-        toggle(key);
-      }}
-    >
-      {children ?? value}
-    </span>
-  );
+  const activate = () => toggle(key);
+  return <span className={shown ? "address" : "address veiled"}
+    style={shown ? undefined : { width: "8ch" }} role="button" tabIndex={0}
+    aria-label={shown ? `Hide ${kind}` : `Reveal hidden ${kind}`}
+    title={shown ? `Click to hide this ${kind}` : `Click to reveal ${kind}`}
+    onClick={(event) => { event.stopPropagation(); activate(); }}
+    onDoubleClick={(event) => event.stopPropagation()}
+    onKeyDown={(event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault(); event.stopPropagation(); activate();
+      }
+    }}>
+    {shown ? children ?? value : null}
+  </span>;
 }
-// Blurs every address inside free text such as names, subjects and bodies.
 function Redact({ text }: { text: string }) {
-  const { on } = useContext(PrivacyContext);
+  const { on, names } = useContext(PrivacyContext);
   if (!on || !text) return <>{text}</>;
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(addressPattern)) {
-    parts.push(text.slice(last, match.index));
-    parts.push(<Address key={match.index} value={match[0]} />);
-    last = match.index + match[0].length;
-  }
-  parts.push(text.slice(last));
-  return <>{parts}</>;
+  return <>{segmentPrivateText(text, names).map((part, index) => part.kind === "text" ?
+    <Fragment key={index}>{part.text}</Fragment> :
+    <Address key={index} value={part.text} kind={part.kind} />)}</>;
 }
 export function MessageBody({ text }: { text: string }) {
-  const { on } = useContext(PrivacyContext);
+  const { on, names } = useContext(PrivacyContext);
   const parts: ReactNode[] = [];
   let last = 0;
   for (const match of text.matchAll(/\bhttps?:\/\/[^\s<>"'“”‘’]+/gi)) {
@@ -310,18 +316,11 @@ export function MessageBody({ text }: { text: string }) {
       continue;
     }
     parts.push(<Redact key={`text-${match.index}`} text={text.slice(last, match.index)} />);
-    let decoded = url;
-    try {
-      decoded = decodeURIComponent(url);
-    } catch {
-      // Non-UTF-8 bytes must not hide percent-encoded addresses from privacy.
-      decoded = url.replace(/%([\da-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-    }
-    const privateAddress = on && hideAddresses(decoded) !== decoded;
-    parts.push(privateAddress ? (
-      <Redact key={match.index} text={hideAddresses(decoded)} />
+    const privateLink = on && privateMailLink(url, (value) => redactPrivateText(value, names));
+    parts.push(privateLink ? (
+      <span key={match.index}>Private link hidden</span>
     ) : (
-      <a key={match.index} href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+      <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{url}</a>
     ));
     last = match.index + url.length;
   }
@@ -334,12 +333,12 @@ export function MessageText({ text }: { text: string }) {
     .map((paragraph, index) => <p key={index}><MessageBody text={paragraph} /></p>)}</>;
 }
 function ReaderImage({ image, index }: { image: MailImage; index: number }) {
-  const { on } = useContext(PrivacyContext);
+  const { on, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("loading");
   return <figure>
-    {status !== "error" && <img
+    {!on && status !== "error" && <img
       src={image.src}
-      alt={on ? hideAddresses(image.alt) : image.alt}
+      alt={on ? redactPrivateText(image.alt, names) : image.alt}
       referrerPolicy="no-referrer"
       decoding="async"
       onLoad={() => setStatus("loaded")}
@@ -352,52 +351,94 @@ function ReaderImage({ image, index }: { image: MailImage; index: number }) {
     </figcaption>
   </figure>;
 }
+type ContentResult = { html: string | null; images?: MailImage[] };
 type ImageProps = {
-  mail: Pick<Mail, "id" | "images">;
+  mail: Pick<Mail, "id" | "images"> & Partial<Pick<Mail, "html" | "body">>;
   loadImages: (id: string) => Promise<{ images: MailImage[] }>;
+  loadContent?: (id: string) => Promise<ContentResult>;
+  body?: boolean;
 };
 export function MessageImages(props: ImageProps) {
   return <ImageConsent key={props.mail.id} {...props} />;
 }
-function ImageConsent({ mail, loadImages }: ImageProps) {
+export function ReaderContent(props: ImageProps & { loadContent: (id: string) => Promise<ContentResult> }) {
+  return <ImageConsent key={props.mail.id} {...props} body />;
+}
+function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
+  const { on: privacy, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("blocked");
   const [images, setImages] = useState<MailImage[]>([]);
+  const [content, setContent] = useState<ContentResult>({ html: mail.html ?? null, images: mail.images });
+  const [contentStatus, setContentStatus] = useState(mail.html === undefined && loadContent ? "loading" : "ready");
   const active = useRef(true);
+  const imageRequest = useRef(0);
   const region = useId();
   useEffect(() => {
     active.current = true;
-    return () => { active.current = false; };
+    return () => { active.current = false; imageRequest.current++; };
+  }, []);
+  useEffect(() => {
+    if (privacy) { imageRequest.current++; setStatus("blocked"); setImages([]); }
+  }, [privacy]);
+  const recoverContent = async () => {
+    if (!loadContent) return;
+    setContentStatus("loading");
+    try {
+      const result = await loadContent(mail.id);
+      if (active.current) { setContent(result); setContentStatus("ready"); }
+    } catch {
+      if (active.current) setContentStatus("error");
+    }
+  };
+  useEffect(() => {
+    if (mail.html === undefined && loadContent) void recoverContent();
   }, []);
   const show = async () => {
+    if (privacy) return;
+    const request = ++imageRequest.current;
     setStatus("loading");
     try {
-      const result = mail.images ?? (await loadImages(mail.id)).images;
-      if (!active.current) return;
+      const result = mail.images ?? content.images ?? (await loadImages(mail.id)).images;
+      if (!active.current || request !== imageRequest.current) return;
       setImages(result.flatMap((image) => {
         const src = imageSource(image.src);
         return src ? [{ src, alt: image.alt }] : [];
       }));
       setStatus("shown");
     } catch {
-      if (active.current) setStatus("error");
+      if (active.current && request === imageRequest.current) setStatus("error");
     }
   };
-  return <section className="message-images" aria-label="Email images">
+  const shown = status === "shown" && !privacy;
+  const gallery = shown && (images.length ? images.map((image, index) =>
+    <ReaderImage key={image.src} image={image} index={index} />) :
+    <p role="status">No supported remote images in this email. Embedded images are not shown.</p>);
+  const textBody = <MessageText text={mail.body || "This email has no plain-text body."} />;
+  return <section className="message-images" aria-label="Email content">
     <div className="image-controls">
       <button className="button" type="button"
-        aria-expanded={status === "shown"} aria-controls={region}
-        disabled={status === "loading"}
-        onClick={() => status === "shown" ? setStatus("blocked") : void show()}>
-        {status === "loading" ? "Loading images…" : status === "shown" ? "Hide images" :
+        aria-expanded={shown} aria-controls={region}
+        disabled={status === "loading" || privacy}
+        onClick={() => {
+          if (shown) { imageRequest.current++; setStatus("blocked"); }
+          else void show();
+        }}>
+        {status === "loading" ? "Loading images…" : shown ? "Hide images" :
           status === "error" ? "Try images again" : "Show images"}
       </button>
-      <span>Remote images can tell the sender you opened this email.</span>
+      <span>{privacy ? "Images are hidden while personal information is hidden." :
+        "Remote images can tell the sender you opened this email."}</span>
     </div>
-    <div id={region} aria-live="polite">
-      {status === "error" && <p>Images could not be loaded. The email may be unavailable or archived.</p>}
-      {status === "shown" && (images.length ? images.map((image, index) =>
-        <ReaderImage key={image.src} image={image} index={index} />) :
-        <p>No supported remote images in this email. Embedded images are not shown.</p>)}
+    {body && contentStatus === "loading" && <p role="status">Loading formatted email…</p>}
+    {body && contentStatus === "error" && <p role="status">Formatted email is unavailable. The text is shown below. <button type="button" className="link" onClick={() => void recoverContent()}>Try again</button></p>}
+    <div id={region}>
+      {status === "error" && <p role="status">Images could not be loaded. The email may be unavailable or archived.</p>}
+      {body && <div className="message-body">
+        {content.html ? <FormattedMail html={content.html} showImages={shown} privacy={privacy}
+          renderText={(text) => <Redact text={text} />} redactText={(text) => redactPrivateText(text, names)}
+          fallback={<>{textBody}{gallery}</>} /> : textBody}
+      </div>}
+      {(!body || !content.html) && gallery}
     </div>
   </section>;
 }
@@ -469,6 +510,8 @@ export function App() {
     navigation.update((current) => ({ ...current, selectedId }));
   const setOpened = (opened: boolean) =>
     navigation.update((current) => ({ ...current, opened }));
+  const [interaction, setInteraction] = useState(readInteraction);
+  const shortcut = (action: typeof interactionActions[number]["id"]) => shortcutLabel(interaction.shortcuts[action]);
   const [searching, setSearching] = useState(false);
   const [settings, setSettings] = useState(false);
   const setLabelFilter = (labelFilter: string) => navigation.update(current => ({ ...current, labelFilter }));
@@ -834,82 +877,54 @@ export function App() {
   };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (contextMenu) return;
+      if (contextMenu || event.defaultPrevented || event.isComposing || event.repeat) return;
       const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable ||
-          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
-      )
-        return;
+      if (target instanceof HTMLElement && (target.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       const nextDensity = densityShortcut(event);
       if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
-        event.preventDefault();
-        setDensity(nextDensity);
-        return;
+        event.preventDefault(); setDensity(nextDensity); return;
       }
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (event.key === "Escape") {
-        setOpened(false);
-        setTeach(null);
-        setSnooze(null);
-        setShortcuts(false);
-        setLabelMail(null);
-        setSettings(false);
+      if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (compose) return;
+        setOpened(false); setTeach(null); setSnooze(null); setShortcuts(false);
+        setLabelMail(null); setSettings(false);
         return;
       }
       if (compose || teach || snooze || shortcuts || labelMail || connecting) return;
+      const action = interactionActions.find(({ id }) => matches(event, id, interaction, window.desktop?.platform))?.id;
+      if (action === "back" || action === "forward") {
+        event.preventDefault(); travel(action === "back" ? -1 : 1); return;
+      }
       const inbox = !settings;
-      if (event.key === "/") {
+      if (action === "search") { event.preventDefault(); showSearch(); }
+      else if (action === "settings") setSettings((value) => !value);
+      else if (action === "help") setShortcuts(true);
+      else if (action === "compose") startCompose();
+      else if (action === "privacy") togglePrivacy();
+      else if (inbox && action === "density") setDensity((value) => value === "comfortable" ? "compact" : "comfortable");
+      else if (inbox && (action === "important" || action === "other")) switchView(action);
+      else if (inbox && (action === "next" || action === "previous")) {
         event.preventDefault();
-        showSearch();
-      } else if (event.key === ",") setSettings((s) => !s);
-      else if (event.key === "?") setShortcuts(true);
-      else if (event.key === "c") startCompose();
-      else if (event.key === "p") togglePrivacy();
-      else if (inbox && event.key === "d")
-        setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"));
-      else if (inbox && (event.key === "i" || event.key === "o"))
-        switchView(event.key === "i" ? "important" : "other");
-      else if (inbox && (event.key === "j" || event.key === "k")) {
-        event.preventDefault();
-        const index = filtered.findIndex((m) => m.id === selected?.id);
-        const next =
-          filtered[
-            Math.max(
-              0,
-              Math.min(
-                filtered.length - 1,
-                index + (event.key === "j" ? 1 : -1),
-              ),
-            )
-          ];
-        if (next) {
-          if (opened) openMail(next);
-          else setSelectedId(next.id);
+        const index = filtered.findIndex((mail) => mail.id === selected?.id);
+        const next = filtered[Math.max(0, Math.min(filtered.length - 1, index + (action === "next" ? 1 : -1)))];
+        if (next) { if (opened) openMail(next); else setSelectedId(next.id); }
+      } else if (inbox && action === "open" && selected &&
+        (!(target instanceof HTMLElement) || !target.closest("button, a, [role=button]") || target.closest(".row"))) {
+        event.preventDefault(); openMail(selected);
+      } else if (inbox && action === "done" && selected && !busy) archive(selected);
+      else if (inbox && action === "reply" && selected) startCompose(selected);
+      else if (inbox && action === "snooze" && selected) setSnooze(selected);
+      else if (inbox && action === "teach" && selected) setTeach(selected);
+      else if (inbox && !event.ctrlKey && !event.metaKey && !event.altKey &&
+        !(target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))) {
+        if (event.key === "Tab" && target === document.body) {
+          event.preventDefault(); switchView(view === "important" ? "other" : "important");
+        } else if (!event.shiftKey && /^[0-9]$/.test(event.key)) {
+          const account = state.accounts[Number(event.key) - 1];
+          const nextAccount = event.key === "0" ? "all" : account?.id;
+          if (nextAccount && nextAccount !== accountFilter) navigate({ accountFilter: nextAccount, labelFilter: "all", selectedId: null, opened: false });
         }
-      } else if (
-        inbox &&
-        event.key === "Enter" &&
-        selected &&
-        (!(target instanceof HTMLElement) ||
-          !target.closest("button, a") ||
-          target.closest(".row"))
-      )
-        openMail(selected);
-      else if (inbox && event.key === "e" && selected && !busy)
-        archive(selected);
-      else if (inbox && event.key === "r" && selected) startCompose(selected);
-      else if (inbox && event.key === "s" && selected) setSnooze(selected);
-      else if (inbox && (event.key === "m" || event.key === "t") && selected)
-        setTeach(selected);
-      else if (inbox && event.key === "Tab" && target === document.body) {
-        event.preventDefault();
-        switchView(view === "important" ? "other" : "important");
-      } else if (inbox && /^[0-9]$/.test(event.key)) {
-        const a = state.accounts[Number(event.key) - 1];
-        const nextAccount = event.key === "0" ? "all" : a?.id;
-        if (nextAccount && nextAccount !== accountFilter) navigate({ accountFilter: nextAccount, labelFilter: "all", selectedId: null, opened: false });
       }
     };
     window.addEventListener("keydown", handler);
@@ -973,7 +988,7 @@ export function App() {
   }, [contextMenu, menuMail, closeContextMenu]);
   return (
     <PrivacyContext.Provider
-      value={{ on: privacy, revealed, toggle: toggleAddress }}
+      value={{ on: privacy, revealed, toggle: toggleAddress, accounts: state.accounts, names: collectPrivateNames(state.accounts) }}
     >
       <div
         className={`app${window.desktop ? " desktop" : ""}${privacy ? " private" : ""}`}
@@ -1098,7 +1113,7 @@ export function App() {
                     ...labels.map((label) => {
                       const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
                       const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
-                      return { value: `${label.accountId}:${label.id}`, label: privacy ? hideAddresses(name) : name };
+                      return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts)) : name };
                     }),
                   ]}
                   onChange={(value) => {
@@ -1144,7 +1159,7 @@ export function App() {
                   <button
                     className="icon"
                     aria-label="Search mail"
-                    title="Search (/)"
+                    title={`Search (${shortcut("search")})`}
                     onClick={showSearch}
                   >
                     <Search color="currentColor" size={15} />
@@ -1154,11 +1169,11 @@ export function App() {
             <button
               className={privacy ? "icon on" : "icon"}
               aria-label={
-                privacy ? "Show email addresses" : "Blur email addresses"
+                privacy ? "Show personal information" : "Hide personal information"
               }
               aria-pressed={privacy}
               title={
-                privacy ? "Addresses hidden (p)" : "Hide email addresses (p)"
+                privacy ? `Personal information hidden (${shortcut("privacy")})` : `Hide personal information (${shortcut("privacy")})`
               }
               onClick={togglePrivacy}
             >
@@ -1198,6 +1213,11 @@ export function App() {
             onNotice={setNotice}
             windowSide={windowSide}
             onWindowSide={placeWindowControls}
+            interaction={interaction}
+            onInteraction={(value) => {
+              setInteraction(value);
+              if (!saveInteraction(value)) setNotice("Interaction settings could not be saved on this device.");
+            }}
           />
         ) : (
           <main className="workspace">
@@ -1219,7 +1239,7 @@ export function App() {
               </nav>
               <div key={paneKey} className={`pane ${pane.current.motion}`}>
                 {opened && selected ? (
-                  <article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
+                  <MailPrivacy mail={selected}><article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
                     <h1>
                       <Redact text={selected.subject || "(no subject)"} />
                     </h1>
@@ -1249,16 +1269,10 @@ export function App() {
                         <button className="link" disabled={busy || syncing} onClick={() => setLabelMail(selected)}>Edit labels</button>
                       </div>
                     )}
-                    <div className="message-body">
-                      <MessageText
-                        text={
-                          selected.body || "This email has no plain-text body."
-                        }
-                      />
-                    </div>
-                    <MessageImages mail={selected}
+                    <ReaderContent key={selected.id} mail={selected}
+                      loadContent={(id) => api(`/messages/${encodeURIComponent(id)}/content`, "POST")}
                       loadImages={(id) => api(`/messages/${encodeURIComponent(id)}/images`, "POST")} />
-                  </article>
+                  </article></MailPrivacy>
                 ) : filtered.length ? (
                   filtered.map((m, i) => {
                     const group = dayGroup(m.date);
@@ -1272,17 +1286,18 @@ export function App() {
                           : "brief";
                     const current = m.id === selected?.id;
                     return (
-                      <Fragment key={m.id}>
+                      <MailPrivacy key={m.id} mail={m}>
                         {showGroup && <h3 className="group">{group}</h3>}
                         <button
                           id={`mail-${m.id}`}
                           className={`row r${m.relevance} ${layout}${current ? " selected" : ""}${m.unread ? " unread" : ""}`}
-                          onClick={() => setSelectedId(m.id)}
-                          onDoubleClick={() => openMail(m)}
+                          onClick={(event) => interaction.opening === "single" ?
+                            (event.detail <= 1 && openMail(m)) : setSelectedId(m.id)}
+                          onDoubleClick={() => { if (interaction.opening === "double") openMail(m); }}
                           onContextMenu={(event) => showMailMenu(event, m)}
                           onKeyDown={(event) => mailMenuKey(event, m)}
                           aria-haspopup="menu"
-                          aria-label={`${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`}
+                          aria-label={privacy ? redactPrivateText(`${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`, collectPrivateNames(state.accounts, m)) : `${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`}
                           aria-current={current ? "true" : undefined}
                           style={{ "--i": Math.min(i, 6) } as CSSProperties}
                         >
@@ -1308,13 +1323,13 @@ export function App() {
                             )}
                           </span>
                           {m.relevance === 3 && (
-                            <span className="row-label" title={m.reason}>
-                              {shortLabel(m.reason)}
+                            <span className="row-label" title={privacy ? redactPrivateText(m.reason, collectPrivateNames(state.accounts, m)) : m.reason}>
+                              <Redact text={shortLabel(privacy ? redactPrivateText(m.reason, collectPrivateNames(state.accounts, m)) : m.reason)} />
                             </span>
                           )}
                           <time>{relative(m.date)}</time>
                         </button>
-                      </Fragment>
+                      </MailPrivacy>
                     );
                   })
                 ) : (
@@ -1358,7 +1373,7 @@ export function App() {
             <aside className="context" aria-label="Sender context">
               <div className="context-pane" key={selected?.id ?? "none"}>
                 {selected && (
-                  <div className="sender">
+                  <MailPrivacy mail={selected}><div className="sender">
                     <Avatar
                       mail={selected}
                       provider={selectedAccount?.provider}
@@ -1380,7 +1395,7 @@ export function App() {
                       {senderMail.length === 1 ? "message" : "messages"}
                     </p>
                     {selected.reason && (
-                      <p className="sender-reason">{selected.reason}</p>
+                      <p className="sender-reason"><Redact text={selected.reason} /></p>
                     )}
                     <div className="tags">
                       <span>{viewNames[selected.category]}</span>
@@ -1388,13 +1403,13 @@ export function App() {
                         {relevanceNames[selected.relevance]} relevance
                       </span>
                     </div>
-                  </div>
+                  </div></MailPrivacy>
                 )}
                 {selected && senderMail.length > 1 && (
                   <section className="context-list">
                     <h3>
                       Recent with{" "}
-                      <Redact text={selected.sender.split(" ")[0]} />
+                      <MailPrivacy mail={selected}><Redact text={selected.sender} /></MailPrivacy>
                     </h3>
                     {senderMail
                       .filter((m) => m.id !== selected.id)
@@ -1402,7 +1417,7 @@ export function App() {
                       .map((m) => (
                         <button key={m.id} onClick={() => jumpTo(m)}>
                           <span>
-                            <Redact text={m.subject} />
+                            <MailPrivacy mail={m}><Redact text={m.subject} /></MailPrivacy>
                           </span>
                           <time>{relative(m.date)}</time>
                         </button>
@@ -1416,7 +1431,7 @@ export function App() {
                       <button key={m.id} onClick={() => jumpTo(m)}>
                         <i>{i + 1}</i>
                         <span>
-                          <Redact text={`${m.sender} · ${m.subject}`} />
+                          <MailPrivacy mail={m}><Redact text={`${m.sender} · ${m.subject}`} /></MailPrivacy>
                         </span>
                         <time>{relative(m.date)}</time>
                       </button>
@@ -1434,13 +1449,13 @@ export function App() {
             anchor={contextMenu.anchor}
             onClose={closeContextMenu}
             actions={[
-              { label: "Open", key: "Enter", run: () => openMail(menuMail) },
+              { label: "Open", key: shortcut("open"), run: () => openMail(menuMail) },
               { label: "Mark as read", disabled: !menuMail.unread, run: () => markRead(menuMail) },
-              { label: "Reply", key: "r", disabled: busy, run: () => startCompose(menuMail) },
-              { label: "Done", key: "e", disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
-              { label: "Snooze", key: "s", disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
+              { label: "Reply", key: shortcut("reply"), disabled: busy, run: () => startCompose(menuMail) },
+              { label: "Done", key: shortcut("done"), disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
+              { label: "Snooze", key: shortcut("snooze"), disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
               ...(isSnoozed(menuMail) ? [{ label: "Return to inbox", disabled: busy || syncing, run: () => void changeMessage(menuMail, "unsnooze") }] : []),
-              { label: "Teach sorting", key: "m", disabled: busy || syncing, run: () => setTeach(menuMail) },
+              { label: "Teach sorting", key: shortcut("teach"), disabled: busy || syncing, run: () => setTeach(menuMail) },
             ]}
           />
         )}
@@ -1518,7 +1533,7 @@ export function App() {
           />
         )}
         {snooze && (
-          <Dialog title="Snooze" onClose={() => setSnooze(null)}>
+          <MailPrivacy mail={snooze}><Dialog title="Snooze" onClose={() => setSnooze(null)}>
             <p className="dialog-copy">
               <Redact text={snooze.subject} />
             </p>
@@ -1570,7 +1585,7 @@ export function App() {
                 Return to inbox now
               </button>
             )}
-          </Dialog>
+          </Dialog></MailPrivacy>
         )}
         {shortcuts && (
           <Dialog
@@ -1578,23 +1593,11 @@ export function App() {
             onClose={() => setShortcuts(false)}
           >
             <div className="shortcut-list">
-              {[
-                ["j / k", "Next / previous email"],
-                ["Enter", "Open email"],
-                ["Esc", "Close email or dialog"],
-                ["i / o / Tab", "Important / Other"],
+              {[...interactionActions.map(({ id, label }) => [shortcut(id), label]),
+                ["Esc", "Close email or dialog"], ["Tab", "Important / Other from inbox"],
                 ["0–9", "Filter by account"],
-                ["/", "Search"],
-                ["c", "Compose"],
-                ["r", "Reply"],
-                ["e", "Done"],
-                ["s", "Snooze"],
-                ["m", "Teach sorting"],
-                ["d", "Comfortable / Compact"],
                 ["Ctrl + / Ctrl −", "Less / more compact"],
-                ["p", "Blur email addresses on / off"],
-                [",", "Settings"],
-                ["?", "Keyboard shortcuts"],
+                ...(window.desktop?.platform === "darwin" ? [["Cmd+[ / Cmd+]", "Back / Forward"]] : []),
               ].map(([key, text]) => (
                 <div key={key}>
                   <span>{text}</span>
@@ -1930,6 +1933,8 @@ export function SettingsPage({
   onNotice,
   windowSide,
   onWindowSide,
+  interaction,
+  onInteraction,
 }: {
   state: State;
   busy: boolean;
@@ -1939,11 +1944,17 @@ export function SettingsPage({
   onNotice: (text: string) => void;
   windowSide: "left" | "right";
   onWindowSide: (side: "left" | "right") => void;
+  interaction: InteractionPreferences;
+  onInteraction: (value: InteractionPreferences) => void;
 }) {
-  const privacy = useContext(PrivacyContext).on;
+  const { on: privacy, names } = useContext(PrivacyContext);
   return (
     <main className="settings">
       <div className="settings-column">
+        <section>
+          <h1>Interaction</h1>
+          <InteractionSettings value={interaction} onChange={onInteraction} />
+        </section>
         <section>
           <h1>
             <span>1</span>Accounts
@@ -1959,7 +1970,7 @@ export function SettingsPage({
                 <span
                   className={a.error ? "attention" : undefined}
                   title={
-                    [a.error && (privacy ? hideAddresses(a.error) : a.error),
+                    [a.error && (privacy ? redactPrivateText(a.error, names) : a.error),
                       a.syncFailure && `${a.syncFailure.phase}: ${a.syncFailure.code}${a.syncFailure.status ? ` (${a.syncFailure.status})` : ""}`,
                       a.syncWarning && "Mail result retained; connection cleanup failed."].filter(Boolean).join("\n") || undefined
                   }
@@ -1982,7 +1993,7 @@ export function SettingsPage({
                   onClick={() => {
                     if (
                       confirm(
-                        `Disconnect ${privacy ? hideAddresses(a.email) : a.email}? This removes its local mail cache. Your provider mailbox stays intact.`,
+                        `Disconnect ${privacy ? redactPrivateText(a.email, names) : a.email}? This removes its local mail cache. Your provider mailbox stays intact.`,
                       )
                     )
                       void perform(

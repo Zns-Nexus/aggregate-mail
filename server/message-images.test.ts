@@ -27,7 +27,7 @@ const source = (html: string, id = mail.messageId) => Buffer.from([
 const photo = { src: "https://images.example.com/photo.png?x=1&y=2", alt: "A photo" };
 const html = `<p>Original</p><img src="https://images.example.com/photo.png?x=1&amp;y=2" alt="A photo">`;
 
-test("MIME parsing keeps text and extracts bounded safe metadata without sender HTML", async () => {
+test("MIME parsing keeps text and extracts bounded safe metadata alongside HTML source", async () => {
   const parsed = await parse(account, "abc", source(html + [
     '<img src="https://images.example.com/photo.png?x=1&amp;y=2">',
     '<img src="http://images.example.com/insecure.png">', '<img src="cid:embedded">',
@@ -38,7 +38,7 @@ test("MIME parsing keeps text and extracts bounded safe metadata without sender 
   ].join("")), true);
   assert.equal(parsed.body, "Original\n\n\nText");
   assert.deepEqual(parsed.images, [photo]);
-  assert.ok(!("html" in parsed));
+  assert.ok(parsed.html?.startsWith(html));
   const many = await parse(account, "many", source(Array.from({ length: 80 }, (_, i) =>
     `<img src="https://example.com/${i}.png" alt="${"a".repeat(600)}">`).join("")), false);
   assert.equal(many.images?.length, 50);

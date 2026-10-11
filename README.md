@@ -112,7 +112,7 @@ A partial listing retains cached mail and batches already fetched. Only a comple
 - Snooze is local to this client. Messages return to their category after the chosen time.
 - Compose and reply send plain text from the selected account. IMAP mail gets a Sent copy. If copying fails after delivery, the draft closes with a warning rather than encouraging a duplicate send.
 - Sync runs on opening, manually, and every five minutes while open. It fetches the full inbox; large mailboxes can take time. Gmail reuses cached bodies and checks labels. Incremental mailbox sync is not included.
-- Bodies render as text without executing sender scripts. Remote images stay blocked until you activate Show images for that message; loading them can tell the sender you opened it. HTTP and HTTPS URLs are clickable and open in your default browser on desktop. Address privacy mode masks URLs containing email addresses; turn it off to open those links. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
+- Bodies preserve a bounded, safe subset of the sender's formatted layout, with readable plain text when formatting is unavailable or rejected. Sender scripts, forms, stylesheets and resource-loading CSS are excluded. Show images sits above the body; images stay blocked until activated for that opening and remain blocked while personal information is hidden. Loading remote images can tell the sender you opened the email. HTTP and HTTPS links open in your default browser on desktop. Personal-information hiding suppresses links containing known recipient names or email addresses. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
 - Drafts remain in memory. Closing warns about unsent content; a crash does not preserve drafts.
 
 ## MCP
@@ -152,7 +152,7 @@ MCP changes notify the open desktop UI to refresh. Replies use the same send pat
 
 ## Keyboard
 
-`j` / `k`: move; Enter: open; Escape: back; `i` / `o`, or Tab when the page body is focused: Important/Other; `0` to `9`: account filters; `/`: search; `c`: compose; `r`: reply; `e`: Done; `s`: snooze; `m` (or `t`): Teach; `d`: Comfortable/Compact; `p`: blur email addresses (click one to reveal it); comma: Settings; `?`: shortcuts. Standard Tab navigation remains available on controls.
+`j` / `k`: move; Enter: open; Escape: back; `i` / `o`, or Tab when the page body is focused: Important/Other; `0` to `9`: account filters; `/`: search; `c`: compose; `r`: reply; `e`: Done; `s`: snooze; `m` (or `t`): Teach; `d`: Comfortable/Compact; `p`: hide email addresses and known connected-recipient names (click a hidden value to reveal it); comma: Settings; `?`: shortcuts. Standard Tab navigation remains available on controls. Settings, Interaction lets you edit action shortcuts and choose single-click or double-click opening. Double-click is the default. Mouse side buttons and Alt+Left/Right go back and forward; macOS also supports Command+[ and Command+].
 
 ## Local storage
 

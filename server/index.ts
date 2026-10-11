@@ -496,6 +496,21 @@ app.post("/api/messages/:id/images", async (req, res) => {
   put("mail", mail.id, { ...current, images });
   res.json({ images });
 });
+app.post("/api/messages/:id/content", async (req, res) => {
+  const mail = findMail(req.params.id);
+  if (mail.html !== undefined) return res.json({ html: mail.html, images: mail.images });
+  const a = account(mail.accountId);
+  const content = await providers[a.provider].content(a, mail);
+  assertNotSyncing();
+  const current = findMail(mail.id);
+  if (current.accountId !== mail.accountId || current.remoteId !== mail.remoteId || current.messageId !== mail.messageId)
+    throw new Error("Email identity changed. Content was not cached.");
+  // Preserve image recovery and mail actions completed during the source fetch.
+  const updated = { ...current, html: current.html === undefined ? content.html : current.html,
+    images: current.images ?? content.images };
+  put("mail", mail.id, updated);
+  res.json({ html: updated.html, images: updated.images });
+});
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);
   if (!all("mail").some((m) => m.id === req.params.id))
