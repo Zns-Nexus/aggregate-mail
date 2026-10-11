@@ -345,23 +345,34 @@ function imapProvider() {
         envelope: { from: a.email, to: [input.to, ...(input.cc || [])] },
         raw,
       });
-      const client = imap(a);
+      let client: ImapFlow | undefined;
+      const warnings: string[] = [];
       try {
+        client = imap(a);
         await client.connect();
         const folders = await client.list();
         const sent =
           folders.find((f) => f.specialUse === "\\Sent")?.path || "Sent";
         if (!folders.some((f) => f.path === sent))
           await client.mailboxCreate(sent);
-        await client.append(sent, raw, ["\\Seen"]);
+        if (!(await client.append(sent, raw, ["\\Seen"])))
+          throw new Error("Sent copy was not saved.");
       } catch {
-        throw new SentCopyError(
-          "Email was sent, but saving a Sent copy failed. Do not resend.",
-        );
+        warnings.push("saving a Sent copy failed");
       } finally {
-        if (client.usable) await client.logout();
-        else client.close();
+        try {
+          if (client?.usable) {
+            if (Object.is(await client.logout(), false))
+              warnings.push("closing the Sent-copy connection failed");
+          } else client?.close();
+        } catch {
+          warnings.push("closing the Sent-copy connection failed");
+        }
       }
+      if (warnings.length)
+        throw new SentCopyError(
+          `Email was sent, but ${warnings.join(" and ")}. Do not resend.`,
+        );
     },
   };
 }
