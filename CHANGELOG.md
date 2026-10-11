@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Verify the exact archived IMAP Message-ID before marking mail read; reject missing or mismatched search candidates.
+- Mark mail read when moving through the open reader with j/k, and close the old reader when a number shortcut changes accounts.
+- Keep the synthetic IMAP store until process exit so Windows does not try to delete an open SQLite file during test cleanup.
+
+- Keep sender provider badges visible in compact rows and give Gmail/IMAP badges opaque rounded-square backgrounds instead of empty circular outlines.
+
+- Add explicit Mark as read to the mail context menu, sharing queued provider updates and retryable errors with read-on-open.
+- Adopt roomier macOS-style dark chrome across the toolbar, inbox, sender pane, Settings, menus and dialogs, with rounded controls, smooth programmatic scrolling and reduced-motion support; keep compact density available.
+
+- Restore the mail context menu in the feature client: right-click or Shift+F10 on rows and opened messages for existing mail actions.
+
+- Replace client action icons with consistent rounded outlines and use a vector Gmail mark in account filters, Settings and sender badges.
+
+- Sync Gmail labels, filter cached mail by label, and edit existing custom labels on opened messages.
+- Add Ctrl+Plus and Ctrl+Minus shortcuts for comfortable and compact inbox density.
+- Mark opened unread mail read without dropping requests during other actions or sync; include archived Gmail mail and safely locate archived IMAP mail by Message-ID, with retryable errors.
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 
 ## 0.1.4

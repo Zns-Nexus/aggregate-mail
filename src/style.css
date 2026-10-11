@@ -1,15 +1,18 @@
-/* Quiet and flat: near-black, hairline dividers, gray text steps, one blue accent. */
+/* macOS-style dark chrome, rounded working panes and brief state transitions. */
 :root {
-  --bg: #0a0a0a;
-  --raised: #161616;
+  --bg: #000;
+  --surface: #0c0c0e;
+  --raised: #19191c;
+  --radius-control: 8px;
+  --radius-pane: 16px;
   --hover: rgba(255, 255, 255, 0.03);
   --selected: rgba(255, 255, 255, 0.055);
   --line: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.12);
-  --text: #ededed;
-  --text-2: #b4b4b4;
-  --text-3: #7d7d7d;
-  --text-4: #5a5a5a;
+  --text: #fff;
+  --text-2: #a0a0a6;
+  --text-3: #88888f;
+  --text-4: #82828a;
   --accent: #6b9cff;
   --link: #8ab0ff;
   --reason: #e3a08b;
@@ -19,11 +22,11 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   font-family:
-    "Segoe UI Variable Text",
-    "Segoe UI",
     -apple-system,
     BlinkMacSystemFont,
     "SF Pro Text",
+    "Segoe UI Variable Text",
+    "Segoe UI",
     Inter,
     system-ui,
     sans-serif;
@@ -38,6 +41,9 @@
 * {
   box-sizing: border-box;
 }
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -45,7 +51,7 @@
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
-  background: #262626 padding-box;
+  background: #38383d padding-box;
 }
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-corner {
@@ -97,6 +103,33 @@ kbd {
 svg {
   flex-shrink: 0;
 }
+.mail-menu {
+  position: fixed;
+  z-index: 40;
+  width: 200px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding: 5px;
+  border-radius: 12px;
+  background: var(--raised);
+  border: 1px solid var(--line-2);
+  color: #fff;
+  animation: menu-in 160ms var(--ease-out);
+}
+.mail-menu button {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 12px;
+  justify-content: space-between;
+  border-radius: var(--radius-control);
+}
+.mail-menu button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.mail-menu button:focus-visible {
+  outline-offset: -3px;
+}
 :focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
@@ -110,7 +143,7 @@ select,
 textarea {
   background: transparent;
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   font-size: 13px;
   min-width: 0;
@@ -174,14 +207,15 @@ input[type="checkbox"][role="switch"]:disabled {
   overflow: hidden;
 }
 
-/* Top bar: 48px, the whole of the window chrome now that the frame is hidden. */
+/* The toolbar is also the draggable frame; native traffic-light spacing is preserved. */
 .topbar {
-  height: 48px;
+  height: 56px;
   flex-shrink: 0;
   display: flex;
   align-items: stretch;
   gap: 24px;
-  padding: 0 16px;
+  padding: 0 20px;
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 .desktop .topbar {
@@ -232,12 +266,12 @@ input[type="checkbox"][role="switch"]:disabled {
   position: relative;
   display: flex;
   align-items: stretch;
-  gap: 22px;
+  gap: 18px;
   min-width: 0;
 }
 .tabs > button {
   gap: 7px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-3);
   transition: color 180ms var(--ease-out);
@@ -253,13 +287,14 @@ input[type="checkbox"][role="switch"]:disabled {
   left: 0;
   bottom: -1px;
   height: 1.5px;
+  border-radius: 2px;
   background: var(--text);
   pointer-events: none;
 }
 .tab-indicator.animate {
   transition:
-    transform 320ms var(--ease-out),
-    width 320ms var(--ease-out);
+    transform 220ms var(--ease-out),
+    width 220ms var(--ease-out);
 }
 .tab-count {
   font-weight: 400;
@@ -286,7 +321,7 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .accounts button {
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-3);
   transition: color 160ms var(--ease-out);
 }
@@ -310,15 +345,17 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .search {
   width: 260px;
-  height: 30px;
+  height: 34px;
   display: flex;
   align-items: center;
   gap: 8px;
   margin-right: 4px;
   overflow: hidden;
-  border-bottom: 1px solid var(--line-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  padding: 0 8px;
   color: var(--text-3);
-  animation: search-in 260ms var(--ease-out);
+  animation: search-in 180ms var(--ease-out);
 }
 .search:focus-within {
   border-color: var(--text-3);
@@ -341,8 +378,9 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text);
 }
 .icon {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
   justify-content: center;
   color: var(--text-3);
   transition: color 160ms var(--ease-out);
@@ -404,8 +442,14 @@ input[type="checkbox"][role="switch"]:disabled {
   width: 68%;
   height: 68%;
 }
-.provider-icon.gmail {
-  background: #e5484d;
+.provider-icon.gmail,
+.provider-icon.imap {
+  background: transparent;
+}
+.provider-icon.gmail svg,
+.provider-icon.imap svg {
+  width: 100%;
+  height: 100%;
 }
 .provider-icon.icloud {
   background: #3e9cf5;
@@ -432,9 +476,9 @@ input[type="checkbox"][role="switch"]:disabled {
   gap: 14px;
   padding: 10px 12px 10px 14px;
   border: 1px solid var(--line-2);
-  border-radius: 8px;
-  background: #141414;
-  color: var(--text-2);
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--text);
   white-space: pre-line;
   transform: translateX(-50%);
   animation: notice-in 260ms var(--ease-out);
@@ -452,12 +496,26 @@ input[type="checkbox"][role="switch"]:disabled {
   flex: 1;
   display: flex;
   min-height: 0;
+  gap: 16px;
+  padding: 16px;
 }
 .list {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pane);
+  background: var(--surface);
+}
+.list,
+.context,
+.settings,
+.dialog,
+.dropdown-menu,
+.label-options {
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
 }
 /* One pane per view or open message; it animates in when its key changes. */
 .pane {
@@ -470,41 +528,39 @@ input[type="checkbox"][role="switch"]:disabled {
   flex-shrink: 0;
 }
 .pane.forward {
-  animation: pane-forward 280ms var(--ease-out);
+  animation: pane-forward 220ms var(--ease-out);
 }
 .pane.back {
-  animation: pane-back 280ms var(--ease-out);
+  animation: pane-back 220ms var(--ease-out);
 }
 .pane.open {
-  animation: pane-open 260ms var(--ease-out);
+  animation: pane-open 220ms var(--ease-out);
 }
 .pane.close {
   animation: fade-in 200ms var(--ease-out);
-}
-.pane:is(.forward, .back) > .row {
-  animation: row-in 260ms var(--ease-out) backwards;
-  animation-delay: calc(var(--i, 0) * 12ms);
 }
 .group {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 14px 16px 5px;
-  background: var(--bg);
+  padding: 18px 20px 8px;
+  background: var(--surface);
   font-size: 12px;
   font-weight: 500;
   color: var(--text-4);
 }
 
-/* Rows: high relevance 46px on two lines, medium 28px, low 24px. */
+/* Comfortable rows breathe; compact density remains a separate keyboard choice. */
 .row {
   position: relative;
-  width: 100%;
-  height: 28px;
+  width: calc(100% - 16px);
+  margin: 2px 8px;
+  border-radius: var(--radius-control);
+  height: 40px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  font-size: 13px;
+  padding: 0 18px;
+  font-size: 14px;
   transition: background-color 140ms var(--ease-out);
 }
 .row:hover:not(.selected) {
@@ -516,15 +572,16 @@ input[type="checkbox"][role="switch"]:disabled {
 .row.selected::before {
   content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: 6px;
+  bottom: 6px;
   left: 0;
-  width: 2px;
+  width: 1px;
+  border-radius: 1px;
   background: var(--accent);
 }
 .row:focus-visible {
   outline-offset: -1px;
-  border-radius: 0;
+  border-radius: var(--radius-control);
 }
 .avatar {
   position: relative;
@@ -552,9 +609,12 @@ input[type="checkbox"][role="switch"]:disabled {
   bottom: -3px;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: 3px;
   font-size: 6.5px;
-  box-shadow: 0 0 0 2px var(--bg);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.avatar .provider-icon:is(.gmail, .imap) {
+  background: var(--raised);
 }
 .row-text {
   flex: 1;
@@ -649,14 +709,19 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text);
 }
 .stacked {
-  height: 46px;
+  height: 62px;
 }
 .stacked .row-text {
   gap: 2px;
 }
-.brief,
+.brief {
+  height: 34px;
+}
 .compact .row {
-  height: 24px;
+  height: 28px;
+  margin-top: 1px;
+  margin-bottom: 1px;
+  font-size: 13px;
 }
 .brief .avatar,
 .compact .row .avatar {
@@ -670,15 +735,11 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .brief .avatar .provider-icon,
 .compact .row .avatar .provider-icon {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   right: -2px;
   bottom: -2px;
-  box-shadow: 0 0 0 1.5px var(--bg);
-}
-.brief .avatar .provider-icon > *,
-.compact .row .avatar .provider-icon > * {
-  display: none;
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 .compact .stacked .row-preview {
   padding-left: 0;
@@ -720,12 +781,12 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .dropdown-trigger {
   width: 100%;
-  height: 36px;
+  height: 40px;
   justify-content: space-between;
   gap: 8px;
   padding: 0 10px;
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   font-size: 13px;
   color: var(--text);
@@ -756,26 +817,26 @@ input[type="checkbox"][role="switch"]:disabled {
   padding: 4px;
   list-style: none;
   border: 1px solid var(--line-2);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--raised);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
-  animation: fade-in 140ms var(--ease-out);
+  animation: menu-in 160ms var(--ease-out);
 }
 .dropdown-menu li {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 8px;
+  min-height: 36px;
+  padding: 0 10px;
   border-radius: 5px;
   font-size: 13px;
   color: var(--text-2);
   cursor: pointer;
 }
 .dropdown-menu li.active {
-  background: var(--selected);
   color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .dropdown-menu li[aria-selected="true"] svg {
   color: var(--link);
@@ -826,10 +887,12 @@ input[type="checkbox"][role="switch"]:disabled {
 
 .message {
   max-width: 780px;
-  padding: 28px 32px 64px;
+  padding: 36px 40px 72px;
+  margin: 0 auto;
+  width: 100%;
 }
 .back {
-  margin-bottom: 24px;
+  margin-bottom: 28px;
   font-size: 12.5px;
   color: var(--text-3);
 }
@@ -849,7 +912,7 @@ input[type="checkbox"][role="switch"]:disabled {
 .message-from {
   display: flex;
   align-items: center;
-  margin: 18px 0 26px;
+  margin: 24px 0 32px;
 }
 .message-from .avatar {
   width: 32px;
@@ -895,12 +958,63 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 
 /* Sender context: 280px side panel. */
+.label-filter {
+  width: 140px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.label-filter .dropdown-trigger {
+  border: 0;
+  padding: 0;
+  height: 32px;
+  overflow: hidden;
+  color: #fff;
+}
+.label-filter .dropdown-menu {
+  width: 240px;
+  max-height: 320px;
+  overflow: auto;
+}
+.label-filter .dropdown-menu li {
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.label-filter .dropdown-menu li.active {
+  background: transparent;
+  text-decoration: underline;
+}
+.message-labels {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin: 16px 0;
+  color: #fff;
+}
+.message-labels > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.label-options {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.label-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.label-options input { flex-shrink: 0; }
 .context {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
   overflow-y: auto;
-  padding: 24px 20px;
-  border-left: 1px solid var(--line);
+  padding: 28px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pane);
+  background: var(--surface);
 }
 .context-pane {
   animation: context-in 220ms var(--ease-out);
@@ -930,7 +1044,8 @@ input[type="checkbox"][role="switch"]:disabled {
   width: 18px;
   height: 18px;
   font-size: 10px;
-  box-shadow: 0 0 0 2px var(--bg);
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--surface);
 }
 .sender h2 {
   margin-top: 14px;
@@ -968,7 +1083,7 @@ input[type="checkbox"][role="switch"]:disabled {
   margin-right: 6px;
 }
 .context-list {
-  margin-top: 28px;
+  margin-top: 32px;
 }
 .context-list:first-child {
   margin-top: 0;
@@ -981,7 +1096,7 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .context-list button {
   width: 100%;
-  height: 28px;
+  height: 36px;
   gap: 10px;
   font-size: 12.5px;
   color: var(--text-2);
@@ -1007,33 +1122,33 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text-4);
 }
 
-/* Settings: a 640px column, sections divided by hairlines. */
+/* Settings: a 680px column of grouped controls on rounded working surfaces. */
 .settings {
-  animation: settings-in 300ms var(--ease-out);
+  animation: settings-in 240ms var(--ease-out);
   flex: 1;
   overflow-y: auto;
-  padding: 40px 24px 80px;
+  padding: 40px 28px 72px;
 }
 .settings-column {
-  max-width: 640px;
+  max-width: 680px;
   margin: 0 auto;
 }
 /* Grouped rows in rounded panels, the way macOS settings stack them. */
 .settings-column > section {
-  padding: 14px 18px 18px;
-  background: #121212;
+  padding: 24px 28px;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-pane);
 }
 .settings-column > section + section {
-  margin-top: 14px;
+  margin-top: 20px;
 }
 .settings h1 {
   display: flex;
   align-items: baseline;
   gap: 10px;
   margin-bottom: 4px;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 22px;
 }
@@ -1049,7 +1164,7 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text-4);
 }
 .account-row {
-  height: 44px;
+  height: 52px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1086,7 +1201,7 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--danger);
 }
 .provider-row {
-  height: 44px;
+  height: 52px;
   display: flex;
   align-items: center;
 }
@@ -1133,7 +1248,7 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text);
 }
 .rule-row {
-  min-height: 56px;
+  min-height: 64px;
   display: flex;
   align-items: center;
   gap: 24px;
@@ -1191,8 +1306,8 @@ input[type="checkbox"][role="switch"]:disabled {
 .settings-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-top: 16px;
+  gap: 18px;
+  margin-top: 20px;
 }
 .dialog .settings-form {
   margin-top: 0;
@@ -1206,7 +1321,7 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .settings-form :is(input, select) {
   width: 100%;
-  height: 36px;
+  height: 40px;
   color: var(--text);
 }
 .field-grid {
@@ -1226,12 +1341,12 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text-4);
 }
 .button {
-  height: 32px;
+  height: 38px;
   flex-shrink: 0;
   gap: 6px;
   padding: 0 14px;
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--raised);
   font-size: 13px;
   font-weight: 500;
@@ -1240,8 +1355,10 @@ input[type="checkbox"][role="switch"]:disabled {
     border-color 140ms var(--ease-out);
 }
 .button:hover:not(:disabled) {
-  background: #1e1e1e;
   border-color: rgba(255, 255, 255, 0.18);
+}
+.button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 .dialog-backdrop {
   position: fixed;
@@ -1259,20 +1376,20 @@ input[type="checkbox"][role="switch"]:disabled {
   max-width: 100%;
   max-height: 90dvh;
   overflow: auto;
-  padding: 16px 22px 22px;
+  padding: 24px 28px 28px;
   border: 1px solid var(--line-2);
-  border-radius: 10px;
-  background: #101010;
+  border-radius: 18px;
+  background: var(--surface);
   animation: dialog-in 240ms var(--ease-out);
 }
 .dialog-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 18px;
 }
 .dialog-title h2 {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 .dialog-copy {
@@ -1306,18 +1423,18 @@ input[type="checkbox"][role="switch"]:disabled {
   flex: 1;
   border: 0;
   border-radius: 0;
-  padding: 10px 0;
+  padding: 14px 0;
   color: var(--text);
 }
 .compose-form :is(input, select):focus-visible {
   outline: none;
 }
 .compose-form textarea {
-  min-height: 240px;
+  min-height: 280px;
   margin: 6px 0 14px;
-  padding: 12px 0;
-  border: 0;
-  border-radius: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
   resize: vertical;
   font-size: 14px;
   line-height: 1.65;
@@ -1329,7 +1446,7 @@ input[type="checkbox"][role="switch"]:disabled {
   width: 100%;
   justify-content: space-between;
   gap: 16px;
-  padding: 11px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
   transition: color 140ms var(--ease-out);
@@ -1355,7 +1472,7 @@ input[type="checkbox"][role="switch"]:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
+  min-height: 52px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
   color: var(--text);
@@ -1371,7 +1488,7 @@ input[type="checkbox"][role="switch"]:disabled {
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   font-size: 12px;
   color: var(--text-2);
@@ -1442,6 +1559,12 @@ input[type="checkbox"][role="switch"]:disabled {
     opacity: 0;
   }
 }
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
 @keyframes context-in {
   from {
     opacity: 0;
@@ -1456,7 +1579,7 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 @keyframes search-in {
   from {
-    width: 0;
+    transform: translateX(6px);
     opacity: 0;
   }
 }
@@ -1479,6 +1602,7 @@ input[type="checkbox"][role="switch"]:disabled {
     animation-duration: 1ms !important;
     animation-delay: 0ms !important;
     transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -1494,6 +1618,23 @@ input[type="checkbox"][role="switch"]:disabled {
   }
 }
 @media (max-width: 760px) {
+  .topbar {
+    gap: 12px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  .workspace {
+    padding: 8px;
+  }
+  .message {
+    padding: 24px 18px 48px;
+  }
+  .settings {
+    padding: 20px 12px 40px;
+  }
+  .settings-column > section {
+    padding: 16px;
+  }
   .tabs > .quiet {
     display: none;
   }

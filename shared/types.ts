@@ -83,6 +83,7 @@ export type Mail = {
   body: string;
   date: number;
   unread: boolean;
+  labelIds?: string[];
   category: Category;
   relevance: 1 | 2 | 3;
   reason: string;
@@ -104,6 +105,7 @@ export type Rule = {
 export type State = {
   accounts: Account[];
   messages: Mail[];
+  labels: GmailLabel[];
   rules: Rule[];
   googleConfigured: boolean;
   googleClientId: string | null;
@@ -111,6 +113,13 @@ export type State = {
   jevProvider: JevProvider;
   aiConfigured: boolean;
   lastSync: number | null;
+};
+
+export type GmailLabel = {
+  id: string;
+  accountId: string;
+  name: string;
+  type: "system" | "user";
 };
 
 // What a run of POST /api/logos/sync found across the senders in the store.

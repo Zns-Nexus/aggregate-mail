@@ -1,18 +1,32 @@
 import { z } from "zod";
 import { all, account, put } from "./store.js";
-import { providers, sendSchema, SentCopyError } from "./providers.js";
+import { providers, sendSchema, SentCopyError, updateGmailLabels } from "./providers.js";
 
-export const messageActionSchema = z.object({
-  action: z.enum(["read", "archive", "snooze", "unsnooze"]),
-  until: z
-    .number()
-    .int()
-    .refine(
-      (until) => until >= Date.now() && until <= Date.now() + 366 * 86400000,
-      "Choose a snooze time within the next year.",
-    )
-    .optional(),
-});
+let mailWork = Promise.resolve();
+// Sync and provider mutations must finish in order so stale metadata cannot undo a read.
+export function runMailWork<T>(task: () => Promise<T>): Promise<T> {
+  const result = mailWork.then(task);
+  mailWork = result.then(() => {}, () => {});
+  return result;
+}
+
+export const messageActionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.enum(["read", "archive", "snooze", "unsnooze"]),
+    until: z
+      .number()
+      .int()
+      .refine(
+        (until) => until >= Date.now() && until <= Date.now() + 366 * 86400000,
+        "Choose a snooze time within the next year.",
+      )
+      .optional(),
+  }),
+  z.object({
+    action: z.literal("labels"),
+    labelIds: z.array(z.string().min(1).max(200)).max(100),
+  }),
+]);
 
 export function findMail(id: string) {
   const mail = all("mail").find((m) => m.id === id);
@@ -24,31 +38,50 @@ export async function updateMessage(
   id: string,
   input: z.infer<typeof messageActionSchema>,
 ) {
-  const m = findMail(id);
-  if (
-    input.action === "snooze" &&
-    (!input.until ||
-      input.until < Date.now() ||
-      input.until > Date.now() + 366 * 86400000)
-  )
-    throw new Error("Choose a snooze time within the next year.");
-  if (input.action === "read" || input.action === "archive") {
-    const a = account(m.accountId);
-    await providers[a.provider].update(a, m, input.action);
-  }
-  const updated = {
-    ...m,
-    unread: input.action === "read" ? false : m.unread,
-    archived: input.action === "archive" || m.archived,
-    snoozedUntil:
-      input.action === "snooze"
-        ? input.until!
-        : input.action === "unsnooze"
-          ? null
-          : m.snoozedUntil,
-  };
-  put("mail", m.id, updated);
-  return updated;
+  return runMailWork(async () => {
+    const m = findMail(id);
+    if (input.action === "read" && !m.unread) return m;
+    if (input.action === "labels") {
+      const a = account(m.accountId);
+      if (a.provider !== "gmail") throw new Error("Labels are only supported for Gmail accounts.");
+      const customIds = all("label")
+        .filter((label) => label.accountId === a.id && label.type === "user")
+        .map((label) => label.id);
+      if (input.labelIds.some((labelId) => !customIds.includes(labelId)))
+        throw new Error("Choose custom labels from this Gmail account. Sync if a label is missing.");
+      const labelIds = await updateGmailLabels(a, m, [...new Set(input.labelIds)], customIds);
+      const updated = { ...findMail(id), labelIds, unread: labelIds.includes("UNREAD"), archived: !labelIds.includes("INBOX") };
+      put("mail", m.id, updated);
+      return updated;
+    }
+    if (
+      input.action === "snooze" &&
+      (!input.until ||
+        input.until < Date.now() ||
+        input.until > Date.now() + 366 * 86400000)
+    )
+      throw new Error("Choose a snooze time within the next year.");
+    if (input.action === "read" || input.action === "archive") {
+      const a = account(m.accountId);
+      await providers[a.provider].update(a, m, input.action);
+    }
+    const latest = findMail(id);
+    const removedLabel = input.action === "read" ? "UNREAD" : input.action === "archive" ? "INBOX" : null;
+    const updated = {
+      ...latest,
+      labelIds: removedLabel ? latest.labelIds?.filter((labelId) => labelId !== removedLabel) : latest.labelIds,
+      unread: input.action === "read" ? false : latest.unread,
+      archived: input.action === "archive" || latest.archived,
+      snoozedUntil:
+        input.action === "snooze"
+          ? input.until!
+          : input.action === "unsnooze"
+            ? null
+            : latest.snoozedUntil,
+    };
+    put("mail", m.id, updated);
+    return updated;
+  });
 }
 
 export async function sendMail(value: unknown) {

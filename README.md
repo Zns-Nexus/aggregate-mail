@@ -66,7 +66,7 @@ iCloud requires an [app-specific password](https://support.apple.com/en-ie/10252
 ## Inbox
 
 - Important and Other combine all connected inboxes. Numbered account controls filter the view. Each sender shows its company logo, fetched once by the app from a favicon service and cached on this computer; senders on Gmail, Outlook, iCloud and similar hosts keep their initial, because their favicon would be the provider's logo rather than their own.
-- Comfortable rows follow the video: low relevance 24px, medium 28px, high relevance 46px on two lines. Compact mode uses uniform 24px rows. A 226px sender panel shows context, recent mail from the sender and recently opened mail. Measurements are recorded in `DESIGN.md`.
+- Comfortable rows use 34px for low relevance, 40px for medium, and 62px on two lines for high relevance. Compact mode uses uniform 28px rows. A 300px sender panel shows context, recent mail from the sender and recently opened mail. Measurements are recorded in `DESIGN.md`.
 - Search opens in the top strip with `/` or the small search icon. The normal inbox has no permanent search toolbar. Snoozed and Archive are quiet tabs beside Important and Other.
 - Local sorting works without an AI service. Add a Jev or OpenAI key under Settings, Connection to classify new mail with Jev by TypeSafe AI (used when its key is set) or OpenAI. Sender, subject and up to 220 characters of preview text go to that provider, a few messages at a time so a first sync stays quick. A failed call names the provider, then falls back to local sorting for the rest of that account's sync.
 - Teach applies an exact sender rule to existing and future mail. Removing a rule reapplies local sorting.
