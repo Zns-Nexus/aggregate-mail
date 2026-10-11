@@ -294,6 +294,9 @@ function imapProvider() {
             if (!matches || matches.length !== 1)
               throw new Error("Could not identify this archived email. Mark it read in your provider.");
             uid = String(matches[0]);
+            const candidate = await client.fetchOne(uid, { headers: ["message-id"] }, { uid: true });
+            if (!candidate || !candidate.headers || (await simpleParser(candidate.headers)).messageId !== m.messageId)
+              throw new Error("Could not identify this archived email. Mark it read in your provider.");
           } else if (
             !client.mailbox ||
             String(client.mailbox.uidValidity) !== validity

@@ -677,7 +677,10 @@ export function App() {
               ),
             )
           ];
-        if (next) setSelectedId(next.id);
+        if (next) {
+          if (opened) openMail(next);
+          else setSelectedId(next.id);
+        }
       } else if (
         inbox &&
         event.key === "Enter" &&
@@ -698,8 +701,12 @@ export function App() {
         switchView(view === "important" ? "other" : "important");
       } else if (inbox && /^[0-9]$/.test(event.key)) {
         const a = state.accounts[Number(event.key) - 1];
-        if (event.key === "0") setAccountFilter("all");
-        else if (a) setAccountFilter(a.id);
+        const nextAccount = event.key === "0" ? "all" : a?.id;
+        if (nextAccount && nextAccount !== accountFilter) {
+          setAccountFilter(nextAccount);
+          setSelectedId(null);
+          setOpened(false);
+        }
       }
     };
     window.addEventListener("keydown", handler);

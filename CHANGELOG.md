@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Verify the exact archived IMAP Message-ID before marking mail read; reject missing or mismatched search candidates.
+- Mark mail read when moving through the open reader with j/k, and close the old reader when a number shortcut changes accounts.
+
 - Keep sender provider badges visible in compact rows and give Gmail/IMAP badges opaque rounded-square backgrounds instead of empty circular outlines.
 
 - Add explicit Mark as read to the mail context menu, sharing queued provider updates and retryable errors with read-on-open.
