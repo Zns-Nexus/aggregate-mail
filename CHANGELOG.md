@@ -18,6 +18,10 @@
 - Sync Gmail labels, filter cached mail by label, and edit existing custom labels on opened messages.
 - Add Ctrl+Plus and Ctrl+Minus shortcuts for comfortable and compact inbox density.
 - Mark opened unread mail read without dropping requests during other actions or sync; include archived Gmail mail and safely locate archived IMAP mail by Message-ID, with retryable errors.
+- Open guided account setup directly from the inbox, with provider defaults, app-password help and errors that keep the form open for correction.
+- Keep another provider's connection form open when Google sign-in finishes, including while its connection check is pending.
+- Close the onboarding test database before removing its temporary directory so fixture cleanup works on Windows.
+- Add Gmail and Google Workspace connections through TLS IMAP/SMTP with a Google app password, alongside configured Google sign-in. Keep the two connection methods separate and avoid duplicate Gmail Sent copies.
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 - Keep uncertain sends as "Send status unknown" with the draft and a possible-delivery warning. Require duplicate-risk confirmation before sending again, including keyboard submission, and retain uncertainty through draft edits.
 - Keep the native application-close prompt neutral about whether a draft was sent.

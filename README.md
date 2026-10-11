@@ -23,7 +23,35 @@ These packages are unsigned and not notarized. Packaging explicitly skips signin
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 
-## Gmail OAuth
+## Connect an account
+
+Select **Connect an account** in the empty inbox or add an account from Settings.
+Choose your provider. Known providers fill in the incoming and outgoing server
+settings; custom IMAP keeps those fields available.
+
+For Gmail and Google Workspace, use **Continue with Google** when Google OAuth
+is configured. Otherwise, the connection dialog offers an app-password option
+with a link to Google's account settings. Enter your email address and a
+dedicated [Google app password](https://support.google.com/accounts/answer/185833),
+not your normal Google password. This option needs no Google Cloud project.
+It requires 2-Step Verification and may be unavailable because of Workspace
+administrator policy, security-key-only verification or Advanced Protection.
+Google recommends OAuth when it is available.
+
+The app checks both incoming and outgoing access before saving an IMAP account.
+If a check fails, correct the connection form and retry. Account credentials
+stay in the encrypted local store. Gmail saves its own Sent copies; the
+app-password connection does not append another copy.
+
+Existing Gmail OAuth accounts keep their connection method and cached mail.
+The app does not switch an existing account between OAuth and IMAP during
+reconnection, because those methods use different message identifiers.
+
+### Advanced Google OAuth setup
+
+The source build does not include a shared Google OAuth client. A maintainer
+or self-hosting user can configure one once, then use Google sign-in for
+eligible personal Gmail and Workspace accounts.
 
 1. Create a project in [Google Cloud](https://console.cloud.google.com/apis/credentials) and enable the Gmail API.
 2. Configure the consent screen and add your Google accounts as test users.
@@ -57,9 +85,11 @@ TYPESAFE_MODEL=<model id>
 
 A call sends `state` (sender, subject and up to 220 characters of preview) with typed `questions` asking for a category, a relevance level and a row label. `server/sorting.ts` holds those questions, and a non-`http(s)` endpoint is refused before anything is sent.
 
-## Other accounts
+## Other providers
 
-Use Connect beside iCloud, Fastmail or Yahoo and supply an app-specific password. IMAP and SMTP connections are validated before saving. Custom IMAP supports a separate incoming username, a TLS IMAP host/port, and SMTP on port 465 with TLS or 587 with required STARTTLS.
+Choose iCloud, Fastmail or Yahoo and follow the dialog's app-password link.
+Custom IMAP supports a separate incoming username, a TLS IMAP host/port, and
+SMTP on port 465 with TLS or 587 with required STARTTLS.
 
 iCloud requires an [app-specific password](https://support.apple.com/en-ie/102525). Enter credentials only in the connection form, never in source or chat.
 

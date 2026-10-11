@@ -30,7 +30,7 @@ import {
   Mail as MailIcon,
 } from "./icons";
 import { customLabels, densityShortcut, matchesLabel, markMailRead, selectedMail } from "./mail-ui";
-import { jevProviders, logoDomain } from "../shared/types";
+import { appPasswordHelp, jevProviders, logoDomain, providerNames } from "../shared/types";
 import type {
   Account,
   Category,
@@ -112,13 +112,7 @@ const empty: State = {
   aiConfigured: false,
   lastSync: null,
 };
-const providerNames: Record<Provider, string> = {
-  gmail: "Gmail",
-  icloud: "iCloud Mail",
-  fastmail: "Fastmail",
-  yahoo: "Yahoo Mail",
-  imap: "Custom IMAP",
-};
+type ImapProvider = Exclude<Provider, "gmail">;
 const viewNames: Record<View, string> = {
   important: "Important",
   other: "Other",
@@ -311,8 +305,8 @@ export function MessageBody({ text }: { text: string }) {
 }
 function ProviderIcon({ provider }: { provider: Provider }) {
   return (
-    <span className={`provider-icon ${provider}`} aria-hidden="true">
-      {provider === "gmail" ? (
+    <span className={`provider-icon ${provider === "gmail-imap" ? "gmail" : provider}`} aria-hidden="true">
+      {provider === "gmail" || provider === "gmail-imap" ? (
         <Gmail />
       ) : provider === "icloud" ? (
         <Cloud />
@@ -370,6 +364,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [connecting, setConnecting] = useState<ImapProvider | "choose" | null>(null);
   const [opened, setOpened] = useState(false);
   const [compose, setCompose] = useState<Compose | null>(null);
   const [teach, setTeach] = useState<Mail | null>(null);
@@ -504,10 +499,12 @@ export function App() {
     () =>
       window.desktop?.onAccountConnected((error) => {
         if (error) setNotice(error);
-        else
+        else {
+          setConnecting(current => current === "choose" ? null : current);
           void reload()
             .then(() => sync())
             .catch((error) => setNotice(error.message));
+        }
       }),
     [reload, sync],
   );
@@ -631,7 +628,7 @@ export function App() {
   };
   const startCompose = (reply?: Mail) => {
     if (!state.accounts.length) {
-      setSettings(true);
+      setConnecting("choose");
       return;
     }
     if (compose) return;
@@ -683,7 +680,7 @@ export function App() {
       )
         return;
       const nextDensity = densityShortcut(event);
-      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail) {
+      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
         event.preventDefault();
         setDensity(nextDensity);
         return;
@@ -698,7 +695,7 @@ export function App() {
         setSettings(false);
         return;
       }
-      if (compose || teach || snooze || shortcuts || labelMail) return;
+      if (compose || teach || snooze || shortcuts || labelMail || connecting) return;
       const inbox = !settings;
       if (event.key === "/") {
         event.preventDefault();
@@ -1043,7 +1040,7 @@ export function App() {
             busy={busy}
             perform={perform}
             api={api}
-            sync={sync}
+            onConnectAccount={setConnecting}
             onNotice={setNotice}
             windowSide={windowSide}
             onWindowSide={placeWindowControls}
@@ -1175,7 +1172,7 @@ export function App() {
                       (!state.accounts.length ? (
                         <button
                           className="link"
-                          onClick={() => setSettings(true)}
+                          onClick={() => setConnecting("choose")}
                         >
                           Connect an account <ArrowRight color="currentColor" size={11} />
                         </button>
@@ -1296,6 +1293,31 @@ export function App() {
               }, "Labels updated.")}
             />
           </Dialog>
+        )}
+        {connecting === "choose" ? (
+          <Dialog title="Connect account" onClose={() => setConnecting(null)}>
+            <p className="dialog-copy">Choose your email provider.</p>
+            <ProviderChoices googleConfigured={state.googleConfigured} busy={busy || syncing} onChoose={setConnecting} />
+          </Dialog>
+        ) : connecting && (
+          <ConnectDialog
+            key={connecting}
+            provider={connecting}
+            busy={busy || syncing}
+            onClose={() => setConnecting(null)}
+            onBack={() => setConnecting("choose")}
+            onConnect={async (input) => {
+              await api("/accounts/imap", "POST", input);
+              setConnecting(null);
+              setNotice("Account connected. Syncing your inbox.");
+              try {
+                await reload();
+                void sync();
+              } catch {
+                setNotice("Account connected, but refreshing the inbox failed. Reload the app to sync.");
+              }
+            }}
+          />
         )}
         {compose && (
           <ComposePanel
@@ -1483,7 +1505,7 @@ function Dialog({
       }
       if (e.key !== "Tab") return;
       const controls = ref.current?.querySelectorAll<HTMLElement>(
-        "button:not(:disabled), input, select, textarea",
+        "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]",
       );
       if (!controls?.length) return;
       const first = controls[0],
@@ -1703,12 +1725,44 @@ function TeachDialog({
 }
 
 type Api = <T>(url: string, method?: string, body?: unknown) => Promise<T>;
-function SettingsPage({
+function ProviderChoices({ googleConfigured, busy, onChoose }: {
+  googleConfigured: boolean;
+  busy: boolean;
+  onChoose: (provider: ImapProvider) => void;
+}) {
+  return (
+    <>
+      {googleConfigured && (
+        <div className="provider-row">
+          <ProviderIcon provider="gmail" />
+          <strong>Gmail</strong>
+          <span>Gmail and Workspace</span>
+          {busy ? <span>Wait for the current action</span> : (
+            <a className="action" href={window.desktop?.oauthUrl || "/api/oauth/google"}>
+              Continue with Google <ArrowRight color="currentColor" size={11} />
+            </a>
+          )}
+        </div>
+      )}
+      {(["gmail-imap", "icloud", "fastmail", "yahoo", "imap"] as const).map((provider) => (
+        <div key={provider} className="provider-row">
+          <ProviderIcon provider={provider} />
+          <strong>{provider === "gmail-imap" ? "Gmail / Workspace" : providerNames[provider]}</strong>
+          <span>{provider === "imap" ? "TLS IMAP and SMTP" : "Email and app password"}</span>
+          <button className="action" disabled={busy} onClick={() => onChoose(provider)}>
+            {provider === "gmail-imap" ? "Use app password" : "Connect"} <ArrowRight color="currentColor" size={11} />
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+export function SettingsPage({
   state,
   busy,
   perform,
   api,
-  sync,
+  onConnectAccount,
   onNotice,
   windowSide,
   onWindowSide,
@@ -1717,15 +1771,11 @@ function SettingsPage({
   busy: boolean;
   perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
   api: Api;
-  sync: () => Promise<void>;
+  onConnectAccount: (provider: ImapProvider) => void;
   onNotice: (text: string) => void;
   windowSide: "left" | "right";
   onWindowSide: (side: "left" | "right") => void;
 }) {
-  const [connecting, setConnecting] = useState<Exclude<
-    Provider,
-    "gmail"
-  > | null>(null);
   const privacy = useContext(PrivacyContext).on;
   return (
     <main className="settings">
@@ -1776,40 +1826,8 @@ function SettingsPage({
           ) : (
             <p className="muted">No accounts connected.</p>
           )}
-          <h2>Add another</h2>
-          <div className="provider-row">
-            <ProviderIcon provider="gmail" />
-            <strong>Gmail</strong>
-            <span>Gmail and Google Workspace</span>
-            <a
-              className="action"
-              href={window.desktop?.oauthUrl || "/api/oauth/google"}
-            >
-              Continue with Google <ArrowRight color="currentColor" size={11} />
-            </a>
-          </div>
-          {(["icloud", "fastmail", "yahoo", "imap"] as const).map(
-            (provider) => (
-              <div key={provider} className="provider-row">
-                <ProviderIcon provider={provider} />
-                <strong>{providerNames[provider]}</strong>
-                <span>
-                  {provider === "imap"
-                    ? "Any TLS IMAP and SMTP server"
-                    : provider === "icloud"
-                      ? "Email and app-specific password"
-                      : "Email and app password"}
-                </span>
-                <button
-                  className="action"
-                  disabled={busy}
-                  onClick={() => setConnecting(provider)}
-                >
-                  Connect <ArrowRight color="currentColor" size={11} />
-                </button>
-              </div>
-            ),
-          )}
+          <h2>Connect account</h2>
+          <ProviderChoices googleConfigured={state.googleConfigured} busy={busy} onChoose={onConnectAccount} />
         </section>
         <section>
           <h1>
@@ -1860,58 +1878,61 @@ function SettingsPage({
           <h1>
             <span>3</span>Connection
           </h1>
-          {!state.googleConfigured && (
-            <div className="setup">
-              <ol>
-                <li>
-                  In Google Cloud, enable the Gmail API and configure an OAuth
-                  consent screen.
-                </li>
-                <li>
-                  Create a Web application OAuth client. Add your email as a
-                  test user.
-                </li>
-                <li>
-                  Register this redirect URI:{" "}
-                  <code>
-                    {
-                      new URL(
-                        window.desktop?.oauthUrl || "/api/oauth/google",
-                        location.origin,
-                      ).href
-                    }
-                    /callback
-                  </code>
-                </li>
-                <li>
-                  Save the client ID and secret below, then use Continue with
-                  Google.
-                </li>
-              </ol>
-              <a
-                className="action"
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open Google Cloud <ArrowRight color="currentColor" size={11} />
-              </a>
-              <p className="muted">
-                Access requested: read mail, update labels and send mail.
-                Credentials stay on this computer.
-              </p>
-            </div>
-          )}
-          <ConfigurationForm
-            api={api}
-            perform={perform}
-            busy={busy}
-            googleConfigured={state.googleConfigured}
-            googleClientId={state.googleClientId}
-            aiConfigured={state.aiConfigured}
-            jevConfigured={state.jevConfigured}
-            jevProvider={state.jevProvider}
-          />
+          <details>
+            <summary>Advanced connection setup</summary>
+            {!state.googleConfigured && (
+              <div className="setup">
+                <ol>
+                  <li>
+                    In Google Cloud, enable the Gmail API and configure an OAuth
+                    consent screen.
+                  </li>
+                  <li>
+                    Create a Web application OAuth client. Add your email as a
+                    test user.
+                  </li>
+                  <li>
+                    Register this redirect URI:{" "}
+                    <code>
+                      {
+                        new URL(
+                          window.desktop?.oauthUrl || "/api/oauth/google",
+                          location.origin,
+                        ).href
+                      }
+                      /callback
+                    </code>
+                  </li>
+                  <li>
+                    Save the client ID and secret below, then use Continue with
+                    Google.
+                  </li>
+                </ol>
+                <a
+                  className="action"
+                  href="https://console.cloud.google.com/apis/credentials"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Google Cloud <ArrowRight color="currentColor" size={11} />
+                </a>
+                <p className="muted">
+                  Access requested: read mail, update labels and send mail.
+                  Credentials stay on this computer.
+                </p>
+              </div>
+            )}
+            <ConfigurationForm
+              api={api}
+              perform={perform}
+              busy={busy}
+              googleConfigured={state.googleConfigured}
+              googleClientId={state.googleClientId}
+              aiConfigured={state.aiConfigured}
+              jevConfigured={state.jevConfigured}
+              jevProvider={state.jevProvider}
+            />
+          </details>
         </section>
         <section>
           <h1>
@@ -1962,20 +1983,6 @@ function SettingsPage({
           </p>
         </section>
       </div>
-      {connecting && (
-        <ConnectDialog
-          provider={connecting}
-          busy={busy}
-          onClose={() => setConnecting(null)}
-          onConnect={(input) =>
-            void perform(async () => {
-              await api("/accounts/imap", "POST", input);
-              setConnecting(null);
-              void sync();
-            }, "Account connected. Syncing your inbox.")
-          }
-        />
-      )}
     </main>
   );
 }
@@ -2207,51 +2214,73 @@ function ConfigurationForm({
     </form>
   );
 }
-function ConnectDialog({
+export function ConnectDialog({
   provider,
   busy,
   onClose,
   onConnect,
+  onBack,
 }: {
-  provider: Exclude<Provider, "gmail">;
+  provider: ImapProvider;
   busy: boolean;
   onClose: () => void;
-  onConnect: (input: unknown) => void;
+  onConnect: (input: unknown) => Promise<void>;
+  onBack?: () => void;
 }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const submitting = useRef(false);
+  const unavailable = busy || pending;
   return (
-    <Dialog title={`Connect ${providerNames[provider]}`} onClose={onClose}>
+    <Dialog title={`Connect ${providerNames[provider]}`} onClose={() => { if (!submitting.current) onClose(); }}>
       <form
         className="settings-form"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
+          if (busy || submitting.current) return;
           const data = new FormData(e.currentTarget);
-          onConnect({
-            provider,
-            email: data.get("email"),
-            password: data.get("password"),
-            ...(provider === "imap"
-              ? {
-                  username: data.get("username") || undefined,
-                  imapHost: data.get("imapHost"),
-                  smtpHost: data.get("smtpHost"),
-                  imapPort: Number(data.get("imapPort")),
-                  smtpPort: Number(data.get("smtpPort")),
-                }
-              : {}),
-          });
+          submitting.current = true;
+          setPending(true);
+          setError("");
+          try {
+            await onConnect({
+              provider,
+              email: data.get("email"),
+              password: data.get("password"),
+              ...(provider === "imap"
+                ? {
+                    username: data.get("username") || undefined,
+                    imapHost: data.get("imapHost"),
+                    smtpHost: data.get("smtpHost"),
+                    imapPort: Number(data.get("imapPort")),
+                    smtpPort: Number(data.get("smtpPort")),
+                  }
+                : {}),
+            });
+          } catch (error) {
+            setError(error instanceof Error ? error.message : "Connection failed. Check your details and try again.");
+          } finally {
+            submitting.current = false;
+            setPending(false);
+          }
         }}
       >
         <p className="dialog-copy">
           {provider === "imap"
             ? "Connect using TLS IMAP and SMTP. Server settings come from your email provider."
-            : "Generate an app-specific password in your provider’s account settings. Your regular password may not work."}
+            : provider === "gmail-imap"
+              ? "For Gmail and Google Workspace, use a 16-letter Google app password, not your regular password. App passwords require 2-Step Verification and depend on account and admin policy. If unavailable, use configured Google sign-in or contact your administrator."
+              : "Generate an app password in your provider account settings. Do not use your regular password."}
         </p>
+        {appPasswordHelp[provider] && (
+          <a className="link" href={appPasswordHelp[provider]} target="_blank" rel="noopener noreferrer">How to create an app password</a>
+        )}
         <label>
           Email
           <input name="email" type="email" autoComplete="username" required />
         </label>
         <label>
-          App-specific password
+          {provider === "imap" ? "Password" : "App password"}
           <input name="password" type="password" autoComplete="off" required />
         </label>
         {provider === "imap" && (
@@ -2298,10 +2327,12 @@ function ConnectDialog({
             </div>
           </>
         )}
+        {error && <p className="attention" role="alert"><Redact text={error} /></p>}
         <div className="form-actions">
           <span>Encrypted on this computer.</span>
-          <button className="button" disabled={busy}>
-            {busy ? "Checking connection" : "Connect"}
+          {onBack && <button className="link" type="button" disabled={unavailable} onClick={onBack}>Back</button>}
+          <button className="button" disabled={unavailable}>
+            {pending ? "Checking connection" : busy ? "Wait for the current action" : "Connect"}
           </button>
         </div>
       </form>
