@@ -97,7 +97,10 @@ node --import tsx --test server/sync.test.ts server/providers.test.ts server/syn
 The [service tests](../server/sync.test.ts) cover registration during pending
 sync, the mocked Google callback, credential continuity, coalescing, progressive
 visibility, configured AI completion, cache preservation, retry and deleted
-accounts. The [provider tests](../server/providers.test.ts) check cached work,
+accounts. The background AI-failure case waits for the service's completion
+notification after AI starts and asserts one provider run. It does not issue
+another sync as a wait, which could arrive late and clear the expected warning.
+The [provider tests](../server/providers.test.ts) check cached work,
 pagination, progressive batches, IMAP command order and actual transport abort
 against a synthetic loopback endpoint. They shorten the timeout clock while
 asserting the configured 30-second bound. The

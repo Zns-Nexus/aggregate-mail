@@ -10,6 +10,7 @@
 - Report fixed sync error categories and safe failure details. Contain IMAP transport errors, reject incomplete mailbox listings before archiving cached mail, and keep cleanup warnings separate from the sync outcome.
 - Skip unchanged mail writes, commit changed batches in one transaction, and coalesce renderer refreshes. Keep fresh Gmail batches visible while later downloads run, including a final refresh queued during a failed read.
 - Keep AI sorting limited to committed mail after a batch rollback and classify IMAP connection/greeting timeouts and closed connections as transient failures.
+- Make the background AI-failure regression wait for sync completion without starting another sync that can clear the expected warning.
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 
 ## 0.1.4

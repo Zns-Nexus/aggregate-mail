@@ -60,7 +60,8 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
     mock.method(ImapFlow.prototype, "mailboxOpen", async () => ({}));
     mock.method(ImapFlow.prototype, "close", () => {});
     mock.method(nodemailer, "createTransport", () => ({ verify: async () => true }));
-    const server = await startServer(0);
+    let onMailChanged: (() => void) | undefined;
+    const server = await startServer(0, undefined, () => onMailChanged?.());
     const address = server.address();
     assert.ok(address && typeof address === "object");
     const origin = `http://127.0.0.1:${address.port}`;
@@ -206,24 +207,29 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
         clear();
       });
       await t.test("background connection reports AI failure in account state and retains local mail", async () => {
-        providers.imap.list = async (a) => [mail(a)];
-        const failed = deferred(), release = deferred();
+        let syncCalls = 0;
+        providers.imap.list = async (a) => { syncCalls++; return [mail(a)]; };
+        const failed = deferred(), release = deferred(), completed = deferred();
         process.env.TYPESAFE_API_KEY = "synthetic-key";
         globalThis.fetch = async () => { failed.resolve(); await release.promise; return new Response("", { status: 503 }); };
-        let pending: Promise<Response> | undefined;
+        let pending: Promise<void> | undefined;
         try {
           assert.equal((await add("ai-failure@example.com")).status, 200);
           await failed.promise;
-          pending = request("/sync");
+          // A second sync can arrive after completion and clear the warning being tested.
+          onMailChanged = completed.resolve;
+          pending = completed.promise;
           assert.equal((await state()).syncing, true);
           release.resolve();
           await pending;
           const result = await state();
           assert.equal(result.syncing, false);
+          assert.equal(syncCalls, 1);
           assert.match(result.accounts[0].error || "", /Jev could not sort mail/);
           assert.equal(result.messages[0].reason, "May need your attention");
         } finally {
           release.resolve(); if (pending) await pending;
+          onMailChanged = undefined;
           globalThis.fetch = networkFetch; process.env.TYPESAFE_API_KEY = "";
         }
         clear();
