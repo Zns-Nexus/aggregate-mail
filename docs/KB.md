@@ -37,6 +37,15 @@ a warning. The [renderer](../src/App.tsx) reloads state during sync, including
 once per second while pending. The service owns connection-triggered sync so
 connection callbacks do not start duplicate runs.
 
+An opened message is selected by ID from the full current cache, so background
+classification cannot switch the reader or reply to another message. Closing
+the reader restores selection within the filtered list. If the opened message
+is removed, it has no reply target. The [selection tests](../src/mail-selection.test.tsx)
+cover category changes with remaining or empty lists, removal and closed-reader
+selection. Run them with `node --import tsx --test src/mail-selection.test.tsx`.
+They check the message used by the reader and reply logic; they do not mount
+the UI or execute a reply.
+
 Gmail reuses cached bodies and refreshes unread state with paginated inbox and
 unread-ID lists instead of one metadata request per cached message. Fresh raw
 reads run in batches of ten. Gmail reads and token refresh have a 30-second

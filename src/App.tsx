@@ -304,6 +304,17 @@ function Avatar({
   );
 }
 
+export function selectMail(
+  messages: Mail[],
+  filtered: Mail[],
+  selectedId: string | null,
+  opened: boolean,
+) {
+  return opened
+    ? messages.find((m) => m.id === selectedId)
+    : filtered.find((m) => m.id === selectedId) || filtered[0];
+}
+
 export function App() {
   const [state, setState] = useState(empty);
   const [view, setView] = useState<View>("important");
@@ -508,7 +519,7 @@ export function App() {
         .includes(query.toLowerCase());
     })
     .sort((a, b) => b.date - a.date);
-  const selected = filtered.find((m) => m.id === selectedId) || filtered[0];
+  const selected = selectMail(state.messages, filtered, selectedId, opened);
   const accountOf = (m: Mail) =>
     state.accounts.find((a) => a.id === m.accountId);
   const selectedAccount = selected && accountOf(selected);

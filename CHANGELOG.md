@@ -4,6 +4,7 @@
 
 - Allow connecting additional mailboxes during sync and preserve renewed account credentials when an older sync finishes.
 - Show fetched mail with local sorting while sync continues, then apply the configured AI sorting.
+- Keep the opened message and reply target when background sorting moves mail to another category.
 - Replace cached Gmail metadata reads with unread-ID lists, skip cached IMAP body downloads, and bound Gmail read and token-refresh waits.
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 
