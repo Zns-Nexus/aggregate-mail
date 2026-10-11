@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep sender provider badges visible in compact rows and give Gmail/IMAP badges opaque rounded-square backgrounds instead of empty circular outlines.
+
 - Add explicit Mark as read to the mail context menu, sharing queued provider updates and retryable errors with read-on-open.
 - Adopt roomier macOS-style dark chrome across the toolbar, inbox, sender pane, Settings, menus and dialogs, with rounded controls, smooth programmatic scrolling and reduced-motion support; keep compact density available.
 

@@ -609,9 +609,12 @@ input[type="checkbox"][role="switch"]:disabled {
   bottom: -3px;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: 3px;
   font-size: 6.5px;
-  box-shadow: 0 0 0 2px var(--bg);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.avatar .provider-icon:is(.gmail, .imap) {
+  background: var(--raised);
 }
 .row-text {
   flex: 1;
@@ -732,15 +735,11 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .brief .avatar .provider-icon,
 .compact .row .avatar .provider-icon {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   right: -2px;
   bottom: -2px;
-  box-shadow: 0 0 0 1.5px var(--bg);
-}
-.brief .avatar .provider-icon > *,
-.compact .row .avatar .provider-icon > * {
-  display: none;
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 .compact .stacked .row-preview {
   padding-left: 0;
@@ -1045,7 +1044,8 @@ input[type="checkbox"][role="switch"]:disabled {
   width: 18px;
   height: 18px;
   font-size: 10px;
-  box-shadow: 0 0 0 2px var(--bg);
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--surface);
 }
 .sender h2 {
   margin-top: 14px;
