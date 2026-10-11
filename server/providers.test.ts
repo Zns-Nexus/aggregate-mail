@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { google } from "googleapis";
 import { ImapFlow } from "imapflow";
 import { createServer } from "node:http";
-import { providers } from "./providers.js";
+import { providers, SyncError } from "./providers.js";
 import type { StoredAccount } from "./store.js";
 import type { Mail } from "../shared/types.js";
 
@@ -17,7 +17,8 @@ const raw = Buffer.from("From: Sender <sender@example.com>\r\nTo: inbox@example.
 
 test("cached Gmail uses paginated inbox/unread lists without metadata gets, keeps older mail and exposes batches", async () => {
   const cached = new Map(Array.from({ length: 120 }, (_, i) => { const m = cachedMail(String(i)); return [m.id, m]; }));
-  let lists = 0, gets = 0, batches = 0;
+  let lists = 0, gets = 0;
+  const batches: number[] = [];
   const started = performance.now();
   const gmailMock = mock.method(google, "gmail", () => ({ users: { messages: {
     list: async (input: { labelIds: string[]; pageToken?: string }, options: { timeout?: number; retry?: boolean }) => {
@@ -30,12 +31,12 @@ test("cached Gmail uses paginated inbox/unread lists without metadata gets, keep
     get: async () => { gets++; throw new Error("Cached bodies must not be fetched"); },
   } } }), {});
   try {
-    const result = await providers.gmail.list(account, cached, () => { batches++; });
-    assert.equal(result.length, 120); assert.equal(gets, 0); assert.equal(lists, 3); assert.equal(batches, 12);
+    const result = await providers.gmail.list(account, cached, (batch) => { batches.push(batch.length); });
+    assert.equal(result.length, 120); assert.equal(gets, 0); assert.equal(lists, 3); assert.deepEqual(batches, [100, 20]);
     assert.equal(result.filter((m) => m.unread).length, 1);
     assert.equal(result[119].unread, true); assert.equal(result[0].threadId, "thread-0");
     assert.equal(result[0].body, "Saved body");
-    console.log(`synthetic Gmail repeat: 120 cached, ${lists} lists, ${gets} gets, ${batches} visible batches, ${Math.round(performance.now() - started)}ms with 10ms/request`);
+    console.log(`synthetic Gmail repeat: 120 cached, ${lists} lists, ${gets} gets, ${batches.length} visible batches, ${Math.round(performance.now() - started)}ms with 10ms/request`);
   } finally { gmailMock.mock.restore(); }
 });
 
@@ -75,7 +76,12 @@ test("Gmail token, list and raw read timeouts abort actual transport and do not 
         return originalGmail.call(google, options);
       }, {});
       try {
-        await assert.rejects(providers.gmail.list({ ...account, credentials: { refreshToken: "synthetic-refresh" } }, new Map()), /abort|timeout/i);
+        await assert.rejects(providers.gmail.list({ ...account, credentials: { refreshToken: "synthetic-refresh" } }, new Map()), (error: unknown) => {
+          assert.ok(error instanceof SyncError);
+          assert.deepEqual(error.failure, { kind: "transient", phase: phase === "raw" ? "read" : "list", code: "ETIMEDOUT" });
+          assert.match(error.message, /temporarily unavailable/);
+          return true;
+        });
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([closed, new Promise<void>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Transport did not close")), 1000); })]);
@@ -93,6 +99,7 @@ test("Gmail token, list and raw read timeouts abort actual transport and do not 
 
 test("fresh Gmail batches appear before the next page, and all in-flight gets settle on failure", async () => {
   let observed = 0, active = 0, peak = 0, settled = 0;
+  const visible: { id: string }[][] = [];
   const gmailMock = mock.method(google, "gmail", () => ({ users: { messages: {
     list: async (input: { labelIds: string[]; pageToken?: string }) => {
       if (input.labelIds.includes("UNREAD")) return { data: {} };
@@ -107,8 +114,9 @@ test("fresh Gmail batches appear before the next page, and all in-flight gets se
     },
   } } }), {});
   try {
-    const result = await providers.gmail.list(account, new Map(), (batch) => { observed += batch.length; });
+    const result = await providers.gmail.list(account, new Map(), (batch) => { observed += batch.length; visible.push(batch); });
     assert.equal(result.length, 11); assert.equal(observed, 11); assert.equal(peak, 10); assert.equal(settled, 11);
+    assert.deepEqual(visible.map((batch) => batch.length), [10, 1]);
   } finally { gmailMock.mock.restore(); }
   let outstanding = 0;
   const failureMock = mock.method(google, "gmail", () => ({ users: { messages: {
@@ -121,7 +129,12 @@ test("fresh Gmail batches appear before the next page, and all in-flight gets se
     },
   } } }), {});
   try {
-    await assert.rejects(providers.gmail.list(account, new Map()), /Synthetic read timeout/);
+    await assert.rejects(providers.gmail.list(account, new Map()), (error: unknown) => {
+      assert.ok(error instanceof SyncError);
+      assert.deepEqual(error.failure, { kind: "message", phase: "read", code: "READ_FAILED" });
+      assert.ok(!error.message.includes("Synthetic read timeout"));
+      return true;
+    });
     assert.equal(outstanding, 0, "the scheduler must not release a slot with provider work still running");
   } finally { failureMock.mock.restore(); }
 });

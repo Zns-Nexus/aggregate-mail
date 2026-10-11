@@ -1,9 +1,18 @@
 export type Provider = "gmail" | "icloud" | "fastmail" | "yahoo" | "imap";
+export type SyncFailure = {
+  kind: "auth" | "access" | "transient" | "message" | "unknown";
+  phase: "auth" | "connect" | "list" | "read" | "parse" | "sync" | "cleanup";
+  code: string;
+  status?: number;
+};
 export type Account = {
   id: string;
   email: string;
   provider: Provider;
   error?: string;
+  syncFailure?: SyncFailure;
+  syncWarning?: SyncFailure;
+  syncStatus?: "queued" | "running";
 };
 export type Category = "important" | "other";
 // Every System One style decision provider speaks the same request and answer

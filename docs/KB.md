@@ -22,10 +22,21 @@ The macOS target disables app and DMG signing and notarization. The release work
 The [sync service](../server/index.ts) allows validated IMAP registration and
 Google OAuth callbacks during a pending sync. Each connection schedules its
 account immediately. Up to two accounts run at once; an additional account
-waits for a slot. Overlapping sync requests share that run. Reconnecting an
-active account queues one subsequent run with its current credentials. An old
-run cannot restore old credentials or recreate a removed account. Mail actions,
+waits for a slot. Overlapping sync requests share that run. Replacing an
+active account's credentials queues one subsequent run with its current
+credentials. An old run cannot restore old credentials or recreate a removed account. Mail actions,
 account removal, configuration and Teach keep their existing sync guards.
+
+Settings, Retry connection calls `POST /api/accounts/:id/reconnect` with no
+account data. The route reads the encrypted saved credentials server-side and
+calls `requestSync([id])`; it does not validate SMTP or replace credentials.
+Desktop-session, Host, origin and CSRF checks still apply. Unknown IDs return
+404 and account data returns 400. Accepted requests return 202 with only the
+target account's queued/running status and prior failure. Duplicate requests
+share work; an account that has finished can retry while peers remain active.
+Its previous error remains until that account finishes. Authentication rejection
+requires Google sign-in or an app-password replacement through the existing
+connection form. No new automatic provider retry is added.
 
 [Provider listing](../server/providers.ts) saves fetched batches before later
 pages or AI sorting finish. New mail first uses local sorting, then receives
@@ -33,9 +44,22 @@ the configured AI classification. Cached sorting and snooze state are retained.
 Only a successful complete inbox listing marks absent cached messages archived.
 A partial failure retains cached mail and fetched batches, sorts new fetched
 mail, and reports an account error. AI failures keep local sorting and return
-a warning. The [renderer](../src/App.tsx) reloads state during sync, including
-once per second while pending. The service owns connection-triggered sync so
-connection callbacks do not start duplicate runs.
+a warning. Sync failures use fixed messages for authentication, access,
+transient connection/provider, message-read and unknown failures. Stored details
+contain only an operation, allowlisted code and optional numeric HTTP status;
+raw exceptions, response bodies and credentials are excluded. IMAP error
+emissions reject the pending listing operation and close its connection.
+Throwing or false logout produces a separate cleanup warning and preserves
+the primary listing result or failure.
+
+Mail batches skip deeply equal cached records and write changed records in one
+SQLite transaction using the existing encryption. A failed transaction rolls
+back the whole batch. The [renderer](../src/App.tsx) reloads state during sync,
+including once per second while pending. Reload notifications share one active
+read and one pending refresh. A failed active read still services a refresh
+requested during that read; failure alone does not schedule a retry.
+The service owns connection-triggered sync so connection callbacks do not
+start duplicate runs.
 
 An opened message is selected by ID from the full current cache, so background
 classification cannot switch the reader or reply to another message. Closing
@@ -48,16 +72,21 @@ the UI or execute a reply.
 
 Gmail reuses cached bodies and refreshes unread state with paginated inbox and
 unread-ID lists instead of one metadata request per cached message. Fresh raw
-reads run in batches of ten. Gmail reads and token refresh have a 30-second
-request timeout that aborts transport. Read batches settle every in-flight
+reads run in batches of ten and publish before later groups in the same page
+settle. Cached-only batches publish once per inbox page. Gmail reads and token
+refresh have a 30-second request timeout that aborts transport. Read batches settle every in-flight
 request before releasing their account slot. IMAP drains UID/flag enumeration
-before fetching missing bodies by UID, with no cached-body download. Neither
+before fetching missing bodies by UID, with no cached-body download. Before
+reconciling absent cache entries, IMAP requires unique UIDs and flags, an
+enumeration matching EXISTS, stable UIDVALIDITY/UIDNEXT, no observed mailbox
+change and every requested body UID exactly once. Missing bodies report a
+message-read failure. Incomplete snapshots retain cached mail. Neither
 provider caps the inbox or drops older mail.
 
 Run the synthetic service and provider regressions with:
 
 ```sh
-node --import tsx --test server/sync.test.ts server/providers.test.ts
+node --import tsx --test server/sync.test.ts server/providers.test.ts server/sync-recovery.test.ts src/sync-reload.test.tsx src/mail-selection.test.tsx
 ```
 
 The [service tests](../server/sync.test.ts) cover registration during pending
@@ -66,8 +95,17 @@ visibility, configured AI completion, cache preservation, retry and deleted
 accounts. The [provider tests](../server/providers.test.ts) check cached work,
 pagination, progressive batches, IMAP command order and actual transport abort
 against a synthetic loopback endpoint. They shorten the timeout clock while
-asserting the configured 30-second bound. These checks use synthetic accounts
-and mail. They do not prove real Gmail or Workspace authentication, real mailbox
+asserting the configured 30-second bound. The
+[recovery tests](../server/sync-recovery.test.ts) exercise the actual loopback
+service with synthetic OAuth transport and ImapFlow command/emitter fixtures.
+They cover safe failures, guarded saved-credential reconnect, duplicate clicks,
+retry while a peer runs, incomplete listings, four library throttle attempts,
+cleanup outcomes, transaction rollback and unchanged/changed cache operation
+counts. They also block a later Gmail download group and check that earlier
+fresh mail is already in state. The
+[reload tests](../src/sync-reload.test.tsx) check the exported coalescing seam,
+including a queued refresh after rejection; they do not mount Settings.
+These checks use synthetic accounts and mail. They do not prove real Gmail or Workspace authentication, real mailbox
 latency, native UI behavior, deployment or release readiness.
 
 ### Desktop startup

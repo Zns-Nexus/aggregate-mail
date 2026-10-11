@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { EventEmitter } from "node:events";
 import type { Server } from "node:http";
 import { loadEnvFile } from "node:process";
@@ -7,8 +8,8 @@ import path from "node:path";
 import express from "express";
 import { google } from "googleapis";
 import { z } from "zod";
-import { all, put, remove, account, type StoredAccount } from "./store.js";
-import { oauth, providers, presets, validateImap } from "./providers.js";
+import { all, put, putBatch, remove, account, type StoredAccount } from "./store.js";
+import { oauth, providers, presets, validateImap, syncError } from "./providers.js";
 import {
   sendMail,
   updateMessage,
@@ -19,7 +20,7 @@ import { classify, sortMail, SortingUnavailable } from "./sorting.js";
 import { companyLogo } from "./avatars.js";
 import { companySvg, isFreeMail, normalizeDomain, syncLogos } from "./logos.js";
 import { jevProviderOf } from "../shared/types.js";
-import type { Mail } from "../shared/types.js";
+import type { Mail, SyncFailure } from "../shared/types.js";
 
 const configPath = process.env.MAIL_CONFIG_PATH || ".env";
 if (existsSync(configPath)) loadEnvFile(configPath);
@@ -39,6 +40,8 @@ let syncRun: Promise<string[]> | undefined;
 let wakeSync: (() => void) | undefined;
 const pendingAccounts = new Set<string>();
 const scheduledAccounts = new Set<string>();
+const activeAccounts = new Set<string>();
+const accountSyncStatus = (id: string) => activeAccounts.has(id) ? "running" as const : pendingAccounts.has(id) ? "queued" as const : undefined;
 let scanningLogos = false;
 const assertNotSyncing = () => {
   if (syncing)
@@ -73,7 +76,7 @@ app.use("/api", (req, res, next) => {
     !["GET", "HEAD"].includes(req.method) &&
     !req.path.startsWith("/send") &&
     req.path !== "/mcp" &&
-    !(req.method === "POST" && ["/accounts/imap", "/sync"].includes(req.path))
+    !(req.method === "POST" && (["/accounts/imap", "/sync"].includes(req.path) || /^\/accounts\/[^/]+\/reconnect$/.test(req.path)))
   )
     return res
       .status(409)
@@ -83,7 +86,7 @@ app.use("/api", (req, res, next) => {
 app.get("/api/state", (_req, res) => {
   res.json({
     csrf,
-    accounts: all("account").map(({ credentials: _credentials, ...a }) => a),
+    accounts: all("account").map(({ credentials: _credentials, ...a }) => ({ ...a, syncStatus: accountSyncStatus(a.id) })),
     messages: all("mail"),
     rules: all("rule"),
     googleConfigured: !!(
@@ -312,6 +315,16 @@ app.post("/api/accounts/imap", async (req, res) => {
   void requestSync([id], true);
   res.json({ ok: true });
 });
+app.post("/api/accounts/:id/reconnect", (req, res) => {
+  const a = all("account").find((a) => a.id === req.params.id);
+  if (!a) return res.status(404).json({ error: "Account not found." });
+  if (req.body !== undefined && (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length))
+    return res.status(400).json({ error: "Retry uses the saved account credentials. Do not include account data." });
+  // A completed account can retry while peers run; active/pending clicks still share work.
+  if (!activeAccounts.has(a.id) && !pendingAccounts.has(a.id)) scheduledAccounts.delete(a.id);
+  void requestSync([a.id]);
+  res.status(202).json({ status: accountSyncStatus(a.id), error: a.error, syncFailure: a.syncFailure });
+});
 app.delete("/api/accounts/:id", (req, res) => {
   account(req.params.id);
   remove("account", req.params.id);
@@ -344,9 +357,17 @@ function requestSync(ids: string[], reconnect = false): Promise<string[]> {
           pendingAccounts.delete(id);
           const a = all("account").find((a) => a.id === id);
           if (!a) continue;
+          activeAccounts.add(id);
           active.set(id, syncAccount(a, errors)
-            .catch(() => { errors.push(`${a.email}: sync failed. Check your connection or reconnect the account.`); })
-            .finally(() => active.delete(id)));
+            .catch((error) => {
+              const failure = syncError(error, a.provider, "sync");
+              const message = `${a.email}: ${failure.message}`;
+              errors.push(message);
+              const current = all("account").find((current) => current.id === a.id);
+              if (current && isDeepStrictEqual(current.credentials, a.credentials))
+                put("account", a.id, { ...current, error: message, syncFailure: failure.failure });
+            })
+            .finally(() => { active.delete(id); activeAccounts.delete(id); if (active.size || pendingAccounts.size) desktopEvents.emit("mail-changed"); }));
         }
         if (active.size) {
           // Wake for a new account too; keep every active run until it settles.
@@ -376,6 +397,7 @@ async function syncAccount(a: StoredAccount, errors: string[]) {
   const received = new Set<string>();
   const saveBatch: NonNullable<Parameters<typeof providers.gmail.list>[2]> = (batch) => {
     if (!currentAccount()) return;
+    const changed: [string, Mail][] = [];
     for (const m of batch) {
       if (received.has(m.id)) continue;
       received.add(m.id);
@@ -388,22 +410,29 @@ async function syncAccount(a: StoredAccount, errors: string[]) {
         archived: false,
         snoozedUntil: previous?.snoozedUntil || null,
       };
-      put("mail", m.id, saved);
+      if (!isDeepStrictEqual(previous, saved)) changed.push([m.id, saved]);
       if (!previous) fresh.set(m.id, saved);
     }
-    desktopEvents.emit("mail-changed");
+    putBatch("mail", changed);
+    if (changed.length) desktopEvents.emit("mail-changed");
   };
   let error: string | undefined;
+  let syncFailure: SyncFailure | undefined;
+  let syncWarning: SyncFailure | undefined;
   try {
-    const incoming = await providers[a.provider].list(a, existing, saveBatch);
+    const incoming = await providers[a.provider].list(a, existing, saveBatch, (warning) => { syncWarning = warning; });
     if (!currentAccount()) return;
     // Also support a provider returning its final batch without a progress callback.
     saveBatch(incoming);
     const ids = new Set(incoming.map((m) => m.id));
-    for (const m of existing.values())
-      if (!m.archived && !ids.has(m.id)) put("mail", m.id, { ...m, archived: true });
-  } catch {
-    error = `${a.email}: sync failed. Check your connection or reconnect the account.`;
+    const archived: [string, Mail][] = [...existing.values()]
+      .filter((m) => !m.archived && !ids.has(m.id)).map((m) => [m.id, { ...m, archived: true }]);
+    putBatch("mail", archived);
+    if (archived.length) desktopEvents.emit("mail-changed");
+  } catch (failure) {
+    const safe = syncError(failure, a.provider, "sync");
+    error = `${a.email}: ${safe.message}`;
+    syncFailure = safe.failure;
     errors.push(error);
   }
   if (fresh.size && (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)) {
@@ -430,8 +459,8 @@ async function syncAccount(a: StoredAccount, errors: string[]) {
   }
   const current = currentAccount();
   // A reconnect owns its new credentials and status, even if the old run finishes later.
-  if (current && JSON.stringify(current.credentials) === JSON.stringify(a.credentials))
-    put("account", a.id, { ...current, error });
+  if (current && isDeepStrictEqual(current.credentials, a.credentials))
+    put("account", a.id, { ...current, error, syncFailure, syncWarning });
 }
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);

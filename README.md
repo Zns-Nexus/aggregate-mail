@@ -63,6 +63,14 @@ Use Connect beside iCloud, Fastmail or Yahoo and supply an app-specific password
 
 iCloud requires an [app-specific password](https://support.apple.com/en-ie/102525). Enter credentials only in the connection form, never in source or chat.
 
+### Sync recovery
+
+Use Retry connection beside an account in Settings to sync with its encrypted saved credentials. It keeps the account ID, cached mail, taught sorting and snooze state. Duplicate clicks share queued or running work. A failed account can retry while another account is still syncing. The account shows Retry queued or Syncing and retains its previous error until its run finishes.
+
+Retry connection cannot repair rejected credentials. For a Google sign-in rejection, use Continue with Google. For an IMAP authentication rejection, use Connect to replace the app password. Access failures point to provider permissions or administrator policy. Connection failures can be retried later; unreadable mail has a separate error. Failure details show only a fixed category, operation, allowlisted code and optional HTTP status, without raw provider errors or credentials.
+
+A partial listing retains cached mail and batches already fetched. Only a complete inbox listing archives cached messages absent from the provider. A cleanup warning preserves the sync result. Fresh Gmail mail appears in groups of up to ten while later downloads run; cached-only changes share page writes. Unchanged messages are not rewritten. Renderer notifications share one active read and one pending refresh, including a refresh requested during a failed read. These changes add no automatic provider retry. Real account recovery and native Settings interaction still need separate verification.
+
 ## Inbox
 
 - Important and Other combine all connected inboxes. Numbered account controls filter the view. Each sender shows its company logo, fetched once by the app from a favicon service and cached on this computer; senders on Gmail, Outlook, iCloud and similar hosts keep their initial, because their favicon would be the provider's logo rather than their own.

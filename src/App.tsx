@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -34,6 +35,26 @@ import type {
   State,
   McpSettings,
 } from "../shared/types";
+
+export function coalesceReload<T>(load: () => Promise<T>): () => Promise<T> {
+  let running: Promise<T> | undefined;
+  let pending = false;
+  return () => {
+    if (running) { pending = true; return running; }
+    running = Promise.resolve().then(async () => {
+      while (true) {
+        pending = false;
+        try {
+          const data = await load();
+          if (!pending) return data;
+        } catch (error) {
+          if (!pending) throw error;
+        }
+      }
+    }).finally(() => { running = undefined; });
+    return running;
+  };
+}
 
 type View = Category | "snoozed" | "archive";
 const viewOrder: View[] = ["important", "other", "snoozed", "archive"];
@@ -407,14 +428,14 @@ export function App() {
     },
     [],
   );
-  const reload = useCallback(async () => {
+  const reload = useMemo(() => coalesceReload(async () => {
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
     setState(data);
     setSyncing(data.syncing || syncLock.current);
     setLoaded(true);
     return data;
-  }, [api]);
+  }), [api]);
   const sync = useCallback(async () => {
     if (syncLock.current) return;
     syncLock.current = true;
@@ -1549,15 +1570,23 @@ function SettingsPage({
                 <span
                   className={a.error ? "attention" : undefined}
                   title={
-                    a.error
-                      ? privacy
-                        ? hideAddresses(a.error)
-                        : a.error
-                      : undefined
+                    [a.error && (privacy ? hideAddresses(a.error) : a.error),
+                      a.syncFailure && `${a.syncFailure.phase}: ${a.syncFailure.code}${a.syncFailure.status ? ` (${a.syncFailure.status})` : ""}`,
+                      a.syncWarning && "Mail result retained; connection cleanup failed."].filter(Boolean).join("\n") || undefined
                   }
                 >
-                  {a.error ? "Needs attention" : "Connected"}
+                  {a.syncStatus === "queued" ? "Retry queued" : a.syncStatus === "running" ? "Syncing" : a.error ? "Needs attention" : "Connected"}
                 </span>
+                <button
+                  className="link"
+                  disabled={busy || !!a.syncStatus}
+                  onClick={() => void perform(async () => {
+                    const result = await api<{ status: "queued" | "running" }>(`/accounts/${encodeURIComponent(a.id)}/reconnect`, "POST");
+                    onNotice(result.status === "running" ? "Connection retry running. Check this account's status for the result." : "Connection retry queued. Check this account's status for the result.");
+                  })}
+                >
+                  Retry connection
+                </button>
                 <button
                   className="link"
                   disabled={busy}
