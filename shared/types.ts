@@ -13,11 +13,20 @@ export const appPasswordHelp: Partial<Record<Provider, string>> = {
   fastmail: "https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords",
   yahoo: "https://help.yahoo.com/kb/SLN15241.html",
 };
+export type SyncFailure = {
+  kind: "auth" | "access" | "transient" | "message" | "unknown";
+  phase: "auth" | "connect" | "list" | "read" | "parse" | "sync" | "cleanup";
+  code: string;
+  status?: number;
+};
 export type Account = {
   id: string;
   email: string;
   provider: Provider;
   error?: string;
+  syncFailure?: SyncFailure;
+  syncWarning?: SyncFailure;
+  syncStatus?: "queued" | "running";
 };
 export type Category = "important" | "other";
 // Every System One style decision provider speaks the same request and answer
@@ -127,6 +136,7 @@ export type State = {
   jevProvider: JevProvider;
   aiConfigured: boolean;
   lastSync: number | null;
+  syncing: boolean;
 };
 
 export type GmailLabel = {

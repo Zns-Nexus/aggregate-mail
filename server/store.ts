@@ -73,6 +73,17 @@ export function put<K extends keyof Records>(
     encrypt(value),
   );
 }
+export function putBatch<K extends keyof Records>(kind: K, values: [string, Records[K]][]) {
+  if (!values.length) return;
+  db.exec("BEGIN");
+  try {
+    for (const [id, value] of values) put(kind, id, value);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
 export function remove(kind: keyof Records, id: string) {
   db.prepare("DELETE FROM records WHERE kind=? AND id=?").run(kind, id);
 }

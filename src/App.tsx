@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -42,6 +43,26 @@ import type {
   State,
   McpSettings,
 } from "../shared/types";
+
+export function coalesceReload<T>(load: () => Promise<T>): () => Promise<T> {
+  let running: Promise<T> | undefined;
+  let pending = false;
+  return () => {
+    if (running) { pending = true; return running; }
+    running = Promise.resolve().then(async () => {
+      while (true) {
+        pending = false;
+        try {
+          const data = await load();
+          if (!pending) return data;
+        } catch (error) {
+          if (!pending) throw error;
+        }
+      }
+    }).finally(() => { running = undefined; });
+    return running;
+  };
+}
 
 type View = Category | "snoozed" | "archive";
 const viewOrder: View[] = ["important", "other", "snoozed", "archive"];
@@ -111,6 +132,7 @@ const empty: State = {
   jevProvider: "typesafe",
   aiConfigured: false,
   lastSync: null,
+  syncing: false,
 };
 type ImapProvider = Exclude<Provider, "gmail">;
 const viewNames: Record<View, string> = {
@@ -352,6 +374,17 @@ function Avatar({
   );
 }
 
+export function selectMail(
+  messages: Mail[],
+  filtered: Mail[],
+  selectedId: string | null,
+  opened: boolean,
+) {
+  return opened
+    ? messages.find((m) => m.id === selectedId)
+    : filtered.find((m) => m.id === selectedId) || filtered[0];
+}
+
 export function App() {
   const [state, setState] = useState(empty);
   const [view, setView] = useState<View>("important");
@@ -452,30 +485,46 @@ export function App() {
     },
     [],
   );
-  const reload = useCallback(async () => {
+  const reload = useMemo(() => coalesceReload(async () => {
     const revision = ++loadRevision.current;
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
     if (revision !== loadRevision.current) return data;
     setState(data);
+    setSyncing(data.syncing || syncLock.current);
     setLoaded(true);
     return data;
-  }, [api]);
+  }), [api]);
   const sync = useCallback(async () => {
     if (syncLock.current) return;
     syncLock.current = true;
     setSyncing(true);
     try {
       const result = await api<{ errors: string[] }>("/sync", "POST");
-      await reload();
       if (result.errors.length) setNotice(result.errors.join("\n"));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Sync failed.");
     } finally {
       syncLock.current = false;
-      setSyncing(false);
+      try { await reload(); }
+      catch (error) {
+        setSyncing(false);
+        setNotice(error instanceof Error ? error.message : "Sync failed.");
+      }
     }
   }, [api, reload]);
+  useEffect(() => {
+    if (!syncing) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { await reload(); }
+      catch (error) { if (!stopped) setNotice(error instanceof Error ? error.message : "Sync failed."); }
+      if (!stopped) timer = setTimeout(() => void poll(), 1000);
+    };
+    timer = setTimeout(() => void poll(), 1000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [syncing, reload]);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("error")) {
@@ -486,7 +535,7 @@ export function App() {
       history.replaceState({}, "", "/");
     void reload()
       .then((data) => {
-        if (data.accounts.length) void sync();
+        if (data.accounts.length && !params.has("connected")) void sync();
       })
       .catch((error) => setNotice(error.message));
   }, [reload, sync]);
@@ -502,11 +551,10 @@ export function App() {
         else {
           setConnecting(current => current === "choose" ? null : current);
           void reload()
-            .then(() => sync())
             .catch((error) => setNotice(error.message));
         }
       }),
-    [reload, sync],
+    [reload],
   );
   useEffect(
     () =>
@@ -1795,15 +1843,23 @@ export function SettingsPage({
                 <span
                   className={a.error ? "attention" : undefined}
                   title={
-                    a.error
-                      ? privacy
-                        ? hideAddresses(a.error)
-                        : a.error
-                      : undefined
+                    [a.error && (privacy ? hideAddresses(a.error) : a.error),
+                      a.syncFailure && `${a.syncFailure.phase}: ${a.syncFailure.code}${a.syncFailure.status ? ` (${a.syncFailure.status})` : ""}`,
+                      a.syncWarning && "Mail result retained; connection cleanup failed."].filter(Boolean).join("\n") || undefined
                   }
                 >
-                  {a.error ? "Needs attention" : "Connected"}
+                  {a.syncStatus === "queued" ? "Retry queued" : a.syncStatus === "running" ? "Syncing" : a.error ? "Needs attention" : "Connected"}
                 </span>
+                <button
+                  className="link"
+                  disabled={busy || !!a.syncStatus}
+                  onClick={() => void perform(async () => {
+                    const result = await api<{ status: "queued" | "running" }>(`/accounts/${encodeURIComponent(a.id)}/reconnect`, "POST");
+                    onNotice(result.status === "running" ? "Connection retry running. Check this account's status for the result." : "Connection retry queued. Check this account's status for the result.");
+                  })}
+                >
+                  Retry connection
+                </button>
                 <button
                   className="link"
                   disabled={busy}

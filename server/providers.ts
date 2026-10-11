@@ -4,8 +4,70 @@ import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { z } from "zod";
-import type { GmailLabel, Mail, Provider } from "../shared/types.js";
+import type { GmailLabel, Mail, Provider, SyncFailure } from "../shared/types.js";
 import type { StoredAccount } from "./store.js";
+
+export class SyncError extends Error {
+  constructor(public failure: SyncFailure, provider: Provider) {
+    const messages: Record<SyncFailure["kind"], string> = {
+      auth: provider === "gmail"
+        ? "Google sign-in was rejected. Continue with Google in Settings."
+        : "Authentication was rejected. Replace the app password in Settings.",
+      access: "Mailbox access was denied. Check provider permissions or administrator policy.",
+      transient: "The provider or connection is temporarily unavailable. Retry connection later.",
+      message: "An email could not be read. Retry connection to fetch it again.",
+      unknown: "Sync failed. Retry connection; if it persists, check the safe failure details.",
+    };
+    super(messages[failure.kind]);
+  }
+}
+export function syncError(error: unknown, provider: Provider, phase: SyncFailure["phase"]): SyncError {
+  if (error instanceof SyncError) return error;
+  const e = error as {
+    code?: unknown; name?: unknown; status?: unknown; authenticationFailed?: boolean; serverResponseCode?: unknown;
+    response?: { status?: unknown; data?: { error?: string | { errors?: { reason?: unknown }[] } } };
+  } | null;
+  const statusValue = e?.response?.status ?? e?.status ?? e?.code;
+  const status = typeof statusValue === "number" && statusValue >= 400 && statusValue <= 599 ? statusValue : undefined;
+  const detail = e?.response?.data?.error;
+  const reasons = typeof detail === "object" && Array.isArray(detail?.errors) ? detail.errors.map((item) => item?.reason) : [];
+  const rateLimit = status === 429 || reasons.some((reason) => ["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"].includes(typeof reason === "string" ? reason : ""));
+  const codes = ["invalid_grant", "invalid_token", "EAUTH", "AUTHENTICATIONFAILED", "ETHROTTLE", "ETIMEDOUT", "ETIMEOUT", "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "INCOMPLETE_LIST", "CONNECTION_CLOSED", "READ_FAILED", "PARSE_FAILED", "CLEANUP_FAILED"];
+  const candidate = typeof detail === "string" ? detail : e?.code ?? e?.serverResponseCode;
+  let code = typeof candidate === "string" && codes.includes(candidate) ? candidate : "UNKNOWN";
+  if ([e?.name, candidate].some((value) => value === "AbortError" || value === "TimeoutError") || candidate === "CONNECT_TIMEOUT" || candidate === "GREETING_TIMEOUT") code = "ETIMEDOUT";
+  if (candidate === "NoConnection" || candidate === "EConnectionClosed") code = "CONNECTION_CLOSED";
+  const auth = e?.authenticationFailed || status === 401 || ["invalid_grant", "invalid_token", "EAUTH", "AUTHENTICATIONFAILED"].includes(code);
+  const transient = rateLimit || (status !== undefined && status >= 500) || ["ETHROTTLE", "ETIMEDOUT", "ETIMEOUT", "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "INCOMPLETE_LIST", "CONNECTION_CLOSED"].includes(code);
+  const kind = auth ? "auth" : transient ? "transient" : status === 403 ? "access" : phase === "read" || phase === "parse" ? "message" : "unknown";
+  if (code === "UNKNOWN") code = auth ? "AUTH_REJECTED" : rateLimit ? "RATE_LIMIT" : status === 403 ? "ACCESS_DENIED" : status ? "HTTP_ERROR" : phase === "parse" ? "PARSE_FAILED" : phase === "read" ? "READ_FAILED" : "UNKNOWN";
+  return new SyncError({ kind, phase: code === "invalid_grant" || code === "invalid_token" ? "auth" : phase, code, ...(status ? { status } : {}) }, provider);
+}
+async function syncOperation<T>(provider: Provider, phase: SyncFailure["phase"], work: () => Promise<T>): Promise<T> {
+  try { return await work(); }
+  catch (error) { throw syncError(error, provider, phase); }
+}
+const imapFailures = new WeakMap<ImapFlow, { failed: Promise<never>; error?: SyncError }>();
+async function imapOperation<T>(client: ImapFlow, work: () => Promise<T>): Promise<T> {
+  const state = imapFailures.get(client)!;
+  if (state.error) throw state.error;
+  const result = await Promise.race([work(), state.failed]);
+  if (state.error) throw state.error;
+  return result;
+}
+async function* imapFetch(client: ImapFlow, ...args: Parameters<ImapFlow["fetch"]>) {
+  const iterator = client.fetch(...args);
+  try {
+    while (true) {
+      const next = await imapOperation(client, () => iterator.next());
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    // Closing the transport releases ImapFlow's command; return drains iterator backpressure.
+    void iterator.return?.().catch(() => {});
+  }
+}
 
 export const presets = {
   "gmail-imap": {
@@ -75,7 +137,7 @@ export async function updateGmailLabels(a: StoredAccount, m: Mail, labelIds: str
   return result.data.labelIds || [];
 }
 function imap(a: StoredAccount) {
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: a.credentials.imapHost!,
     port: a.credentials.imapPort || 993,
     secure: true,
@@ -88,6 +150,17 @@ function imap(a: StoredAccount) {
     greetingTimeout: 15000,
     socketTimeout: 30000,
   });
+  let reject!: (error: SyncError) => void;
+  const failed = new Promise<never>((_resolve, fail) => { reject = fail; });
+  void failed.catch(() => {});
+  const state: { failed: Promise<never>; error?: SyncError } = { failed };
+  imapFailures.set(client, state);
+  client.on("error", (error) => {
+    state.error ||= syncError(error, a.provider, "connect");
+    reject(state.error);
+    client.close();
+  });
+  return client;
 }
 type Incoming = Omit<
   Mail,
@@ -141,7 +214,7 @@ export class SentCopyError extends Error {}
 export const providers: Record<
   Provider,
   {
-    list: (a: StoredAccount, cached: Map<string, Mail>) => Promise<Incoming[]>;
+    list: (a: StoredAccount, cached: Map<string, Mail>, onBatch?: (batch: Incoming[]) => void, onWarning?: (warning: SyncFailure) => void) => Promise<Incoming[]>;
     update: (
       a: StoredAccount,
       m: Mail,
@@ -151,51 +224,76 @@ export const providers: Record<
   }
 > = {
   gmail: {
-    async list(a, cached) {
-      const api = gmail(a);
+    async list(a, cached, onBatch) {
+      const auth = oauth();
+      auth.setCredentials({ refresh_token: a.credentials.refreshToken });
+      // Bound token refresh as well as message reads, using request cancellation.
+      auth.transporter.defaults.timeout = 30000;
+      auth.transporter.defaults.retry = false;
+      auth.transporter.defaults.retryConfig = { retry: 0 };
+      const api = google.gmail({ version: "v1", auth });
+      const options = { timeout: 30000, retry: false };
       const messages: Incoming[] = [];
+      const unreadIds = new Set<string>();
       let pageToken: string | undefined;
+      // Listing unread IDs replaces a metadata request for every cached message.
+      if (cached.size) {
+        do {
+          const page = await syncOperation(a.provider, "list", () => api.users.messages.list({
+            userId: "me", labelIds: ["INBOX", "UNREAD"], maxResults: 500, pageToken,
+          }, options));
+          for (const item of page.data.messages || []) unreadIds.add(item.id!);
+          pageToken = page.data.nextPageToken || undefined;
+        } while (pageToken);
+      }
       do {
-        const page = await api.users.messages.list({
+        const page = await syncOperation(a.provider, "list", () => api.users.messages.list({
           userId: "me",
           labelIds: ["INBOX"],
           maxResults: 100,
           pageToken,
-        });
+        }, options));
         const items = page.data.messages || [];
+        let pageBatch: Incoming[] = [];
         for (let offset = 0; offset < items.length; offset += 10) {
-          const batch = await Promise.all(
+          const results = await Promise.allSettled(
             items.slice(offset, offset + 10).map(async (item) => {
               const previous = cached.get(`${a.id}:${item.id}`);
-              const result = await api.users.messages.get({
+              if (previous) return {
+                ...previous, unread: unreadIds.has(item.id!),
+                ...(item.threadId ? { threadId: item.threadId } : {}),
+              };
+              const result = await syncOperation(a.provider, "read", () => api.users.messages.get({
                 userId: "me",
                 id: item.id!,
-                format: previous ? "metadata" : "raw",
-                ...(previous ? { fields: "labelIds,threadId" } : {}),
-              });
+                format: "raw",
+              }, options));
               const unread = result.data.labelIds?.includes("UNREAD") || false;
-              if (previous)
-                return {
-                  ...previous,
-                  unread,
-                  labelIds: result.data.labelIds || [],
-                  threadId: result.data.threadId || undefined,
-                };
               return {
-                ...(await parse(
+                ...(await syncOperation(a.provider, "parse", () => parse(
                   a,
                   item.id!,
                   Buffer.from(result.data.raw!, "base64url"),
                   unread,
                   Number(result.data.internalDate),
-                )),
+                ))),
                 threadId: result.data.threadId || undefined,
                 labelIds: result.data.labelIds || [],
               };
             }),
           );
+          const batch = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
           messages.push(...batch);
+          pageBatch.push(...batch);
+          const failure = results.find((result) => result.status === "rejected");
+          // Fresh mail stays progressive; cached-only changes share a page write.
+          if (failure || batch.some((m) => !cached.has(m.id))) {
+            onBatch?.(pageBatch);
+            pageBatch = [];
+          }
+          if (failure?.status === "rejected") throw failure.reason;
         }
+        if (pageBatch.length) onBatch?.(pageBatch);
         pageToken = page.data.nextPageToken || undefined;
       } while (pageToken);
       return messages;
@@ -251,38 +349,81 @@ function smtp(a: StoredAccount) {
 }
 function imapProvider() {
   return {
-    async list(a: StoredAccount) {
+    async list(a: StoredAccount, cached: Map<string, Mail>, onBatch?: (batch: Incoming[]) => void, onWarning?: (warning: SyncFailure) => void) {
       const client = imap(a);
+      let phase: SyncFailure["phase"] = "connect";
       try {
-        await client.connect();
-        const lock = await client.getMailboxLock("INBOX");
+        await imapOperation(client, () => client.connect());
+        const lock = await imapOperation(client, () => client.getMailboxLock("INBOX"));
+        let changed = false;
+        const mailboxChanged = () => { changed = true; };
+        client.on("exists", mailboxChanged);
+        client.on("expunge", mailboxChanged);
         try {
+          phase = "list";
           const result: Incoming[] = [];
-          if (!client.mailbox || !client.mailbox.exists) return result;
-          const validity = String(client.mailbox.uidValidity);
-          // shortcut: full inbox fetch each sync, upgrade to incremental UID sync for large mailboxes.
-          for await (const m of client.fetch("1:*", {
-            uid: true,
-            source: true,
-            flags: true,
-          })) {
-            if (m.source)
-              result.push(
-                await parse(
-                  a,
-                  `${validity}:${m.uid}`,
-                  m.source,
-                  !m.flags?.has("\\Seen"),
-                ),
-              );
+          if (!client.mailbox) throw Object.assign(new Error(), { code: "INCOMPLETE_LIST" });
+          const { exists, uidValidity, uidNext } = client.mailbox;
+          const validity = String(uidValidity);
+          const complete = () => {
+            if (changed || !client.mailbox || client.mailbox.exists !== exists || String(client.mailbox.uidValidity) !== validity || client.mailbox.uidNext !== uidNext)
+              throw Object.assign(new Error(), { code: "INCOMPLETE_LIST" });
+          };
+          const incomplete = () => { throw Object.assign(new Error(), { code: "INCOMPLETE_LIST" }); };
+          if (!exists) { complete(); return result; }
+          const seen = new Set<number>();
+          const missing: number[] = [];
+          let batch: Incoming[] = [];
+          // Drain flags first: ImapFlow cannot issue commands inside this iterator.
+          for await (const m of imapFetch(client, "1:*", { uid: true, flags: true })) {
+            if (!Number.isSafeInteger(m.uid) || m.uid <= 0 || seen.has(m.uid) || !m.flags) incomplete();
+            seen.add(m.uid);
+            const previous = cached.get(`${a.id}:${validity}:${m.uid}`);
+            if (previous) {
+              const incoming = { ...previous, unread: !m.flags?.has("\\Seen") };
+              result.push(incoming); batch.push(incoming);
+              if (batch.length === 100) { onBatch?.(batch); batch = []; }
+            } else missing.push(m.uid);
           }
+          if (batch.length) onBatch?.(batch);
+          if (seen.size !== exists) incomplete();
+          complete();
+          phase = "read";
+          for (let offset = 0; offset < missing.length; offset += 10) {
+            const expected = new Set(missing.slice(offset, offset + 10));
+            batch = [];
+            for await (const m of imapFetch(client, [...expected].join(","), {
+              uid: true, source: true, flags: true,
+            }, { uid: true })) {
+              if (!expected.delete(m.uid)) incomplete();
+              if (!m.source) throw Object.assign(new Error(), { code: "READ_FAILED" });
+              batch.push(await syncOperation(a.provider, "parse", () => parse(a, `${validity}:${m.uid}`, m.source!, !m.flags?.has("\\Seen"))));
+            }
+            result.push(...batch);
+            onBatch?.(batch);
+            if (expected.size) incomplete();
+            complete();
+          }
+          await imapOperation(client, async () => {});
+          complete();
           return result;
         } finally {
+          client.off("exists", mailboxChanged);
+          client.off("expunge", mailboxChanged);
           lock.release();
         }
+      } catch (error) {
+        throw syncError(error, a.provider, phase);
       } finally {
-        if (client.usable) await client.logout();
-        else client.close();
+        try {
+          if (client.usable) {
+            const loggedOut: unknown = await imapOperation(client, () => client.logout());
+            if (loggedOut === false) { client.close(); onWarning?.({ kind: "unknown", phase: "cleanup", code: "CLEANUP_FAILED" }); }
+          } else client.close();
+        } catch {
+          client.close();
+          onWarning?.({ kind: "unknown", phase: "cleanup", code: "CLEANUP_FAILED" });
+        }
       }
     },
     async update(a: StoredAccount, m: Mail, action: "archive" | "read") {

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { EventEmitter } from "node:events";
 import type { Server } from "node:http";
 import { loadEnvFile } from "node:process";
@@ -7,8 +8,8 @@ import path from "node:path";
 import express from "express";
 import { google } from "googleapis";
 import { z } from "zod";
-import { all, put, remove, account, type StoredAccount } from "./store.js";
-import { oauth, providers, presets, validateImap, listGmailLabels } from "./providers.js";
+import { all, put, putBatch, remove, account, type StoredAccount } from "./store.js";
+import { oauth, providers, presets, validateImap, listGmailLabels, syncError } from "./providers.js";
 import {
   sendMail,
   updateMessage,
@@ -16,10 +17,10 @@ import {
   runMailWork,
 } from "./mail-actions.js";
 import { mountMcp, authorizeMcp } from "./mcp.js";
-import { classify, sortMail, SortingUnavailable, type Sorting } from "./sorting.js";
+import { classify, sortMail, SortingUnavailable } from "./sorting.js";
 import { companyLogo } from "./avatars.js";
 import { companySvg, isFreeMail, normalizeDomain, syncLogos } from "./logos.js";
-import { jevProviderOf, type Provider } from "../shared/types.js";
+import { jevProviderOf, type Provider, type Mail, type SyncFailure } from "../shared/types.js";
 
 const configPath = process.env.MAIL_CONFIG_PATH || ".env";
 if (existsSync(configPath)) loadEnvFile(configPath);
@@ -35,6 +36,12 @@ const allowedOrigins = new Set([
 ]);
 const csrf = randomBytes(32).toString("hex");
 let syncing = false;
+let syncRun: Promise<string[]> | undefined;
+let wakeSync: (() => void) | undefined;
+const pendingAccounts = new Set<string>();
+const scheduledAccounts = new Set<string>();
+const activeAccounts = new Set<string>();
+const accountSyncStatus = (id: string) => activeAccounts.has(id) ? "running" as const : pendingAccounts.has(id) ? "queued" as const : undefined;
 let scanningLogos = false;
 const assertNotSyncing = () => {
   if (syncing)
@@ -69,7 +76,8 @@ app.use("/api", (req, res, next) => {
     !["GET", "HEAD"].includes(req.method) &&
     !req.path.startsWith("/send") &&
     req.path !== "/mcp" &&
-    !(req.method === "PATCH" && /^\/messages\/[^/]+$/.test(req.path) && req.body?.action === "read")
+    !(req.method === "PATCH" && /^\/messages\/[^/]+$/.test(req.path) && req.body?.action === "read") &&
+    !(req.method === "POST" && (["/accounts/imap", "/sync"].includes(req.path) || /^\/accounts\/[^/]+\/reconnect$/.test(req.path)))
   )
     return res
       .status(409)
@@ -79,7 +87,7 @@ app.use("/api", (req, res, next) => {
 app.get("/api/state", (_req, res) => {
   res.json({
     csrf,
-    accounts: all("account").map(({ credentials: _credentials, ...a }) => a),
+    accounts: all("account").map(({ credentials: _credentials, ...a }) => ({ ...a, syncStatus: accountSyncStatus(a.id) })),
     messages: all("mail"),
     labels: all("label"),
     rules: all("rule"),
@@ -91,6 +99,7 @@ app.get("/api/state", (_req, res) => {
     jevProvider: jevProviderOf(process.env.TYPESAFE_PROVIDER),
     aiConfigured: !!process.env.OPENAI_API_KEY,
     lastSync: all("meta")[0]?.lastSync || null,
+    syncing,
   });
 });
 app.post("/api/config", (req, res) => {
@@ -246,6 +255,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
       provider: "gmail",
       credentials: { refreshToken },
     });
+    void requestSync([id], true);
     if (process.env.MAIL_DESKTOP_TOKEN) {
       desktopEvents.emit("oauth", null);
       res
@@ -315,7 +325,18 @@ app.post("/api/accounts/imap", async (req, res) => {
   const current = existingAccount(input.email, input.provider);
   a.id = current?.id || id;
   put("account", a.id, a);
+  void requestSync([a.id], true);
   res.json({ ok: true });
+});
+app.post("/api/accounts/:id/reconnect", (req, res) => {
+  const a = all("account").find((a) => a.id === req.params.id);
+  if (!a) return res.status(404).json({ error: "Account not found." });
+  if (req.body !== undefined && (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length))
+    return res.status(400).json({ error: "Retry uses the saved account credentials. Do not include account data." });
+  // A completed account can retry while peers run; active/pending clicks still share work.
+  if (!activeAccounts.has(a.id) && !pendingAccounts.has(a.id)) scheduledAccounts.delete(a.id);
+  void requestSync([a.id]);
+  res.status(202).json({ status: accountSyncStatus(a.id), error: a.error, syncFailure: a.syncFailure });
 });
 app.delete("/api/accounts/:id", (req, res) => {
   account(req.params.id);
@@ -327,91 +348,135 @@ app.delete("/api/accounts/:id", (req, res) => {
   res.json({ ok: true });
 });
 app.post("/api/sync", async (_req, res) => {
-  if (syncing)
-    return res.status(409).json({ error: "Sync is already running." });
+  res.json({ errors: await requestSync(all("account").map((a) => a.id)) });
+});
+
+function requestSync(ids: string[], reconnect = false): Promise<string[]> {
+  for (const id of ids) {
+    if (reconnect || !scheduledAccounts.has(id)) pendingAccounts.add(id);
+    scheduledAccounts.add(id);
+  }
+  if (syncRun) {
+    wakeSync?.();
+    return syncRun;
+  }
   syncing = true;
-  const errors: string[] = [];
-  try {
-    await runMailWork(async () => {
-      for (const a of all("account")) {
-        try {
-          if (a.provider === "gmail") {
-            const labels = await listGmailLabels(a);
-            for (const label of labels) put("label", `${a.id}:${label.id}`, label);
-            const ids = new Set(labels.map((label) => label.id));
-            for (const label of all("label"))
-              if (label.accountId === a.id && !ids.has(label.id))
-                remove("label", `${a.id}:${label.id}`);
-          }
-          const existing = new Map(
-            all("mail")
-              .filter((m) => m.accountId === a.id)
-              .map((m) => [m.id, m]),
-          );
-          const incoming = await providers[a.provider].list(a, existing);
-          const rules = all("rule");
-          const fresh = incoming.filter((m) => !existing.has(m.id));
-          const judged = new Map<string, Sorting>();
-          if (
-            fresh.length &&
-            (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)
-          ) {
-            // One judgement per message, in parallel: a first sync has hundreds.
-            let cursor = 0;
-            let stopped = false;
-            await Promise.all(
-              Array.from({ length: Math.min(6, fresh.length) }, async () => {
-                while (cursor < fresh.length && !stopped) {
-                  const m = fresh[cursor++];
-                  try {
-                    judged.set(m.id, await classify(m, rules));
-                  } catch (error) {
-                    if (stopped) return;
-                    stopped = true;
-                    errors.push(
-                      error instanceof SortingUnavailable
-                        ? error.message
-                        : "AI sorting unavailable. Mail was synced using local sorting.",
-                    );
-                  }
-                }
-              }),
-            );
-          }
-          for (const m of incoming) {
-            const previous = existing.get(m.id);
-            const sorting = previous
-              ? {
-                  category: previous.category,
-                  relevance: previous.relevance,
-                  reason: previous.reason,
-                }
-              : (judged.get(m.id) ?? sortMail(m, rules));
-            put("mail", m.id, {
-              ...m,
-              ...sorting,
-              archived: false,
-              snoozedUntil: previous?.snoozedUntil || null,
-            });
-          }
-          const ids = new Set(incoming.map((m) => m.id));
-          for (const m of existing.values())
-            if (!m.archived && !ids.has(m.id))
-              put("mail", m.id, { ...m, archived: true, labelIds: m.labelIds?.filter((id) => id !== "INBOX") });
-          put("account", a.id, { ...a, error: undefined });
-        } catch {
-          const error = `${a.email}: sync failed. Check your connection or reconnect the account.`;
-          errors.push(error);
-          put("account", a.id, { ...a, error });
+  syncRun = runMailWork(async () => {
+    const errors: string[] = [];
+    const active = new Map<string, Promise<void>>();
+    try {
+      while (pendingAccounts.size || active.size) {
+        for (const id of pendingAccounts) {
+          if (active.size >= 2) break;
+          if (active.has(id)) continue;
+          pendingAccounts.delete(id);
+          const a = all("account").find((a) => a.id === id);
+          if (!a) continue;
+          activeAccounts.add(id);
+          active.set(id, syncAccount(a, errors)
+            .catch((error) => {
+              const failure = syncError(error, a.provider, "sync");
+              const message = `${a.email}: ${failure.message}`;
+              errors.push(message);
+              const current = all("account").find((current) => current.id === a.id);
+              if (current && isDeepStrictEqual(current.credentials, a.credentials))
+                put("account", a.id, { ...current, error: message, syncFailure: failure.failure });
+            })
+            .finally(() => { active.delete(id); activeAccounts.delete(id); if (active.size || pendingAccounts.size) desktopEvents.emit("mail-changed"); }));
+        }
+        if (active.size) {
+          // Wake for a new account too; keep every active run until it settles.
+          await Promise.race([...active.values(), new Promise<void>((resolve) => { wakeSync = resolve; })]);
+          wakeSync = undefined;
         }
       }
       put("meta", "sync", { lastSync: Date.now() });
-    });
-    res.json({ errors });
-  } finally {
-    syncing = false;
+      return errors;
+    } finally {
+      syncing = false;
+      syncRun = undefined;
+      scheduledAccounts.clear();
+      desktopEvents.emit("mail-changed");
+    }
+  });
+  return syncRun;
+}
+
+async function syncAccount(a: StoredAccount, errors: string[]) {
+  const currentAccount = () => all("account").find((current) => current.id === a.id);
+  const existing = new Map(
+    all("mail").filter((m) => m.accountId === a.id).map((m) => [m.id, m]),
+  );
+  const rules = all("rule");
+  const fresh = new Map<string, Mail>();
+  const received = new Set<string>();
+  const saveBatch: NonNullable<Parameters<typeof providers.gmail.list>[2]> = (batch) => {
+    if (!currentAccount()) return;
+    const changed: [string, Mail][] = [];
+    for (const m of batch) {
+      if (received.has(m.id)) continue;
+      received.add(m.id);
+      const previous = existing.get(m.id);
+      const saved = {
+        ...m,
+        ...(previous
+          ? { category: previous.category, relevance: previous.relevance, reason: previous.reason }
+          : sortMail(m, rules)),
+        archived: false,
+        snoozedUntil: previous?.snoozedUntil || null,
+      };
+      if (!isDeepStrictEqual(previous, saved)) changed.push([m.id, saved]);
+    }
+    putBatch("mail", changed);
+    for (const [id, saved] of changed) if (!existing.has(id)) fresh.set(id, saved);
+    if (changed.length) desktopEvents.emit("mail-changed");
+  };
+  let error: string | undefined;
+  let syncFailure: SyncFailure | undefined;
+  let syncWarning: SyncFailure | undefined;
+  try {
+    const incoming = await providers[a.provider].list(a, existing, saveBatch, (warning) => { syncWarning = warning; });
+    if (!currentAccount()) return;
+    // Also support a provider returning its final batch without a progress callback.
+    saveBatch(incoming);
+    const ids = new Set(incoming.map((m) => m.id));
+    const archived: [string, Mail][] = [...existing.values()]
+      .filter((m) => !m.archived && !ids.has(m.id)).map((m) => [m.id, { ...m, archived: true, labelIds: m.labelIds?.filter((id) => id !== "INBOX") }]);
+    putBatch("mail", archived);
+    if (archived.length) desktopEvents.emit("mail-changed");
+  } catch (failure) {
+    const safe = syncError(failure, a.provider, "sync");
+    error = `${a.email}: ${safe.message}`;
+    syncFailure = safe.failure;
+    errors.push(error);
   }
-});
+  if (fresh.size && (process.env.TYPESAFE_API_KEY || process.env.OPENAI_API_KEY)) {
+    const messages = [...fresh.values()];
+    let cursor = 0;
+    let stopped = false;
+    await Promise.all(Array.from({ length: Math.min(6, messages.length) }, async () => {
+      while (cursor < messages.length && !stopped && currentAccount()) {
+        const m = messages[cursor++];
+        try {
+          const sorting = await classify(m, rules);
+          if (currentAccount()) put("mail", m.id, { ...m, ...sorting });
+        } catch (sortingFailure) {
+          if (stopped) return;
+          stopped = true;
+          const warning = sortingFailure instanceof SortingUnavailable
+            ? sortingFailure.message
+            : "AI sorting unavailable. Mail was synced using local sorting.";
+          errors.push(warning);
+          if (!error) error = warning;
+        }
+      }
+    }));
+  }
+  const current = currentAccount();
+  // A reconnect owns its new credentials and status, even if the old run finishes later.
+  if (current && isDeepStrictEqual(current.credentials, a.credentials))
+    put("account", a.id, { ...current, error, syncFailure, syncWarning });
+}
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);
   if (!all("mail").some((m) => m.id === req.params.id))

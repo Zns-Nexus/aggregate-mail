@@ -22,6 +22,15 @@
 - Keep another provider's connection form open when Google sign-in finishes, including while its connection check is pending.
 - Close the onboarding test database before removing its temporary directory so fixture cleanup works on Windows.
 - Add Gmail and Google Workspace connections through TLS IMAP/SMTP with a Google app password, alongside configured Google sign-in. Keep the two connection methods separate and avoid duplicate Gmail Sent copies.
+- Allow connecting additional mailboxes during sync and preserve renewed account credentials when an older sync finishes.
+- Show fetched mail with local sorting while sync continues, then apply the configured AI sorting.
+- Keep the opened message and reply target when background sorting moves mail to another category.
+- Replace cached Gmail metadata reads with unread-ID lists, skip cached IMAP body downloads, and bound Gmail read and token-refresh waits.
+- Add Retry connection in Settings using encrypted saved credentials. Duplicate requests share account work; a failed account can retry while another account syncs.
+- Report fixed sync error categories and safe failure details. Contain IMAP transport errors, reject incomplete mailbox listings before archiving cached mail, and keep cleanup warnings separate from the sync outcome.
+- Skip unchanged mail writes, commit changed batches in one transaction, and coalesce renderer refreshes. Keep fresh Gmail batches visible while later downloads run, including a final refresh queued during a failed read.
+- Keep AI sorting limited to committed mail after a batch rollback and classify IMAP connection/greeting timeouts and closed connections as transient failures.
+- Make the background AI-failure regression wait for sync completion without starting another sync that can clear the expected warning.
 - Add contributor coordination guidance and issue templates to reduce duplicate and overlapping work.
 - Keep uncertain sends as "Send status unknown" with the draft and a possible-delivery warning. Require duplicate-risk confirmation before sending again, including keyboard submission, and retain uncertainty through draft edits.
 - Keep the native application-close prompt neutral about whether a draft was sent.
