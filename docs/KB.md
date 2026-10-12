@@ -17,6 +17,23 @@ Right-click mail rows or opened messages to use Mark as read without opening the
 
 ## Desktop targets
 
+### Protected mail keys on macOS
+
+Electron selects its macOS Keychain item from the application name before
+startup. Moving `Local State` preserves Windows protection but does not carry
+the old macOS `Aggregate Mail` identity into `Emc²`. The desktop startup path
+keeps the Emc² profile location, tries its current identity and permits one
+legacy-identity relaunch for an unconfirmed existing key. It validates the
+decrypted 32-byte key before opening the mail service. Successful decryption
+records the identity with the protected-file digest for later starts. An
+unreadable or missing key stops startup without replacing encrypted data.
+
+Use `--user-data-dir=<nonempty path>` before `--` for isolated checks. Explicit
+profiles skip both saved-profile migration and development `.data` imports;
+invalid profile switches stop before the default profile is accessed. The
+startup regression tests use synthetic profiles and do not establish access
+to a user's saved Keychain item. See [ADR 0015](adr/0015-macos-keychain-identity.md).
+
 Emc² shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
 
 The macOS source-installation route uses `npm run package:mac:dir` on the target
@@ -204,7 +221,6 @@ Run `npm test` and `npm run build` before packaging. The desktop startup check o
 
 ```sh
 check_dir=$(mktemp -d)
-touch "$check_dir/.renamed-to-emc2"
 npm run check:desktop -- --user-data-dir="$check_dir"
 ```
 
@@ -213,14 +229,13 @@ For a packaged Apple silicon build, use the logged-in macOS desktop session. Qui
 ```sh
 check_dir=$(mktemp -d)
 mkdir "$check_dir/profile"
-touch "$check_dir/profile/.renamed-to-emc2"
 open -n -W "release/mac-arm64/Emc².app" \
   --stdout "$check_dir/stdout.log" --stderr "$check_dir/stderr.log" \
   --args --check-startup --user-data-dir="$check_dir/profile"
 cat "$check_dir/stdout.log" "$check_dir/stderr.log"
 ```
 
-Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. Intel builds use `release/mac/`. The temporary profile's `.renamed-to-emc2` marker prevents legacy migration from moving saved accounts into the check. Verify the packaged app with `codesign --verify --deep --strict --verbose=2 "release/mac-arm64/Emc².app"` before startup. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
+Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. Intel builds use `release/mac/`. The explicit profile argument prevents migration or import of saved accounts into the check. Verify the packaged app with `codesign --verify --deep --strict --verbose=2 "release/mac-arm64/Emc².app"` before startup. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
 
 The repository has no `scripts/documentation.py`; documentation checks currently require link and diff review.
 

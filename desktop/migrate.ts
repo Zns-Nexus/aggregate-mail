@@ -4,7 +4,7 @@ import path from "node:path";
 export const LEGACY_APP_NAME = "Aggregate Mail";
 export const MIGRATION_MARKER = ".renamed-to-emc2";
 
-// Local State holds the key that decrypts mail/key.protected.
+// Windows DPAPI protection needs Local State; macOS uses a named Keychain item.
 const CARRIED_ENTRIES = ["mail", "settings.env", "Local State"] as const;
 
 export type MigrationResult =

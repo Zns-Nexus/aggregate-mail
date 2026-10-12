@@ -37,7 +37,7 @@ test("carries mail and settings into the renamed folder and leaves the old one b
     });
     assert.equal(existsSync(path.join(target, "mail", "mail.sqlite")), true);
     assert.equal(existsSync(path.join(target, "settings.env")), true);
-    // Without Local State the moved mail/key.protected cannot be decrypted.
+    // Windows needs Local State alongside the protected key.
     assert.equal(existsSync(path.join(target, "Local State")), true);
     assert.equal(existsSync(path.join(target, MIGRATION_MARKER)), true);
     assert.equal(existsSync(path.join(legacy, "mail")), false);

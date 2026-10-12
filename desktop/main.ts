@@ -8,7 +8,8 @@ import {
   session,
   shell,
 } from "electron";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -20,14 +21,52 @@ import { DatabaseSync, backup } from "node:sqlite";
 import path from "node:path";
 import type { Server } from "node:http";
 import { isExternalLink, isLocalNavigation } from "./navigation.js";
-import { migrateLegacyUserData } from "./migrate.js";
+import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
 
 app.setName("Emc²");
 app.setAppUserModelId("dev.screen.aggregate-mail");
-migrateLegacyUserData({
-  appData: app.getPath("appData"),
-  target: app.getPath("userData"),
-});
+const isMac = process.platform === "darwin";
+const explicitProfile = process.argv.some(
+  (arg) => arg === "--user-data-dir" || arg.startsWith("--user-data-dir="),
+);
+if (
+  explicitProfile &&
+  (process.argv.some(
+    (arg) => arg === "--user-data-dir" ||
+      (arg.startsWith("--user-data-dir=") && !arg.slice("--user-data-dir=".length).trim()),
+  ) || !app.commandLine.getSwitchValue("user-data-dir").trim())
+) {
+  console.error("Use --user-data-dir=<nonempty path> before --. The mail store was not opened.");
+  app.exit(1);
+}
+const dataPath = app.getPath("userData");
+const mailPath = path.join(dataPath, "mail");
+const protectedKey = path.join(mailPath, "key.protected");
+const identityPath = path.join(mailPath, "keychain-identity.json");
+const retryFlag = "--emc2-legacy-keychain-retry";
+const retried = process.argv.includes(retryFlag);
+let keychainName = "Emc²";
+let confirmedIdentity = false;
+if (isMac && existsSync(protectedKey)) {
+  try {
+    const saved = JSON.parse(readFileSync(identityPath, "utf8"));
+    if (
+      (saved.name === "Emc²" || saved.name === LEGACY_APP_NAME) &&
+      saved.protectedKeySha256 === createHash("sha256").update(readFileSync(protectedKey)).digest("hex")
+    ) {
+      keychainName = saved.name;
+      confirmedIdentity = true;
+    }
+  } catch {
+    // Missing or stale metadata cannot establish the protected key's identity.
+  }
+  if (retried) keychainName = LEGACY_APP_NAME;
+}
+if (isMac && keychainName === LEGACY_APP_NAME) {
+  // Electron captures this name before ready; keep storage at the Emc² path.
+  app.setName(keychainName);
+  app.setPath("userData", dataPath);
+}
 let window: BrowserWindow | null = null;
 let server: Server | undefined;
 const origin = "http://127.0.0.1:32145";
@@ -35,10 +74,11 @@ const developing = !app.isPackaged && process.argv.includes("--dev");
 const rendererOrigin = developing ? "http://127.0.0.1:5173" : origin;
 const token = randomBytes(32).toString("hex");
 const checking = process.argv.includes("--check-startup");
-const isMac = process.platform === "darwin";
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  if (!explicitProfile)
+    migrateLegacyUserData({ appData: app.getPath("appData"), target: dataPath });
   app.on("second-instance", () => {
     if (window?.isMinimized()) window.restore();
     window?.focus();
@@ -55,6 +95,7 @@ else {
   app
     .whenReady()
     .then(async () => {
+      app.setName("Emc²");
       Menu.setApplicationMenu(
         isMac
           ? Menu.buildFromTemplate([
@@ -65,18 +106,18 @@ else {
             ])
           : null,
       );
-      const dataPath = app.getPath("userData");
-      const mailPath = path.join(dataPath, "mail");
       mkdirSync(mailPath, { recursive: true });
-      const protectedKey = path.join(mailPath, "key.protected");
       if (!safeStorage.isEncryptionAvailable())
         throw new Error(
           "System credential encryption is unavailable. Your mail store was not opened.",
         );
+      if (isMac && retried && !existsSync(protectedKey))
+        throw new Error("The protected mail key is missing. Your mail store was not opened.");
       // Preserve the earlier client's data without moving or deleting its source files.
       let legacyKey: Buffer | undefined;
       if (
         !app.isPackaged &&
+        !explicitProfile &&
         !existsSync(path.join(mailPath, "mail.sqlite")) &&
         existsSync(path.resolve(".data/key"))
       ) {
@@ -99,11 +140,47 @@ else {
           source.close();
         }
       }
-      const key = existsSync(protectedKey)
-        ? safeStorage.decryptString(readFileSync(protectedKey))
-        : (legacyKey || randomBytes(32)).toString("base64");
+      let key: string;
+      if (existsSync(protectedKey)) {
+        const bytes = readFileSync(protectedKey);
+        try {
+          key = safeStorage.decryptString(bytes);
+          const decoded = Buffer.from(key, "base64");
+          if (decoded.length !== 32 || decoded.toString("base64") !== key)
+            throw new Error("The protected mail key is invalid. Your mail store was not opened.");
+        } catch (error) {
+          if (!isMac || retried || confirmedIdentity || keychainName !== "Emc²") throw error;
+          const args = process.argv.slice(1);
+          const separator = args.indexOf("--");
+          args.splice(separator < 0 ? args.length : separator, 0, `--user-data-dir=${dataPath}`, retryFlag);
+          app.releaseSingleInstanceLock();
+          if (checking) {
+            console.log(JSON.stringify({ startup: "retrying-legacy-keychain" }));
+            // Keep check logs and final exit status attached to the original invocation.
+            const child = spawn(process.execPath, args, { stdio: "inherit" });
+            child.on("error", () => app.exit(1));
+            child.on("close", (code) => app.exit(code ?? 1));
+          } else {
+            app.relaunch({ args });
+            app.exit(0);
+          }
+          return;
+        }
+      } else {
+        if (existsSync(path.join(mailPath, "mail.sqlite")))
+          throw new Error("The protected mail key is missing. Your mail store was not opened.");
+        key = (legacyKey || randomBytes(32)).toString("base64");
+      }
       if (!existsSync(protectedKey))
         writeFileSync(protectedKey, safeStorage.encryptString(key));
+      if (isMac && !confirmedIdentity) {
+        const metadata = JSON.stringify({
+          name: keychainName,
+          protectedKeySha256: createHash("sha256").update(readFileSync(protectedKey)).digest("hex"),
+        });
+        writeFileSync(`${identityPath}.tmp`, metadata, { mode: 0o600 });
+        renameSync(`${identityPath}.tmp`, identityPath);
+      }
       process.env.MAIL_DATA_DIR = mailPath;
       process.env.MAIL_DATA_KEY = key;
       process.env.MAIL_CONFIG_PATH = path.join(dataPath, "settings.env");
