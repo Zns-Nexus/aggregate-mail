@@ -17,6 +17,21 @@ Right-click mail rows or opened messages to use Mark as read without opening the
 
 ## Desktop targets
 
+### Background running and notifications
+
+The desktop window hides to a tray icon when it is closed; the app, its mail
+service and its five-minute main-process sync keep running, and only the tray's
+Quit item, a system session end or an application quit ends the process. The
+tray reopens the window, and a second launch restores it.
+
+`startServer` accepts an `onNewMail` callback and the server emits `new-mail`
+with the number of new unread messages found by a completed sync run. The
+desktop main process turns that into one native notification, which reopens the
+window when clicked. The first sync of a mailbox, which imports the cache, and
+a sync that failed for an account report no arrivals. `StoredAccount.hasSynced`
+records the first successful sync for that decision. See
+[ADR 0016](adr/0016-background-running-and-notifications.md).
+
 ### Protected mail keys on macOS
 
 Electron selects its macOS Keychain item from the application name before
@@ -217,7 +232,7 @@ latency, native UI behavior, deployment or release readiness.
 
 ### Desktop startup
 
-Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access and checks native menu roles on macOS. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
+Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access, checks native menu roles on macOS and closes the window to confirm the tray and the hidden service survive. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
 
 ```sh
 check_dir=$(mktemp -d)

@@ -57,7 +57,7 @@ Do not remove quarantine or disable Gatekeeper to make a build launch. If signat
 
 For local DMG and ZIP output, `npm run package:mac` uses the same signing hook. Local packaging never publishes downloads. Public binary distribution with a verified publisher still requires Developer ID signing and notarization by an authorized Apple team. The version-tag release workflow remains unchanged.
 
-The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
+The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window hides the app to the tray on both platforms: it keeps syncing and shows a notification for new unread mail, and Quit in the tray menu exits. Unsent drafts still require confirmation.
 
 ## Connect an account
 
@@ -198,7 +198,7 @@ Developer OAuth settings and any optional Jev or OpenAI key are stored in the ap
 
 The first development launch copies the earlier `.data` database using SQLite's backup API and preserves the original files. Packaged and development desktop builds share the app-data folder. `.data` and `.env` remain available to the earlier browser development target.
 
-This is a single-user desktop client. Its mail service runs while its window is open and stops when you quit. This version has no tray service, automatic updater or public-hosting configuration.
+This is a single-user desktop client. Its mail service runs while its window is open or hidden in the tray and stops when you quit. This version has no automatic updater or public-hosting configuration.
 
 ## Development
 
@@ -209,7 +209,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` launches the desktop app with React Fast Refresh and live CSS updates. Close the app to stop its development server. Restart this command after changing desktop or backend code. UI changes that require a full reload can reset an unsent draft. OAuth keeps the callback address above in development. `npm start` opens the last production build, created with `npm run build`. `npm run package` creates the Windows installer. `npm run check:desktop` checks production startup, database access and API isolation without driving the UI; `npm run dev -- --check-startup` also checks the hot reload client and development API proxy. `npm run dev:web` retains the earlier browser development target; it is not needed to use the app.
+`npm run dev` launches the desktop app with React Fast Refresh and live CSS updates. Choose Quit in the tray menu to stop its development server. Restart this command after changing desktop or backend code. UI changes that require a full reload can reset an unsent draft. OAuth keeps the callback address above in development. `npm start` opens the last production build, created with `npm run build`. `npm run package` creates the Windows installer. `npm run check:desktop` checks production startup, database access and API isolation without driving the UI; `npm run dev -- --check-startup` also checks the hot reload client and development API proxy. `npm run dev:web` retains the earlier browser development target; it is not needed to use the app.
 
 ## CI
 

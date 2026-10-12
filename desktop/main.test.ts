@@ -83,9 +83,38 @@ await build({
         export const session = { fromPartition() { return {
           webRequest: { onBeforeSendHeaders() {} }, setPermissionRequestHandler() {}, setPermissionCheckHandler() {}
         }; }};
+        export class Tray {
+          destroyed = false;
+          setToolTip() {} setContextMenu() {} on() {}
+          isDestroyed() { return this.destroyed; }
+          destroy() { this.destroyed = true; }
+        }
+        export class Notification {
+          static isSupported() { return true; }
+          constructor(options) { this.options = options; }
+          on() {} show() {}
+        }
         export class BrowserWindow {
+          destroyed = false; visible = false; handlers = new Map();
           webContents = { setWindowOpenHandler() {}, on() {}, once() {} };
-          on() {} once() {} async loadURL() {} isVisible() { return false; }
+          on(event, handler) {
+            this.handlers.set(event, [...(this.handlers.get(event) || []), handler]);
+          }
+          once() {} async loadURL() {}
+          isVisible() { return this.visible; }
+          isDestroyed() { return this.destroyed; }
+          isMinimized() { return false; }
+          isMaximized() { return false; }
+          show() { this.visible = true; }
+          hide() { this.visible = false; }
+          focus() {} restore() {} minimize() {} maximize() {} unmaximize() {}
+          close() {
+            let prevented = false;
+            for (const handler of this.handlers.get('close') || [])
+              handler({ preventDefault() { prevented = true; } });
+            if (prevented) return;
+            this.destroyed = true; this.visible = false;
+          }
         }
         globalThis.fetch = async (_url, options) => ({ ok: !!options, status: options ? 200 : 403 });
       ` : `
@@ -105,6 +134,7 @@ await build({
           console.log('backend: opened');
           return { close() {} };
         }
+        export async function syncMail() { return { errors: [] }; }
       `,
     }));
   }}],
@@ -145,6 +175,7 @@ function preserved(profile: string, saved: ReturnType<typeof fixture>) {
 function passed(result: ReturnType<typeof launch>, retries: number) {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /"startup":"passed"/);
+  assert.match(result.stdout, /"backgroundClose":true/);
   assert.match(result.stdout, /backend: opened/);
   assert.equal((result.stdout.match(/"startup":"retrying-legacy-keychain"/g) || []).length, retries);
 }

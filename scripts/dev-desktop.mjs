@@ -23,7 +23,7 @@ try {
   const stop = () => child.kill();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  console.log("Desktop hot reload ready. Close the app to stop development.");
+  console.log("Desktop hot reload ready. Choose Quit in the tray menu to stop development.");
   process.exitCode = await new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code ?? 1));

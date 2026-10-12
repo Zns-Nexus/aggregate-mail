@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Close the desktop window to the tray instead of exiting, keep the mail service and a five-minute sync running while it is hidden, and show one native notification for the new unread mail a sync finds. Reopen from the tray, its menu or a second launch, and quit from the tray. Fields and selected text keep a native right-click menu.
+
 - Preserve macOS Keychain identity for existing protected mail keys, with one bounded legacy retry and no replacement of unreadable keys. Keep explicit startup-check profiles isolated from saved accounts.
 
 - Match formatted email text, backgrounds, borders and links to the app's dark theme while preserving sender layout, emphasis and image controls.

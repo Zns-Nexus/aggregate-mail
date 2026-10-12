@@ -46,6 +46,7 @@ type Records = {
   mcp: McpSettings;
 };
 export type StoredAccount = Account & {
+  hasSynced?: boolean;
   credentials: {
     refreshToken?: string;
     password?: string;

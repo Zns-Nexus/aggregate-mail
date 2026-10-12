@@ -4,9 +4,11 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   safeStorage,
   session,
   shell,
+  Tray,
 } from "electron";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -20,6 +22,7 @@ import {
 import { DatabaseSync, backup } from "node:sqlite";
 import path from "node:path";
 import type { Server } from "node:http";
+import { editingMenu } from "./context-menu.js";
 import { isExternalLink, isLocalNavigation } from "./navigation.js";
 import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
 
@@ -69,20 +72,26 @@ if (isMac && keychainName === LEGACY_APP_NAME) {
 }
 let window: BrowserWindow | null = null;
 let server: Server | undefined;
+let tray: Tray | undefined;
+let syncTimer: ReturnType<typeof setInterval> | undefined;
+let quitting = false;
 const origin = "http://127.0.0.1:32145";
 const developing = !app.isPackaged && process.argv.includes("--dev");
 const rendererOrigin = developing ? "http://127.0.0.1:5173" : origin;
 const token = randomBytes(32).toString("hex");
 const checking = process.argv.includes("--check-startup");
+const showWindow = () => {
+  if (window?.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
+};
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   if (!explicitProfile)
     migrateLegacyUserData({ appData: app.getPath("appData"), target: dataPath });
-  app.on("second-instance", () => {
-    if (window?.isMinimized()) window.restore();
-    window?.focus();
-  });
+  app.on("second-instance", showWindow);
+  app.on("activate", showWindow);
   // The window is frameless outside macOS, so the renderer's traffic lights ask
   // for these instead of the native caption buttons.
   ipcMain.on("window-command", (_event, command: string) => {
@@ -195,11 +204,21 @@ else {
         32145,
         (error) => {
           window?.webContents.send("account-connected", error || null);
-          if (window?.isMinimized()) window.restore();
-          window?.show();
-          window?.focus();
+          showWindow();
         },
         () => window?.webContents.send("mail-changed"),
+        (count) => {
+          if (checking || !Notification.isSupported()) return;
+          const notification = new Notification({
+            title: "Emc²",
+            body: `${count} new unread ${count === 1 ? "email" : "emails"}`,
+          });
+          notification.on("click", showWindow);
+          notification.on("failed", (_event, error) =>
+            console.error("Mail notification failed:", error),
+          );
+          notification.show();
+        },
       );
       const localSession = session.fromPartition("persist:aggregate");
       localSession.webRequest.onBeforeSendHeaders(
@@ -238,11 +257,35 @@ else {
           session: localSession,
         },
       });
+      tray = new Tray(path.join(app.getAppPath(), "build/icon.png"));
+      tray.setToolTip("Emc²");
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          { label: "Open Emc²", click: showWindow },
+          { type: "separator" },
+          { label: "Quit", click: () => app.quit() },
+        ]),
+      );
+      tray.on("click", showWindow);
+      // Closing the window leaves the app, its mail service and its sync
+      // running; only Quit in the tray menu or the system session ends it.
+      window.on("close", (event) => {
+        if (quitting) return;
+        event.preventDefault();
+        window?.hide();
+      });
+      window.on("session-end", () => {
+        quitting = true;
+      });
       // A maximized window fills the screen, so its corners square off.
       const reportWindowState = () =>
         window?.webContents.send("window-state", !!window?.isMaximized());
       window.on("maximize", reportWindowState);
       window.on("unmaximize", reportWindowState);
+      window.webContents.on("context-menu", (_event, params) => {
+        const items = editingMenu(params);
+        if (items.length && window) Menu.buildFromTemplate(items).popup({ window });
+      });
       window.on("app-command", (_event, command) => {
         if (command === "browser-backward" || command === "browser-forward")
           window?.webContents.send("mail-navigation", command === "browser-backward" ? "back" : "forward");
@@ -257,8 +300,9 @@ else {
         if (isExternalLink(url, origin)) void shell.openExternal(url);
       });
       window.webContents.on("will-prevent-unload", (event) => {
+        if (!window) return;
+        showWindow();
         if (
-          window &&
           dialog.showMessageBoxSync(window, {
             type: "question",
             buttons: ["Keep editing", "Discard draft"],
@@ -268,6 +312,7 @@ else {
           }) === 1
         )
           event.preventDefault();
+        else quitting = false;
       });
       // Entrance animations start at opacity 0 and a hidden window never runs
       // them, so ready-to-show alone can wait forever for a visible paint.
@@ -277,6 +322,17 @@ else {
       window.once("ready-to-show", reveal);
       window.webContents.once("did-finish-load", reveal);
       await window.loadURL(rendererOrigin);
+      if (!checking) {
+        // A main-process timer keeps mail current while the window is hidden
+        // and the renderer has no reason to paint.
+        syncTimer = setInterval(() => {
+          void backend.syncMail()
+            .then(({ errors }) => {
+              for (const error of errors) console.error(error);
+            })
+            .catch((error: unknown) => console.error(error));
+        }, 300000);
+      }
       if (checking) {
         if (isMac) {
           const roles = Menu.getApplicationMenu()?.items.flatMap((item) =>
@@ -307,6 +363,10 @@ else {
           if (blockedProxy.status !== 403)
             throw new Error("Development API isolation failed.");
         }
+        // Closing the window must leave the app and its tray in place.
+        window.close();
+        if (window.isDestroyed() || window.isVisible() || !tray || tray.isDestroyed())
+          throw new Error("Closing the window did not preserve the background app.");
         console.log(
           JSON.stringify({
             startup: "passed",
@@ -316,6 +376,7 @@ else {
             renderer: "loaded",
             hotReload: developing,
             isolatedApi: true,
+            backgroundClose: true,
             platform: process.platform,
             nativeMenu: isMac,
           }),
@@ -336,5 +397,12 @@ else {
       app.quit();
     });
   app.on("window-all-closed", () => app.quit());
-  app.on("will-quit", () => server?.close());
+  app.on("before-quit", () => {
+    quitting = true;
+  });
+  app.on("will-quit", () => {
+    clearInterval(syncTimer);
+    tray?.destroy();
+    server?.close();
+  });
 }

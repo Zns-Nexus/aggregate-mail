@@ -2169,7 +2169,9 @@ export function SettingsPage({
           </h1>
           <p className="note">
             Mail is stored encrypted on this computer and syncs every five
-            minutes while the app is open. Done archives mail in your provider
+            minutes while the app is running. Closing the desktop window keeps it
+            running in the tray; use Quit in the tray menu to exit. New unread
+            mail shows a desktop notification. Done archives mail in your provider
             mailbox. Snooze is local to this client. Disconnect removes the
             local account and cache without changing your mailbox.
           </p>
