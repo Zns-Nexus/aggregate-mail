@@ -18,8 +18,8 @@ environment instructions. This file grants no release or credential authority.
 
 ## Project map
 
-Emc² is a single-user Electron email client for Windows with an
-unsigned macOS build target. It uses React, strict TypeScript, Vite, a bundled
+Emc² is a single-user Electron email client for Windows with a macOS build
+target using local ad-hoc signatures. It uses React, strict TypeScript, Vite, a bundled
 Express mail service and encrypted SQLite storage. The installed application
 does not need a separate browser, terminal or Node installation.
 
@@ -48,7 +48,9 @@ does not need a separate browser, terminal or Node installation.
   address hiding and reduced-motion behavior in DESIGN.md.
 - Keep attachments, rich-text composition, tray services, auto-updates and
   Cloudflare mailbox creation outside a task unless explicitly requested.
-- Preserve Windows packaging and unsigned macOS packaging. Signing,
+- Preserve Windows packaging and the approved local ad-hoc macOS signing and
+  source installation in [ADR 0011](docs/adr/0011-macos-source-installation.md).
+  Developer-certificate signing,
   notarization, release workflow changes and publishing require separate scope.
 
 ## Mail and privacy safeguards

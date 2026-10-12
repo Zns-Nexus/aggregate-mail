@@ -67,6 +67,7 @@
       "!**/{.data,.handoff,.ssh,.aws}/**"
     ],
     "asar": true,
+    "afterPack": "scripts/sign-mac.cjs",
     "mac": {
       "category": "public.app-category.productivity",
       "target": [

@@ -10,16 +10,50 @@ To build it yourself instead, run `npm run package` and open the installer it wr
 
 ### macOS
 
-Build on a Mac with Node 24 or newer:
+Build Emc² from source on the Mac that will run it. This route requires no
+Apple Developer account or signing certificate. Install [Node.js](https://nodejs.org/en/download)
+24 or newer with npm, then install Apple's Command Line Tools if needed:
 
 ```sh
-npm ci
-npm run package:mac
+xcode-select --install
 ```
 
-The command creates `release/Emc²-0.1.4-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Emc² to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
+Clone the source with Git, install the locked dependencies and build the app:
 
-These packages are unsigned and not notarized. Packaging explicitly skips signing, certificate discovery, and notarization. Gatekeeper may block downloaded copies; a local startup check does not prove downloaded-app acceptance. Local packaging does not publish downloads. The version-tag release workflow publishes both macOS architectures alongside Windows and Linux.
+```sh
+git clone https://github.com/Zns-Nexus/aggregate-mail.git
+cd aggregate-mail
+npm ci
+npm run package:mac:dir
+```
+
+On Apple silicon, the app is `release/mac-arm64/Emc².app`; on Intel, it is
+`release/mac/Emc².app`. The command builds for the current Mac's architecture.
+Check the finished signature before opening the app in Finder:
+
+```sh
+# Apple silicon; use release/mac on Intel.
+codesign --verify --deep --strict --verbose=2 "release/mac-arm64/Emc².app"
+open "release/mac-arm64"
+```
+
+You can drag the app to your user Applications folder for later launches. Quit
+an existing copy first and keep it until the new build works. Replacing an app
+does not require deleting its saved accounts or mail. Node and build tools are
+needed to compile; the finished app includes its runtime.
+
+The packaging hook signs explicitly ad hoc and skips certificate and
+provisioning-profile discovery. Build and run the app locally; copying it to
+another Mac creates a separate downloaded-app trust question. The existing
+GitHub macOS binaries are unnotarized, and the published 0.1.4 arm64 app has
+invalid signatures. Use the source route instead. Do not remove quarantine or
+disable Gatekeeper to make a build launch. If signature verification or startup
+fails, stop and report the error. See [the source-installation decision](docs/adr/0011-macos-source-installation.md).
+
+For local DMG and ZIP output, `npm run package:mac` uses the same signing hook.
+Local packaging never publishes downloads. Public binary distribution with a
+verified publisher still requires Developer ID signing and notarization by an
+authorized Apple team. The version-tag release workflow remains unchanged.
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 

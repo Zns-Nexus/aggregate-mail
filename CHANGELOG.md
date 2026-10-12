@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a macOS source-installation route with Git, Node and Xcode Command Line Tools, requiring no Apple Developer account. Replace invalid inherited signatures through explicit local ad-hoc signing without certificate or provisioning-profile discovery. Keep notarization, DMG signing and existing public release assets unchanged.
+
 - Hide a sender avatar initial when it is a known private name component, while keeping ordinary company initials visible.
 
 - Hide known recipient names in Gmail label controls, including single-letter Unicode name components and encoded destinations. Close Interaction settings with Escape from a focused shortcut field.

@@ -120,10 +120,14 @@ on live browser tests in PRODUCT.md.
 ## Package locally
 
 `npm run package` creates the Windows NSIS installer. On a Mac,
-`npm run package:mac` creates unsigned DMG and ZIP files, and
-`npm run package:mac:dir` creates the app bundle only. Output goes to `release/`.
+`npm run package:mac` creates DMG and ZIP files with a locally ad-hoc-signed app.
+`npm run package:mac:dir` is the source-installation route and creates the app
+bundle only. Both use `scripts/sign-mac.cjs` with explicit ad-hoc identity and
+no certificate or provisioning-profile discovery. Install Xcode Command Line
+Tools before building on macOS. Output goes to `release/`.
 See [README.md](README.md) for architecture selection and installation limits,
-and [ADR 0001](docs/adr/0001-unsigned-macos-packaging.md) for the signing decision.
+and [ADR 0011](docs/adr/0011-macos-source-installation.md) for the source route and
+signing decision.
 
 Packaging does not publish a release. Release tags, the release script and
 workflow dispatch can publish artifacts; use them only within explicit release
