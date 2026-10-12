@@ -470,6 +470,8 @@ function Avatar({
 }) {
   const domain = logoDomain(mail.address);
   const [broken, setBroken] = useState(false);
+  const { on, names } = useContext(PrivacyContext);
+  const initial = mail.sender.slice(0, 1).toUpperCase();
   return (
     <span className={large ? "avatar large" : "avatar"} aria-hidden="true">
       {domain && !broken ? (
@@ -483,7 +485,7 @@ function Avatar({
         />
       ) : (
         <span className="avatar-letter">
-          {mail.sender.slice(0, 1).toUpperCase()}
+          {on && redactPrivateText(initial, names) !== initial ? "·" : initial}
         </span>
       )}
       {provider && <ProviderIcon provider={provider} />}

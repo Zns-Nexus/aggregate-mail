@@ -381,14 +381,17 @@ for (const target of ["filter", "editor"]) {
 test("privacy hides one-character recipient names and encoded destinations in mounted mail", async () => {
   const app = await mount(false, (state, storage) => {
     storage.setItem("privacy", "on");
-    state.messages[0] = { ...state.messages[0], to: "张 文 <first@example.com>",
+    state.accounts[0].email = "reader@gmail.com";
+    state.messages[0] = { ...state.messages[0], sender: "张 文", address: "reader@gmail.com", to: "张 文 <reader@gmail.com>",
       subject: "For 张", preview: "Hello 文", body: "Hello 张 and 文", reason: "Priority for 文",
       html: '<p>Hello <b>张</b> and 文 <a href="https://example.com/?name=%E5%BC%A0">Private destination</a> <a href="https://example.com/public">Public destination</a></p>' };
   });
   try {
     const assertHidden = () => {
-      for (const value of ["张", "文", "first@example.com", "%E5%BC%A0"])
+      for (const value of ["张", "文", "reader@gmail.com", "%E5%BC%A0"])
         assert.ok(!app.container.innerHTML.includes(value), `hidden ${value} must not be in markup`);
+      assert.equal(app.container.querySelector('[id="mail-a:1"] .avatar-letter')?.textContent ||
+        app.container.querySelector('.message .avatar-letter')?.textContent, "·");
     };
     assertHidden();
     await app.open("a:1");
@@ -398,6 +401,7 @@ test("privacy hides one-character recipient names and encoded destinations in mo
     await app.click(app.button("Show personal information"));
     assert.ok(app.container.textContent?.includes("张"));
     assert.ok(app.container.textContent?.includes("文"));
+    assert.equal(app.container.querySelector('.message .avatar-letter')?.textContent, "张");
     assert.ok(app.container.querySelector('a[href="https://example.com/?name=%E5%BC%A0"]'));
     await app.key("p");
     assertHidden();
