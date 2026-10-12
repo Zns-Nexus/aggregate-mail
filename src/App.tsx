@@ -879,6 +879,11 @@ export function App() {
     const handler = (event: KeyboardEvent) => {
       if (contextMenu || event.defaultPrevented || event.isComposing || event.repeat) return;
       const target = event.target;
+      if (settings && target instanceof HTMLElement && target.closest("[data-interaction-settings]") &&
+        event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+        !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
+        event.preventDefault(); setSettings(false); return;
+      }
       if (target instanceof HTMLElement && (target.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       const nextDensity = densityShortcut(event);
@@ -1113,7 +1118,7 @@ export function App() {
                     ...labels.map((label) => {
                       const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
                       const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
-                      return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts)) : name };
+                      return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name };
                     }),
                   ]}
                   onChange={(value) => {
@@ -1460,6 +1465,7 @@ export function App() {
           />
         )}
         {labelMail && (
+          <MailPrivacy mail={labelMail}>
           <Dialog title="Gmail labels" onClose={() => { if (!busy) setLabelMail(null); }}>
             <LabelForm
               key={labelMail.id}
@@ -1472,6 +1478,7 @@ export function App() {
               }, "Labels updated.")}
             />
           </Dialog>
+          </MailPrivacy>
         )}
         {connecting === "choose" ? (
           <Dialog title="Connect account" onClose={() => setConnecting(null)}>

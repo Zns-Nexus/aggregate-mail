@@ -71,7 +71,7 @@ export function collectPrivateNames(
   // Greetings often use only the first name or surname from the same recipient.
   for (const name of [...names.values()]) {
     for (const part of name.split(/[\s,]+/u)) {
-      if (/^\p{L}[\p{L}\p{M}’'-]+$/u.test(part) && !/^(mr|mrs|ms|mx|dr)$/i.test(part))
+      if (/^\p{L}[\p{L}\p{M}’'-]*$/u.test(part) && !/^(mr|mrs|ms|mx|dr)$/i.test(part))
         names.set(part.toLowerCase(), part);
     }
   }

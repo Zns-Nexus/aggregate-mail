@@ -29,6 +29,17 @@ test("handles bare addresses, unquoted surname commas, folded whitespace and ded
   }), ["NORA LANE", "Lane, Nora", "Kai Rivers", "Nora", "Lane", "Kai", "Rivers"]);
 });
 
+test("hides one-character connected recipient names and their encoded destinations", () => {
+  const names = collectPrivateNames([{ email: "reader@example.com" }], {
+    to: "张 文 <reader@example.com>",
+  });
+  assert.deepEqual(names, ["张 文", "张", "文"]);
+  assert.equal(redactPrivateText("Hi 张; 文. 张文 stays public.", names),
+    "Hi ••••••••; ••••••••. 张文 stays public.");
+  assert.equal(redactPrivateText("https://example.com/?name=%E5%BC%A0", names),
+    "https://example.com/?name=••••••••");
+});
+
 test("masks whole Unicode phrases case-insensitively while preserving source offsets and punctuation", () => {
   const text = "(NORA\tLANE), ÉLODIE D’ARC; สมมติ ใจดี. Nora Laneway, xNora Lane, Nora Lane2.";
   const names = ["Nora Lane", "Élodie D’Arc", "สมมติ ใจดี"];

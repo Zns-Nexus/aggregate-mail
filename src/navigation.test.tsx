@@ -272,7 +272,28 @@ test("Settings persist opening mode and custom keys while single-click opens and
     assert.equal(app.container.querySelector('[aria-label="Search all synced mail"]'), null);
     const saved = JSON.parse(app.storage.getItem("emc2.interaction.v1")!);
     assert.equal(saved.opening, "single"); assert.equal(saved.shortcuts.search.key, "f");
-    await app.key("Escape");
+    const preferences = app.storage.getItem("emc2.interaction.v1");
+    assert.equal(app.window.document.activeElement, search);
+    for (const options of [{ ctrlKey: true }, { metaKey: true }, { altKey: true },
+      { shiftKey: true }, { isComposing: true }, { repeat: true }]) {
+      await act(async () => search.dispatchEvent(new app.window.KeyboardEvent("keydown", {
+        key: "Escape", bubbles: true, cancelable: true, ...options,
+      })));
+      assert.ok(app.container.querySelector(".settings"), "modified/repeated/composing Escape stays guarded");
+    }
+    const consumed = new app.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    consumed.preventDefault();
+    await act(async () => search.dispatchEvent(consumed));
+    assert.ok(app.container.querySelector(".settings"), "consumed Escape stays guarded");
+    await act(async () => search.dispatchEvent(new app.window.KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true, cancelable: true,
+    })));
+    assert.equal(app.container.querySelector(".settings"), null, "focused shortcut Escape closes Settings");
+    assert.equal(app.storage.getItem("emc2.interaction.v1"), preferences, "Escape does not change a binding");
+    assert.equal(app.title(), undefined);
+    assert.equal(app.mutations.length, 0, "Escape does not run a mail action");
+    assert.equal(app.container.querySelector('[role="dialog"]'), null);
+    assert.equal(app.container.querySelector('[aria-label="Search all synced mail"]'), null);
     const row = app.container.querySelector<HTMLElement>("[id='mail-a:1']")!;
     await act(async () => {
       row.dispatchEvent(new app.window.MouseEvent("click", { detail: 1, bubbles: true }));
@@ -322,6 +343,64 @@ test("privacy removes connected recipient names and addresses from list, headers
     assert.equal(app.container.querySelectorAll(".message-images figure").length, 0, "formatted images are not duplicated");
     await app.key("p");
     assertHidden(); assert.equal(app.container.querySelector(".message-body img"), null);
+  } finally { await app.close(); }
+});
+
+for (const target of ["filter", "editor"]) {
+  test(`privacy hides message-derived names and destinations in Gmail label ${target}`, async () => {
+    const app = await mount(false, (state, storage) => {
+      storage.setItem("privacy", "on");
+      state.accounts[0].provider = "gmail";
+      state.labels = [{ id: "private", accountId: "a", name: "Nora Lane", type: "user" }];
+      state.messages[0] = { ...state.messages[0], to: "Nora Lane <first@example.com>",
+        subject: "For Nora", preview: "Hello Lane", body: "Hello Nora Lane", labelIds: ["private"],
+        html: '<p>Hello Nora Lane <a href="https://example.com/?name=Nora%2520Lane">Private destination</a></p>' };
+    });
+    try {
+      await app.open("a:1");
+      assert.ok(app.container.querySelector(".message-labels .veiled"), "reader label is hidden");
+      const assertHidden = () => {
+        for (const value of ["Nora", "Lane", "first@example.com", "second@example.com", "%2520"])
+          assert.ok(!app.container.innerHTML.includes(value), `hidden ${value} must not be in markup`);
+      };
+      assertHidden();
+      await app.click(app.button(target === "filter" ? "Filter by Gmail label" : "Edit labels"));
+      assertHidden();
+      if (target === "filter") {
+        assert.equal(app.container.querySelectorAll('.label-filter [role="option"]').length, 2);
+      } else {
+        assert.ok(app.container.querySelector('[role="dialog"] .label-options .veiled'));
+        assert.equal(app.container.querySelector<HTMLInputElement>('.label-options input')?.checked, true);
+      }
+      assert.equal(app.container.querySelector(".message-body a"), null, "private destination has no anchor");
+      assert.equal(app.mutations.length, 1, "only read-on-open runs");
+    } finally { await app.close(); }
+  });
+}
+
+test("privacy hides one-character recipient names and encoded destinations in mounted mail", async () => {
+  const app = await mount(false, (state, storage) => {
+    storage.setItem("privacy", "on");
+    state.messages[0] = { ...state.messages[0], to: "张 文 <first@example.com>",
+      subject: "For 张", preview: "Hello 文", body: "Hello 张 and 文", reason: "Priority for 文",
+      html: '<p>Hello <b>张</b> and 文 <a href="https://example.com/?name=%E5%BC%A0">Private destination</a> <a href="https://example.com/public">Public destination</a></p>' };
+  });
+  try {
+    const assertHidden = () => {
+      for (const value of ["张", "文", "first@example.com", "%E5%BC%A0"])
+        assert.ok(!app.container.innerHTML.includes(value), `hidden ${value} must not be in markup`);
+    };
+    assertHidden();
+    await app.open("a:1");
+    assertHidden();
+    assert.equal(app.container.querySelectorAll(".message-body a").length, 1);
+    assert.equal(app.container.querySelector(".message-body a")?.getAttribute("href"), "https://example.com/public");
+    await app.click(app.button("Show personal information"));
+    assert.ok(app.container.textContent?.includes("张"));
+    assert.ok(app.container.textContent?.includes("文"));
+    assert.ok(app.container.querySelector('a[href="https://example.com/?name=%E5%BC%A0"]'));
+    await app.key("p");
+    assertHidden();
   } finally { await app.close(); }
 });
 

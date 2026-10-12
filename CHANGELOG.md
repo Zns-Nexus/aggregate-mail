@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Hide known recipient names in Gmail label controls, including single-letter Unicode name components and encoded destinations. Close Interaction settings with Escape from a focused shortcut field.
+
 - Integrate account setup, sync recovery, uncertain-send protection and reader navigation while preserving every original PR commit. Keep connection forms available during sync, context-menu Open working, and read-on-open active for history and Gmail IMAP All Mail.
 
 - Verify the exact archived IMAP Message-ID before marking mail read; reject missing or mismatched search candidates.
