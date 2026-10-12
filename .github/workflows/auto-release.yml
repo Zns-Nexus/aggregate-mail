@@ -1,0 +1,74 @@
+name: Auto release
+
+# Every push to main cuts a patch release: bump the version, tag it, build
+# every installer through the shared CI lane, and publish the GitHub release.
+# Pushes whose head commit already is a release (starting with "Release ")
+# are skipped so the version commit does not release again. Minor and major
+# releases stay manual: bump locally, then push a branch and tag.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: "!startsWith(github.event.head_commit.message, 'Release ')"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          npm version patch --no-git-tag-version
+          NEW="$(node -p "require('./package.json').version")"
+          git commit -am "Release ${NEW}"
+          git tag "v${NEW}"
+          git push origin HEAD:main "v${NEW}"
+          echo "tag=v${NEW}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.version.outputs.tag }}
+
+  publish:
+    if: startsWith(needs.version.outputs.tag, 'v')
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: installer-*
+          path: release
+          merge-multiple: true
+      - name: Publish the release
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum *.exe *.dmg *.AppImage > SHA256SUMS.txt
+          gh release create "${{ needs.version.outputs.tag }}" \
+            *.exe *.dmg *.AppImage SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "${{ needs.version.outputs.tag }}" \
+            --generate-notes

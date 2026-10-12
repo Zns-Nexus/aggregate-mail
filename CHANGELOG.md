@@ -61,6 +61,11 @@
 - Preserve confirmed send success when saving the Sent copy, closing its connection or refreshing the inbox fails. Treat an IMAP logout result of `false` as a cleanup warning.
 - Close the synthetic send-test database before deleting its temporary files so Windows cleanup can release the directory.
 
+## 0.1.5
+
+- Ship the background tray, native new-mail notifications, shortcut bar, context menus, brand logos and UI refresh with Windows, macOS and Linux installers.
+- Release every merged main push automatically as a patch version with published installers; minor and major releases stay manual.
+
 ## 0.1.4
 
 - Show total GitHub installer downloads across Windows, macOS and Linux on the showcase website, with a ten-minute cache and the last successful count retained during GitHub outages.
