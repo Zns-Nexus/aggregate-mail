@@ -2,6 +2,22 @@
 
 An installable desktop email client for Windows, with a macOS build target, based on Ryan Vogel's video. Electron with React and TypeScript, a bundled mail service, and encrypted SQLite storage. The installed app needs no browser, terminal, or separate Node installation.
 
+## Contents
+
+- [Install](#install)
+- [Connect an account](#connect-an-account)
+- [Jev sorting](#jev-sorting)
+- [Other providers](#other-providers)
+- [Inbox](#inbox)
+- [MCP](#mcp)
+- [Keyboard](#keyboard)
+- [Local storage](#local-storage)
+- [Development](#development)
+- [CI](#ci)
+- [Contributing](#contributing)
+- [Releasing](#releasing)
+- [Verification](#verification)
+
 ## Install
 
 Download the newest published Windows setup installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases). The next release is `0.1.4`, published as `Emc²-0.1.4-win-x64.exe`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
@@ -10,9 +26,7 @@ To build it yourself instead, run `npm run package` and open the installer it wr
 
 ### macOS
 
-Build Emc² from source on the Mac that will run it. This route requires no
-Apple Developer account or signing certificate. Install [Node.js](https://nodejs.org/en/download)
-24 or newer with npm, then install Apple's Command Line Tools if needed:
+Build Emc² from source on the Mac that will run it. This route requires no Apple Developer account or signing certificate. Install [Node.js](https://nodejs.org/en/download) 24 or newer with npm, then install Apple's Command Line Tools if needed:
 
 ```sh
 xcode-select --install
@@ -27,9 +41,7 @@ npm ci
 npm run package:mac:dir
 ```
 
-On Apple silicon, the app is `release/mac-arm64/Emc².app`; on Intel, it is
-`release/mac/Emc².app`. The command builds for the current Mac's architecture.
-Check the finished signature before opening the app in Finder:
+On Apple silicon, the app is `release/mac-arm64/Emc².app`; on Intel, it is `release/mac/Emc².app`. The command builds for the current Mac's architecture. Check the finished signature before opening the app in Finder:
 
 ```sh
 # Apple silicon; use release/mac on Intel.
@@ -37,55 +49,29 @@ codesign --verify --deep --strict --verbose=2 "release/mac-arm64/Emc².app"
 open "release/mac-arm64"
 ```
 
-You can drag the app to your user Applications folder for later launches. Quit
-an existing copy first and keep it until the new build works. Replacing an app
-does not require deleting its saved accounts or mail. Node and build tools are
-needed to compile; the finished app includes its runtime.
+You can drag the app to your user Applications folder for later launches. Quit an existing copy first and keep it until the new build works. Replacing an app does not require deleting its saved accounts or mail. Node and build tools are needed to compile; the finished app includes its runtime.
 
-The packaging hook signs explicitly ad hoc and skips certificate and
-provisioning-profile discovery. Build and run the app locally; copying it to
-another Mac creates a separate downloaded-app trust question. The existing
-GitHub macOS binaries are unnotarized, and the published 0.1.4 arm64 app has
-invalid signatures. Use the source route instead. Do not remove quarantine or
-disable Gatekeeper to make a build launch. If signature verification or startup
-fails, stop and report the error. See [the source-installation decision](docs/adr/0011-macos-source-installation.md).
+The packaging hook signs explicitly ad hoc and skips certificate and provisioning-profile discovery. Build and run the app locally. Copying it to another Mac creates a separate downloaded-app trust question. The existing GitHub macOS binaries are unnotarized, and the published 0.1.4 arm64 app has invalid signatures. Use the source route instead.
 
-For local DMG and ZIP output, `npm run package:mac` uses the same signing hook.
-Local packaging never publishes downloads. Public binary distribution with a
-verified publisher still requires Developer ID signing and notarization by an
-authorized Apple team. The version-tag release workflow remains unchanged.
+Do not remove quarantine or disable Gatekeeper to make a build launch. If signature verification or startup fails, stop and report the error. See [the source-installation decision](docs/adr/0011-macos-source-installation.md).
+
+For local DMG and ZIP output, `npm run package:mac` uses the same signing hook. Local packaging never publishes downloads. Public binary distribution with a verified publisher still requires Developer ID signing and notarization by an authorized Apple team. The version-tag release workflow remains unchanged.
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 
 ## Connect an account
 
-Select **Connect an account** in the empty inbox or add an account from Settings.
-Choose your provider. Known providers fill in the incoming and outgoing server
-settings; custom IMAP keeps those fields available.
+Select **Connect an account** in the empty inbox or add an account from Settings. Choose your provider. Known providers fill in the incoming and outgoing server settings; custom IMAP keeps those fields available.
 
-For Gmail and Google Workspace, use **Continue with Google** when Google OAuth
-is configured. Otherwise, the connection dialog offers an app-password option
-with a link to Google's account settings. Enter your email address and a
-dedicated [Google app password](https://support.google.com/accounts/answer/185833),
-not your normal Google password. This option needs no Google Cloud project.
-It requires 2-Step Verification and may be unavailable because of Workspace
-administrator policy, security-key-only verification or Advanced Protection.
-Google recommends OAuth when it is available.
+For Gmail and Google Workspace, use **Continue with Google** when Google OAuth is configured. Otherwise, the connection dialog offers an app-password option with a link to Google's account settings. Enter your email address and a dedicated [Google app password](https://support.google.com/accounts/answer/185833), not your normal Google password. This option needs no Google Cloud project. It requires 2-Step Verification and may be unavailable because of Workspace administrator policy, security-key-only verification or Advanced Protection. Google recommends OAuth when it is available.
 
-The app checks both incoming and outgoing access before saving an IMAP account.
-If a check fails, correct the connection form and retry. Account credentials
-stay in the encrypted local store. Gmail saves its own Sent copies; the
-app-password connection does not append another copy.
+The app checks both incoming and outgoing access before saving an IMAP account. If a check fails, correct the connection form and retry. Account credentials stay in the encrypted local store. Gmail saves its own Sent copies; the app-password connection does not append another copy.
 
-Existing Gmail OAuth accounts keep their connection method and cached mail.
-The app does not switch an existing account between OAuth and IMAP during
-reconnection, because those methods use different message identifiers.
+Existing Gmail OAuth accounts keep their connection method and cached mail. The app does not switch an existing account between OAuth and IMAP during reconnection, because those methods use different message identifiers.
 
 ### Advanced Google OAuth setup
 
-The source build does not include a shared Google OAuth client. A maintainer
-or self-hosting user can configure one once, then use Google sign-in for
-eligible personal Gmail and Workspace accounts.
+The source build does not include a shared Google OAuth client. A maintainer or self-hosting user can configure one once, then use Google sign-in for eligible personal Gmail and Workspace accounts.
 
 1. Create a project in [Google Cloud](https://console.cloud.google.com/apis/credentials) and enable the Gmail API.
 2. Configure the consent screen and add your Google accounts as test users.
@@ -121,9 +107,7 @@ A call sends `state` (sender, subject and up to 220 characters of preview) with 
 
 ## Other providers
 
-Choose iCloud, Fastmail or Yahoo and follow the dialog's app-password link.
-Custom IMAP supports a separate incoming username, a TLS IMAP host/port, and
-SMTP on port 465 with TLS or 587 with required STARTTLS.
+Choose iCloud, Fastmail or Yahoo and follow the dialog's app-password link. Custom IMAP supports a separate incoming username, a TLS IMAP host/port, and SMTP on port 465 with TLS or 587 with required STARTTLS.
 
 iCloud requires an [app-specific password](https://support.apple.com/en-ie/102525). Enter credentials only in the connection form, never in source or chat.
 
@@ -186,7 +170,25 @@ MCP changes notify the open desktop UI to refresh. Replies use the same send pat
 
 ## Keyboard
 
-`j` / `k`: move; Enter: open; Escape: back; `i` / `o`, or Tab when the page body is focused: Important/Other; `0` to `9`: account filters; `/`: search; `c`: compose; `r`: reply; `e`: Done; `s`: snooze; `m` (or `t`): Teach; `d`: Comfortable/Compact; `p`: hide email addresses and known connected-recipient names (click a hidden value to reveal it); comma: Settings; `?`: shortcuts. Standard Tab navigation remains available on controls. Settings, Interaction lets you edit action shortcuts and choose single-click or double-click opening. Double-click is the default. Mouse side buttons and Alt+Left/Right go back and forward; macOS also supports Command+[ and Command+].
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Move selection |
+| Enter | Open message |
+| Escape | Go back |
+| `i` / `o`, or Tab in the message body | Show Important / Other |
+| `0` to `9` | Filter by account |
+| `/` | Search |
+| `c` | Compose |
+| `r` | Reply |
+| `e` | Done |
+| `s` | Snooze |
+| `m` or `t` | Teach |
+| `d` | Toggle Comfortable / Compact |
+| `p` | Hide email addresses and known connected-recipient names, select a hidden value to reveal it |
+| `,` | Settings |
+| `?` | Shortcut list |
+
+Standard Tab navigation still works on controls. Settings, Interaction lets you edit action shortcuts and choose single-click or double-click opening. Double-click is the default. Mouse side buttons and Alt+Left/Right go back and forward; macOS also supports Command+[ and Command+].
 
 ## Local storage
 
@@ -234,7 +236,7 @@ To cut a Windows build locally:
 node scripts/release.mjs --patch
 ```
 
-That bumps the version, packages, prints the installer's SHA-256, and uploads it to the GitHub release when a GitHub remote exists. Delete the superseded installers in `release/` — `release/` is ignored by git, so nothing there reaches either host.
+That bumps the version, packages, prints the installer's SHA-256, and uploads it to the GitHub release when a GitHub remote exists. Delete the superseded installers in `release/`, which is ignored by git, so nothing there reaches either host.
 
 The installer is unsigned, so Windows SmartScreen warns on first run. There is no auto-updater; installing a newer version over an older one keeps your mail and settings.
 
