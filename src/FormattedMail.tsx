@@ -29,6 +29,12 @@ export function FormattedMail({ html, showImages, renderText, redactText, privac
     ].filter(Boolean).join(";")));
     if (tag === "font" && /^[1-7]$/.test(a.size || "")) style.fontSize = [10, 13, 16, 18, 24, 32, 48][Number(a.size) - 1];
     Object.assign(style, mailStyle(a.style || ""));
+    delete style.color;
+    style.backgroundColor = "transparent";
+    if (style.borderColor) style.borderColor = "var(--line)";
+    for (const property of ["border", "borderTop", "borderRight", "borderBottom", "borderLeft"] as const) {
+      if (style[property]) style[property] = String(style[property]).replace(/^(\d+(?:\.\d+)?px (?:solid|dashed|dotted) ).+$/, "$1var(--line)");
+    }
     if (tag === "img") {
       if (privacy || !showImages) return <span key={key} className="formatted-mail-image-status">
         {privacy ? "Images hidden in privacy mode." : "Image blocked. Use Show images to load it."}
@@ -41,8 +47,11 @@ export function FormattedMail({ html, showImages, renderText, redactText, privac
     let element = tag === "font" ? "span" : tag;
     if (tag === "a") {
       const href = mailLink(a.href || "");
-      if (href && (!privacy || (!privateMailLink(a.href, redactText) && !privateMailLink(href, redactText))))
+      if (href && (!privacy || (!privateMailLink(a.href, redactText) && !privateMailLink(href, redactText)))) {
+        style.color = "var(--link)";
+        style.textDecoration = "underline";
         Object.assign(props, { href, target: "_blank", rel: "noopener noreferrer", referrerPolicy: "no-referrer" });
+      }
       else element = "span";
     }
     if (tag === "td" || tag === "th") {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Match formatted email text, backgrounds, borders and links to the app's dark theme while preserving sender layout, emphasis and image controls.
+
 - Add a macOS source-installation route with Git, Node and Xcode Command Line Tools, requiring no Apple Developer account. Replace invalid inherited signatures through explicit local ad-hoc signing without certificate or provisioning-profile discovery. Keep notarization, DMG signing and existing public release assets unchanged.
 
 - Hide a sender avatar initial when it is a known private name component, while keeping ordinary company initials visible.

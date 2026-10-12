@@ -1705,10 +1705,11 @@ input[type="checkbox"][role="switch"]:disabled {
 
 .message-images .message-body { margin-top: 18px; }
 .message-body:has(.formatted-mail) { max-width: 100%; }
-.formatted-mail { color: #dedede; }
+.formatted-mail { color: var(--text); }
 .formatted-mail p { white-space: normal; }
 .formatted-mail-fallback { white-space: pre-wrap; }
 .formatted-mail table { max-width: 100%; }
+.formatted-mail a { text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .formatted-mail :is(h1, h2, h3, h4, h5, h6) { margin: 1em 0 0.5em; line-height: 1.3; }
 .formatted-mail-image { display: inline-block; max-width: 100%; }
 .formatted-mail-image-status { display: inline-block; margin: 6px 0; color: var(--text-2); font-size: 13px; }

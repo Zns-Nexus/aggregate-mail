@@ -23,11 +23,11 @@ test("formatted renderer keeps headings, nested formatting, tables and validated
   assert.equal(td.colSpan, 2);
   assert.equal(td.style.fontSize, "24px");
   assert.equal(td.style.textAlign, "center");
-  assert.equal(td.style.color, "rgb(18, 52, 86)");
+  assert.equal(td.style.color, "");
   const table = document.querySelector("table")!;
   assert.equal(table.style.width, "600px");
   assert.equal(table.cellPadding, "4");
-  assert.equal(table.style.backgroundColor, "rgb(255, 255, 255)");
+  assert.equal(table.style.backgroundColor, "transparent");
   assert.equal(document.querySelector("td span")?.textContent, "Legacy");
   assert.equal((document.querySelector(".formatted-mail") as HTMLElement).style.overflow, "auto");
 });
@@ -39,7 +39,7 @@ test("sender active tags, handlers, global styles, font resources and positionin
   const p = document.querySelector("p")!;
   assert.equal(p.textContent, "Safe <script>text</script>");
   for (const attribute of ["id", "class", "onclick", "title", "aria-label"]) assert.equal(p.getAttribute(attribute), null);
-  assert.equal(p.style.cssText, "color: blue;");
+  assert.equal(p.style.cssText, "background-color: transparent;");
   for (const secret of ["reader@example.com", "Morgan Example", "form payload", "svg payload", "https://example.com/track"])
     assert.ok(!markup.includes(secret), secret);
 });
