@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import type { Mail } from "../shared/types";
 import { densityShortcut, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
+import { defaults, interactionActions, matches } from "./interaction";
 
 const source = ts.createSourceFile("App.tsx", readFileSync(new URL("./App.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const app = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "App");
@@ -56,6 +57,7 @@ function reader(opened = true, accountFilter = "a", selectedId: string | null = 
     contextMenu: false, settings: false, compose: false, teach: false,
     snooze: false, shortcuts: false, labelMail: false, connecting: false,
     HTMLElement: Element, Error, densityShortcut, markMailRead,
+    interaction: defaults, interactionActions, matches, window: { desktop: { platform: "darwin" } },
     markRead: (_mail: Mail) => {}, openMail: (_mail: Mail) => {},
   };
   scope.markRead = handler("markRead", scope);

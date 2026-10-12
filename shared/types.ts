@@ -106,6 +106,8 @@ export type Mail = {
   preview: string;
   body: string;
   images?: MailImage[];
+  // Undefined means an older cache; null means no supported HTML source.
+  html?: string | null;
   date: number;
   unread: boolean;
   labelIds?: string[];

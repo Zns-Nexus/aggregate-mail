@@ -54,7 +54,7 @@ test("mounted reader blocks images until activation, reports loading/failure, an
   };
   const render = async (id: string, images?: MailImage[]) => {
     await act(async () => root.render(
-      <PrivacyContext.Provider value={{ on: true, revealed: new Set(), toggle() {} }}>
+      <PrivacyContext.Provider value={{ on: false, revealed: new Set(), toggle() {} }}>
         <MessageImages mail={{ id, images }} loadImages={loadImages} />
       </PrivacyContext.Provider>));
   };
@@ -76,7 +76,7 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     assert.equal(container.querySelectorAll("img").length, 1);
     assert.equal(img.getAttribute("src"), image.src);
     assert.equal(img.getAttribute("referrerpolicy"), "no-referrer");
-    assert.ok(!img.alt.includes("alice"));
+    assert.equal(img.alt, image.alt);
     assert.equal(button().getAttribute("aria-expanded"), "true");
     await act(async () => img.dispatchEvent(new dom.window.Event("load")));
     assert.ok(!container.textContent?.includes("Loading image 1"));
@@ -121,5 +121,59 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
     else Reflect.deleteProperty(globalThis, "document");
     delete actGlobal.IS_REACT_ACT_ENVIRONMENT;
+  }
+});
+
+test("formatted reader recovery keeps text on failure, ignores late content and clears consent on privacy", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>");
+  const descriptors = new Map(["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  const { ReaderContent } = await import("./App");
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  let resolve!: (result: { html: string | null; images: MailImage[] }) => void;
+  let reject!: (error: Error) => void;
+  const requested: string[] = [];
+  let metadataCalls = 0;
+  const loadContent = (id: string) => {
+    requested.push(id);
+    return new Promise<{ html: string | null; images: MailImage[] }>((yes, no) => { resolve = yes; reject = no; });
+  };
+  const render = async (id: string, privacy = false, html?: string | null) => {
+    await act(async () => root.render(<PrivacyContext.Provider value={{ on: privacy, revealed: new Set(), toggle() {} }}>
+      <ReaderContent mail={{ id, html, body: "Cached readable text" }} loadContent={loadContent}
+        loadImages={async () => { metadataCalls++; return { images: [image] }; }} />
+    </PrivacyContext.Provider>));
+  };
+  const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === text)!;
+  try {
+    await render("old");
+    assert.deepEqual(requested, ["old"]); assert.equal(metadataCalls, 0);
+    assert.ok(container.textContent?.includes("Cached readable text"));
+    assert.equal(container.querySelector("img"), null);
+    await act(async () => reject(new Error("offline")));
+    assert.ok(container.textContent?.includes("Formatted email is unavailable"));
+    await act(async () => button("Try again").click());
+    const oldResolve = resolve;
+    await render("new", false, null);
+    await act(async () => oldResolve({ html: "<h2>Old private content</h2>", images: [image] }));
+    assert.ok(!container.textContent?.includes("Old private content"));
+    assert.deepEqual(requested, ["old", "old"], "null HTML does not refetch");
+    await render("formatted");
+    await act(async () => resolve({ html: `<table><tbody><tr><td>Formatted text<img src="${image.src}" alt="Photo"></td></tr></tbody></table>`, images: [image] }));
+    assert.ok(container.querySelector("table")); assert.equal(container.querySelector("img"), null);
+    await act(async () => button("Show images").click());
+    assert.equal(container.querySelectorAll("img").length, 1); assert.equal(metadataCalls, 0);
+    await render("formatted", true);
+    assert.equal(container.querySelector("img"), null); assert.equal(button("Show images").disabled, true);
+    await render("formatted", false);
+    assert.equal(container.querySelector("img"), null, "disabling privacy does not grant consent again");
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
   }
 });

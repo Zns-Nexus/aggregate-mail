@@ -48,7 +48,9 @@ test("Gmail label filters and editors stay account-scoped, escape names and pres
   assert.match(html, /Team &lt;notes&gt;/);
   assert.match(html, /checked=""/);
   assert.doesNotMatch(html, /Other account|Unread/);
-  assert.match(render(true), /class="address veiled"[^>]*>me@example.com<\/span>/);
+  const hidden = render(true);
+  assert.match(hidden, /class="address veiled"[^>]*><\/span>/);
+  assert.doesNotMatch(hidden, /me@example.com/);
 });
 
 test("opening archived unread mail requests read, coalesces duplicate opens and allows retry after failure", async () => {

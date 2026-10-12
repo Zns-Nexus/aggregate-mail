@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, type ReactNode } from "react";
 import { Window as DOMWindow } from "happy-dom";
 import { App, ConnectDialog, SettingsPage } from "./App";
+import { defaults } from "./interaction";
 import type { Provider, State } from "../shared/types";
 
 const state: State = {
@@ -21,6 +22,7 @@ const settings = (googleConfigured: boolean) => {
     state={{ ...state, googleConfigured }} busy={false} api={async <T,>() => ({} as T)}
     perform={async () => {}} onConnectAccount={() => {}} onNotice={() => {}}
     windowSide="left" onWindowSide={() => {}}
+    interaction={defaults} onInteraction={() => {}}
     />);
   } finally {
     for (const [key, descriptor] of [["window", previousWindow], ["location", previousLocation]] as const) {

@@ -10,16 +10,50 @@ To build it yourself instead, run `npm run package` and open the installer it wr
 
 ### macOS
 
-Build on a Mac with Node 24 or newer:
+Build Emc² from source on the Mac that will run it. This route requires no
+Apple Developer account or signing certificate. Install [Node.js](https://nodejs.org/en/download)
+24 or newer with npm, then install Apple's Command Line Tools if needed:
 
 ```sh
-npm ci
-npm run package:mac
+xcode-select --install
 ```
 
-The command creates `release/Emc²-0.1.4-mac-<arch>.dmg` and a ZIP for the build machine's architecture (`arm64` on Apple silicon, `x64` on Intel). Open the DMG and drag Emc² to Applications, or extract the ZIP. `npm run package:mac:dir` creates only the app bundle. Add `-- --arm64` or `-- --x64` to select an architecture explicitly; runtime verification must use a matching Mac.
+Clone the source with Git, install the locked dependencies and build the app:
 
-These packages are unsigned and not notarized. Packaging explicitly skips signing, certificate discovery, and notarization. Gatekeeper may block downloaded copies; a local startup check does not prove downloaded-app acceptance. Local packaging does not publish downloads. The version-tag release workflow publishes both macOS architectures alongside Windows and Linux.
+```sh
+git clone https://github.com/Zns-Nexus/aggregate-mail.git
+cd aggregate-mail
+npm ci
+npm run package:mac:dir
+```
+
+On Apple silicon, the app is `release/mac-arm64/Emc².app`; on Intel, it is
+`release/mac/Emc².app`. The command builds for the current Mac's architecture.
+Check the finished signature before opening the app in Finder:
+
+```sh
+# Apple silicon; use release/mac on Intel.
+codesign --verify --deep --strict --verbose=2 "release/mac-arm64/Emc².app"
+open "release/mac-arm64"
+```
+
+You can drag the app to your user Applications folder for later launches. Quit
+an existing copy first and keep it until the new build works. Replacing an app
+does not require deleting its saved accounts or mail. Node and build tools are
+needed to compile; the finished app includes its runtime.
+
+The packaging hook signs explicitly ad hoc and skips certificate and
+provisioning-profile discovery. Build and run the app locally; copying it to
+another Mac creates a separate downloaded-app trust question. The existing
+GitHub macOS binaries are unnotarized, and the published 0.1.4 arm64 app has
+invalid signatures. Use the source route instead. Do not remove quarantine or
+disable Gatekeeper to make a build launch. If signature verification or startup
+fails, stop and report the error. See [the source-installation decision](docs/adr/0011-macos-source-installation.md).
+
+For local DMG and ZIP output, `npm run package:mac` uses the same signing hook.
+Local packaging never publishes downloads. Public binary distribution with a
+verified publisher still requires Developer ID signing and notarization by an
+authorized Apple team. The version-tag release workflow remains unchanged.
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit to the left of the inbox tabs. Closing the window quits the app on both platforms; unsent drafts still require confirmation.
 
@@ -112,7 +146,7 @@ A partial listing retains cached mail and batches already fetched. Only a comple
 - Snooze is local to this client. Messages return to their category after the chosen time.
 - Compose and reply send plain text from the selected account. IMAP mail gets a Sent copy. If copying fails after delivery, the draft closes with a warning rather than encouraging a duplicate send.
 - Sync runs on opening, manually, and every five minutes while open. It fetches the full inbox; large mailboxes can take time. Gmail reuses cached bodies and checks labels. Incremental mailbox sync is not included.
-- Bodies render as text without executing sender scripts. Remote images stay blocked until you activate Show images for that message; loading them can tell the sender you opened it. HTTP and HTTPS URLs are clickable and open in your default browser on desktop. Address privacy mode masks URLs containing email addresses; turn it off to open those links. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
+- Bodies preserve a bounded, safe subset of the sender's formatted layout, with readable plain text when formatting is unavailable or rejected. Sender scripts, forms, stylesheets and resource-loading CSS are excluded. Show images sits above the body; images stay blocked until activated for that opening and remain blocked while personal information is hidden. Loading remote images can tell the sender you opened the email. HTTP and HTTPS links open in your default browser on desktop. Personal-information hiding suppresses links containing known recipient names or email addresses. Attachments and rich-text composition are not included. Search covers synced mail and retained archived messages.
 - Drafts remain in memory. Closing warns about unsent content; a crash does not preserve drafts.
 
 ## MCP
@@ -152,7 +186,7 @@ MCP changes notify the open desktop UI to refresh. Replies use the same send pat
 
 ## Keyboard
 
-`j` / `k`: move; Enter: open; Escape: back; `i` / `o`, or Tab when the page body is focused: Important/Other; `0` to `9`: account filters; `/`: search; `c`: compose; `r`: reply; `e`: Done; `s`: snooze; `m` (or `t`): Teach; `d`: Comfortable/Compact; `p`: blur email addresses (click one to reveal it); comma: Settings; `?`: shortcuts. Standard Tab navigation remains available on controls.
+`j` / `k`: move; Enter: open; Escape: back; `i` / `o`, or Tab when the page body is focused: Important/Other; `0` to `9`: account filters; `/`: search; `c`: compose; `r`: reply; `e`: Done; `s`: snooze; `m` (or `t`): Teach; `d`: Comfortable/Compact; `p`: hide email addresses and known connected-recipient names (click a hidden value to reveal it); comma: Settings; `?`: shortcuts. Standard Tab navigation remains available on controls. Settings, Interaction lets you edit action shortcuts and choose single-click or double-click opening. Double-click is the default. Mouse side buttons and Alt+Left/Right go back and forward; macOS also supports Command+[ and Command+].
 
 ## Local storage
 

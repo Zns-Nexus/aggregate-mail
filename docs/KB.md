@@ -17,9 +17,60 @@ Right-click mail rows or opened messages to use Mark as read without opening the
 
 ## Desktop targets
 
+### Protected mail keys on macOS
+
+Electron selects its macOS Keychain item from the application name before
+startup. Moving `Local State` preserves Windows protection but does not carry
+the old macOS `Aggregate Mail` identity into `Emc²`. The desktop startup path
+keeps the Emc² profile location, tries its current identity and permits one
+legacy-identity relaunch for an unconfirmed existing key. It validates the
+decrypted 32-byte key before opening the mail service. Successful decryption
+records the identity with the protected-file digest for later starts. An
+unreadable or missing key stops startup without replacing encrypted data.
+
+Use `--user-data-dir=<nonempty path>` before `--` for isolated checks. Explicit
+profiles skip both saved-profile migration and development `.data` imports;
+invalid profile switches stop before the default profile is accessed. The
+startup regression tests use synthetic profiles and do not establish access
+to a user's saved Keychain item. See [ADR 0015](adr/0015-macos-keychain-identity.md).
+
 Emc² shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
 
-The macOS target disables app and DMG signing and notarization. The release workflow calls cross-platform CI and publishes installers for version tags. Building a package does not publish it or prove Gatekeeper acceptance.
+The macOS source-installation route uses `npm run package:mac:dir` on the target
+Mac with Git, Node 24 or newer and Xcode Command Line Tools. It creates
+`release/mac-arm64/Emc².app` on Apple silicon or `release/mac/Emc².app` on Intel.
+The installed app includes its runtime. See [README](../README.md) for setup.
+
+`scripts/sign-mac.cjs` runs after packaging and replaces inherited signatures
+using the locked `@electron/osx-sign` dependency already supplied by
+electron-builder. It sets `identity: "-"`, `identityValidation: false`, disables
+provisioning-profile discovery and automatic entitlement rewriting, and uses
+the library's default Electron entitlements without hardened runtime or a
+timestamp. The builder's own `mac.identity` stays `null`: in the locked
+26.17.0 implementation, `"-"` can select a certificate containing a hyphen.
+The hook avoids that lookup. There are no configured Electron fuse mutations;
+signing must follow those mutations if they are added later. Windows and Linux
+skip the hook. DMG signing and notarization remain disabled. Regression checks
+exercise the actual signing library with synthetic certificate data and mocked
+native commands, verify ad-hoc-only arguments, and check failure propagation.
+See [ADR 0011](adr/0011-macos-source-installation.md).
+
+The published 0.1.4 arm64 DMG matches its release checksum but its app fails
+strict signature verification with `code has no resources but signature
+indicates they must be present`. Existing release assets remain unchanged.
+The release workflow publishes installers for version tags. Local packaging
+does not publish or prove downloaded-app Gatekeeper acceptance.
+
+Ad-hoc signing repairs bundle integrity but does not satisfy Apple's public
+distribution requirements. Source installation builds and runs on the user's
+Mac and needs no Apple Developer account. Public binary distribution with
+normal first-open confirmation requires a project-authorized
+Developer ID Application certificate, hardened runtime, secure timestamp,
+Apple notarization and a stapled ticket. The publisher can be an organization
+or an authorized maintainer's team; users installing the app need no developer
+account. See [Apple's notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
+[organization enrollment](https://developer.apple.com/programs/enroll/) and
+[Electron's release guidance](https://www.electronjs.org/docs/latest/tutorial/code-signing).
 
 ## Account setup
 
@@ -177,13 +228,14 @@ For a packaged Apple silicon build, use the logged-in macOS desktop session. Qui
 
 ```sh
 check_dir=$(mktemp -d)
+mkdir "$check_dir/profile"
 open -n -W "release/mac-arm64/Emc².app" \
   --stdout "$check_dir/stdout.log" --stderr "$check_dir/stderr.log" \
   --args --check-startup --user-data-dir="$check_dir/profile"
 cat "$check_dir/stdout.log" "$check_dir/stderr.log"
 ```
 
-Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. Intel builds use `release/mac/`. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
+Require a `startup: passed` JSON result and process exit, then remove only the temporary directory created for that check. An `open` exit alone is insufficient. Intel builds use `release/mac/`. The explicit profile argument prevents migration or import of saved accounts into the check. Verify the packaged app with `codesign --verify --deep --strict --verbose=2 "release/mac-arm64/Emc².app"` before startup. These checks do not drive the UI, authenticate real accounts or send mail. A direct SSH executable launch can lack Keychain access even when desktop launch works. Keychain availability is required; an access failure is a blocker, not a reason to replace encryption.
 
 The repository has no `scripts/documentation.py`; documentation checks currently require link and diff review.
 
@@ -226,17 +278,17 @@ Download `installer-<platform>` from the workflow run's Artifacts section. Each 
 
 The repository is public. Standard GitHub-hosted runner execution is free under [GitHub's Actions billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions). Artifact storage shares the owner's plan allowance with GitHub Packages; excess artifact storage is billed at $0.25 USD per GB-month. npm cache storage has a separate 10 GB included allowance per repository. One-day artifact retention limits storage use but does not set an account spending cap. Recheck billing before making the repository private or selecting larger runners.
 
-CI has read-only repository permissions, disables signing-certificate discovery, and passes `--publish never` to packaging. It needs no mail-provider keys or signing credentials. Installer creation proves packaging; it does not prove native launch, account sign-in, OS trust acceptance or mail delivery. Windows installers are unsigned; macOS installers are unsigned and not notarized. The [release workflow](../.github/workflows/release.yml) publishes all four installers and SHA-256 checksums only after every build job passes. The version tag must match `package.json`. Only its publishing job has repository write permission.
+CI has read-only repository permissions, disables signing-certificate discovery, and passes `--publish never` to packaging. It needs no mail-provider keys or signing credentials. Installer creation proves packaging; it does not prove native launch, account sign-in, OS trust acceptance or mail delivery. Windows installers are unsigned; macOS apps use local ad-hoc signatures, while DMGs stay unsigned and not notarized. The [release workflow](../.github/workflows/release.yml) publishes all four installers and SHA-256 checksums only after every build job passes. The version tag must match `package.json`. Only its publishing job has repository write permission.
 
 See [README](../README.md#ci) for usage and [ADR 0002](adr/0002-cross-platform-ci.md) for the decision.
 
 ## Email links
 
-Message bodies stay plain text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The app never renders email HTML. Remote body images require per-message activation, as described below.
+Plain-text fallback bodies stay text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The bounded formatted reader described below now supports a safe subset of sender layout. Remote body images require per-message activation, as described below.
 
 The existing mailparser dependency converts HTML-only email links to text containing their destinations. No mailbox resync or storage migration is needed for URLs already in cached bodies.
 
-Address privacy mode masks URLs containing literal or percent-encoded email addresses and omits their anchors. Turn address privacy off to open these links. Other address masking behavior stays unchanged.
+Address privacy mode masks URLs containing literal or percent-encoded email addresses and omits their anchors. Turn address privacy off to open these links. Personal-information hiding also covers known connected-recipient names and suppresses private destinations.
 
 The desktop navigation policy allows HTTP and HTTPS destinations outside the mail service origin. On the mail service origin, only the Google OAuth entry route may open externally. Local API routes and other URL schemes stay blocked.
 
@@ -291,15 +343,13 @@ text per image. Only explicit HTTPS sources with public-looking DNS names, no
 credentials and the default port are accepted. HTTP, local hostnames, IP
 literals, relative URLs, data URLs and CID sources are excluded. The renderer
 checks sources again. Images use `referrerPolicy="no-referrer"`; the server never
-fetches an image URL. Sender HTML, styles, scripts, event handlers and layout
-are neither stored nor rendered. The renderer CSP permits HTTPS in `img-src`
+fetches an image URL. The formatted reader stores bounded HTML in encrypted mail JSON and constructs allowed React elements. It discards scripts, active elements, sender stylesheets, event handlers and resource-loading CSS. See the formatted-content decision below. The renderer CSP permits HTTPS in `img-src`
 while retaining the existing script, connection and sandbox restrictions.
 
 Loading remote images can expose the reader's IP address and send cookies to
 the image host. URL filtering does not verify DNS resolution or redirect
 chains. Consent therefore applies only to the current reader opening and is
-never saved as a preference. Images can contain readable addresses even when
-address hiding masks text and alt captions. Embedded CID images remain
+never saved as a preference. Images can contain readable personal information, so privacy mode disables activation and removes all body images. Embedded CID images remain
 unsupported; showing them would require a separate bounded attachment path.
 
 Older cached mail lacks image metadata. The authenticated, CSRF-protected
@@ -331,6 +381,20 @@ desktop behavior. Browser testing remains prohibited by PRODUCT.md.
 Sources: [reader](../src/App.tsx), [styles](../src/style.css),
 [shared image policy](../shared/types.ts), [providers](../server/providers.ts),
 [API](../server/index.ts), [image decision](adr/0009-opt-in-message-images.md).
+
+## Formatted content, privacy and interaction settings
+
+[ADR 0013](adr/0013-safe-formatted-mail-and-personal-privacy.md) supersedes the plain-text-only part of ADR 0009 for the owner's approved formatted reader. `Mail.html` is optional: undefined means old cache, null means no supported HTML. The existing encrypted JSON store retains at most 256,000 UTF-16 code units. `POST /api/messages/:id/content` recovers one old record through the same authenticated, origin/CSRF-checked provider path as image metadata. It refuses unsafe old IMAP identities, rereads current records and preserves concurrent read/archive/image state. HTML recovery never fetches sender assets or changes provider read state.
+
+[The content parser](../shared/mail-content.ts) allows a bounded element, attribute and inline-style subset. It rejects scripts, forms, frames, SVG, sender stylesheets, fonts, event handlers, srcset, resource CSS, positioning and transforms. Node, depth and dimension limits bound work and layout. [FormattedMail](../src/FormattedMail.tsx) constructs React elements; it never injects sender HTML. Table layout, heading hierarchy, emphasis and safe HTTP(S) links remain supported. The renderer maps sender text, backgrounds and borders to app colors, and links use the app's blue. This includes legacy color attributes and validated border shorthand. Image pixels and privacy bars remain unchanged. See [ADR 0014](adr/0014-themed-formatted-mail.md). Missing or rejected content uses cached plain text. CID attachments remain unsupported.
+
+[The reader](../src/App.tsx) loads missing formatting on open, shows cached text during loading or failure and offers one manual retry. Show images sits above the body. No body image element exists until activation; consent resets on closure, message change or privacy activation. Delayed content and image responses cannot reveal another message. Formatted images stay inline without a duplicate gallery. Privacy mode suppresses body images and private link destinations.
+
+[Privacy matching](../src/privacy.ts) learns names from optional account display names and the current To/Cc display names tied to connected account addresses. It covers full names, first names and surnames, including one-letter Unicode components, with Unicode-aware boundaries, case/whitespace variation and URL encoding. The opened message's dictionary also protects Gmail label filter options and the label editor. A sender avatar uses a neutral dot when its displayed initial matches a known private name component; ordinary company initials stay visible. Sender-markup splits cannot expose a known name. Hidden bars have no private children, title or accessibility text. Explicit reveal applies to the clicked token; re-enabling privacy clears it. Unknown names that appear only in a body cannot be identified. A name that is also an ordinary word can hide that word while privacy is on. Editable compose fields retain their focus-to-reveal behavior.
+
+[Interaction preferences](../src/interaction.ts) store only opening mode and validated shortcuts under `emc2.interaction.v1` in localStorage. Double-click is the default. Single-click opens and marks unread mail read once; keyboard Enter remains available. Settings capture rejects conflicts, account-number keys, editing/system keys and consumed, repeated or composing events. Unmodified Escape closes Interaction settings even from a focused shortcut input. Inbox matching excludes editable fields and dialogs. Help and tooltips reflect the saved bindings; Escape, body-only Tab, account filters and Mac Cmd+[ / Cmd+] retain fixed roles. Storage failure shows a notice and keeps the current in-memory choice.
+
+Tests use synthetic messages and accounts. The mounted App path covers Settings changes, custom-key dispatch, double/single-click transitions, read counts, history keys, recipient names in lists/headers/formatted content/attributes, image placement and privacy. Provider/API tests cover authentication, identity and cache races. Run `npm test` and `npm run build`. Native rendering, physical input, live providers and downloaded-app acceptance need separate proof. Browser testing remains prohibited by PRODUCT.md.
 
 ## UI review, 2026-10-09
 
@@ -371,10 +435,12 @@ Version 0.1.4 publishes the application as Emc². `desktop/migrate.ts` moves `ma
 
 ## Gmail labels, density and read-on-open
 
-Gmail sync now caches its label catalog as encrypted `label` records, keyed by account and label ID, and stores `labelIds` on mail. Existing mail without that optional field remains readable and gets labels on its next inbox sync. Disconnect removes the account's label cache. The filter is account-scoped and applies to the current view of cached mail. Sync still fetches Gmail's inbox; it does not backfill the remote archive. Label creation, renaming and deletion remain in Gmail.
+Gmail sync caches its label catalog as encrypted `label` records, keyed by account and label ID, and stores `labelIds` on mail. Existing mail without that optional field remains readable and gets labels on its next inbox sync. Disconnect removes the account's label cache. The filter is account-scoped and applies to the current view of cached mail. Sync still fetches Gmail's inbox; it does not backfill the remote archive. Label creation, renaming and deletion remain in Gmail.
 
 Edit labels on an opened Gmail message to replace its known custom labels. The server validates every requested label against that account's cached catalog and reads current provider metadata before modifying it. System labels and unknown labels are preserved. Gmail's existing `gmail.modify` permission is sufficient. Sources: [label listing](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels/list) and [message modification](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/modify).
 
-Ctrl+Plus, Ctrl+Equals and numpad Plus choose comfortable density; Ctrl+Minus and numpad Minus choose compact density. Editing fields and dialogs keep their normal key behavior. Opening unread mail uses the shared provider read operation without the UI busy gate. This includes j/k movement within the open reader and cached archived Gmail mail. Repeated opens coalesce while the request is pending. Read failures leave the unread flag intact and reopening retries. An opened message stays visible if marking it read removes it from the Unread label filter. An explicit number-key change to a different account clears the reader and selection; selecting the same account leaves them intact. Archived IMAP messages are located by a Message-ID search in the provider archive instead of reusing their old inbox UID. Because IMAP header search matches substrings, the sole candidate must also have an exactly matching parsed Message-ID before its read flag changes. Missing, ambiguous or mismatched candidates report an error without changing remote flags or local unread state. Sync and message mutations run in order on the server so stale sync metadata cannot undo a read. Other writes still return a sync conflict instead of bypassing the existing boundary.
+Ctrl+Plus, Ctrl+Equals and numpad Plus choose comfortable density; Ctrl+Minus and numpad Minus choose compact density. Editing fields and dialogs keep their normal key behavior. Opening unread mail uses the shared provider read operation independently of the UI busy gate. This includes reader navigation and cached archived Gmail mail. Repeated opens coalesce while a request is pending. Read failures leave the unread flag intact and reopening retries. An opened message stays visible if marking it read removes it from the Unread label filter. An explicit number-key change to a different account clears the reader and selection; selecting the same account leaves them intact. Archived IMAP messages are located by a Message-ID search in the provider archive instead of reusing their old inbox UID. Because IMAP header search matches substrings, the sole candidate must also have an exactly matching parsed Message-ID before its read flag changes. Missing, ambiguous or mismatched candidates report an error without changing remote flags or local unread state. Sync and message mutations run in order on the server so stale sync metadata cannot undo a read. Other writes still return a sync conflict instead of bypassing the existing boundary.
 
 `server/gmail.test.ts` uses mocked Gmail API methods with a temporary encrypted store to cover catalog refresh, message label sync, account isolation, custom label edits, provider failures, sync/read ordering, idempotent reads and disconnect cleanup. `server/imap-read.test.ts` covers inbox UID validation and exact archive Message-ID verification without a connection, including substring false positives and preservation of cached unread state on failure. The store holds SQLite open until process exit, so these tests leave synthetic files in the system temporary directory for the host or CI runner to clean up. `src/mail-ui.test.tsx` covers key recognition, account-scoped filters, label rendering/privacy and duplicate/retry read requests. `src/reader-keyboard.test.tsx` executes the App keyboard and open handlers with synthetic state to cover reader navigation, account changes, coalescing, retry and input guards. These tests do not mount the interface, authenticate real accounts or drive a browser.
+
+Snooze retains its message-specific privacy context. Rejected formatted trees and wrappers without readable text or supported images use the same readable text and consent-controlled gallery. Supported image-only mail keeps its inline image presentation. Image status styles do not override body paragraph sizing.
