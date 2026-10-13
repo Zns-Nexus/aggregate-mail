@@ -24,6 +24,12 @@ service and its five-minute main-process sync keep running, and only the tray's
 Quit item, a system session end or an application quit ends the process. The
 tray reopens the window, and a second launch restores it.
 
+The macOS tray uses a 16-pixel template image so the system renders it for the
+menu bar appearance. Linux resizes the application icon to 22 pixels; Windows
+keeps it unchanged. `desktop/main.test.ts` checks platform image selection, size
+and macOS template mode. These source tests do not prove behavior in a Linux
+desktop panel.
+
 `startServer` accepts an `onNewMail` callback and the server emits `new-mail`
 with the number of new unread messages found by a completed sync run. The
 desktop main process turns that into one native notification, which reopens the

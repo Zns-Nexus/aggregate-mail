@@ -74,6 +74,14 @@ await build({
           }
         };
         export const dialog = { showErrorBox() {} }, ipcMain = { on() {} }, shell = {};
+        export const nativeImage = {
+          createFromPath(imagePath) {
+            const image = { path: imagePath, width: 256, height: 256, template: false };
+            image.resize = ({ width, height }) => ({ ...image, width, height });
+            image.setTemplateImage = function (value) { this.template = value; };
+            return image;
+          }
+        };
         export const Menu = {
           buildFromTemplate() { return { items: [{ submenu: { items:
             ['quit','close','undo','cut','copy','paste','selectall'].map(role => ({role}))
@@ -85,6 +93,7 @@ await build({
         }; }};
         export class Tray {
           destroyed = false;
+          constructor(image) { this.image = image; console.log(JSON.stringify({ trayImage: image })); }
           setToolTip() {} setContextMenu() {} on() {}
           isDestroyed() { return this.destroyed; }
           destroy() { this.destroyed = true; }
@@ -179,6 +188,23 @@ function passed(result: ReturnType<typeof launch>, retries: number) {
   assert.match(result.stdout, /backend: opened/);
   assert.equal((result.stdout.match(/"startup":"retrying-legacy-keychain"/g) || []).length, retries);
 }
+
+test("tray image uses platform menu-bar dimensions and macOS template rendering", () => {
+  for (const [platform, size, template] of [
+    ["darwin", 16, true],
+    ["linux", 22, false],
+    ["win32", 256, false],
+  ] as const) {
+    const current = fixture("Emc²");
+    const result = launch(current.appData, { platform });
+    passed(result, 0);
+    const receipt = JSON.parse(result.stdout.match(/\{"trayImage"[^\n]+/)?.[0] ?? "{}");
+    assert.equal(path.basename(receipt.trayImage.path), platform === "darwin" ? "tray-icon.png" : "icon.png");
+    assert.equal(receipt.trayImage.width, size, `${platform} tray width`);
+    assert.equal(receipt.trayImage.height, size, `${platform} tray height`);
+    assert.equal(receipt.trayImage.template, template, `${platform} template mode`);
+  }
+});
 
 test("first upgrade restarts once, opens saved mail, and later launches without retry", () => {
   const old = fixture(LEGACY_APP_NAME, LEGACY_APP_NAME);

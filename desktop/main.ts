@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   Notification,
+  nativeImage,
   safeStorage,
   session,
   shell,
@@ -257,7 +258,18 @@ else {
           session: localSession,
         },
       });
-      tray = new Tray(path.join(app.getAppPath(), "build/icon.png"));
+      const trayImage = nativeImage.createFromPath(
+        path.join(app.getAppPath(), isMac ? "build/tray-icon.png" : "build/icon.png"),
+      );
+      if (isMac) {
+        const image = trayImage.resize({ width: 16, height: 16 });
+        image.setTemplateImage(true);
+        tray = new Tray(image);
+      } else if (process.platform === "linux") {
+        tray = new Tray(trayImage.resize({ width: 22, height: 22 }));
+      } else {
+        tray = new Tray(trayImage);
+      }
       tray.setToolTip("Emc²");
       tray.setContextMenu(
         Menu.buildFromTemplate([
