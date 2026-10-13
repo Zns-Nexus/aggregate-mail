@@ -242,7 +242,7 @@ export const providers: Record<
     update: (
       a: StoredAccount,
       m: Mail,
-      action: "archive" | "read",
+      action: "archive" | "read" | "trash",
     ) => Promise<void>;
     send: (a: StoredAccount, input: SendInput) => Promise<void>;
   }
@@ -353,6 +353,10 @@ export const providers: Record<
       return { html: parsed.html ?? null, images: parsed.images! };
     },
     async update(a, m, action) {
+      if (action === "trash") {
+        await gmail(a).users.messages.trash({ userId: "me", id: m.remoteId });
+        return;
+      }
       await gmail(a).users.messages.modify({
         userId: "me",
         id: m.remoteId,
@@ -509,28 +513,63 @@ function imapProvider() {
         else client.close();
       }
     },
-    async update(a: StoredAccount, m: Mail, action: "archive" | "read") {
+    async update(a: StoredAccount, m: Mail, action: "archive" | "read" | "trash") {
+      const identifiers = /^(\d+):([1-9]\d*)$/.exec(m.remoteId);
+      if (action === "trash" && (!identifiers ||
+        identifiers.slice(1).some((value) => !Number.isSafeInteger(Number(value)) || Number(value) < 1 || Number(value) > 4294967295)))
+        throw new Error("Email identifiers are unavailable. Sync before moving this email to Trash.");
       const client = imap(a);
+      let movedToTrash = false;
       try {
         await client.connect();
-        const mailbox = m.archived && action === "read"
+        let trash: string | undefined;
+        let trashSource = "INBOX";
+        if (action === "trash") {
+          // ImapFlow otherwise falls back to COPY, Deleted and EXPUNGE.
+          const rev2 = client.enabled.has("IMAP4REV2") ||
+            (client.capabilities.has("IMAP4rev2") && !client.capabilities.has("IMAP4rev1"));
+          if (!client.capabilities.has("MOVE") && !rev2)
+            throw new Error("This server does not support safe Move to Trash. Move this email in your provider.");
+          const folders = await client.list();
+          // specialUse can be guessed from names and hides duplicate server flags.
+          const targets = folders.filter((folder) => folder.flags.has("\\Trash"));
+          if (targets.length !== 1 || !targets[0].path)
+            throw new Error("A unique Trash folder is unavailable. Move this email in your provider.");
+          trash = targets[0].path;
+          if (m.archived) {
+            const sources = folders.filter((folder) => folder.flags.has(a.provider === "gmail-imap" ? "\\All" : "\\Archive"));
+            if (sources.length !== 1 || !sources[0].path)
+              throw new Error("A unique archive folder is unavailable. Move this email in your provider.");
+            trashSource = sources[0].path;
+          }
+          if (trash === trashSource || trash.toUpperCase() === "INBOX")
+            throw new Error("The Trash folder is unsafe. Move this email in your provider.");
+        }
+        const mailbox = action === "trash" ? trashSource : m.archived && action === "read"
           ? (await client.list()).find((folder) => folder.specialUse === (a.provider === "gmail-imap" ? "\\All" : "\\Archive"))?.path || (a.provider === "gmail-imap" ? null : "Archive")
           : "INBOX";
         if (!mailbox) throw new Error("Gmail All Mail is unavailable. Enable it in IMAP before marking archived mail read.");
         const lock = await client.getMailboxLock(mailbox);
         try {
+          if (action === "trash" && (!client.mailbox ||
+            (mailbox === "INBOX" ? client.mailbox.path.toUpperCase() !== "INBOX" : client.mailbox.path !== mailbox)))
+            throw new Error("Email mailbox changed. It was not moved to Trash.");
           const [validity, originalUid] = m.remoteId.split(":");
           let uid = originalUid;
-          if (m.archived && action === "read") {
-            if (!m.messageId) throw new Error("This archived email has no Message-ID. Mark it read in your provider.");
+          if (m.archived && (action === "read" || action === "trash")) {
+            if (!m.messageId) throw new Error("This archived email has no Message-ID. Change it in your provider.");
+            if (action === "trash" && (m.messageId.length > 998 || /[\s\u0000-\u001f\u007f]/.test(m.messageId)))
+              throw new Error("This archived email has an invalid Message-ID. Move it in your provider.");
             // Moving IMAP mail changes its UID; never reuse the old inbox UID in the archive.
             const matches = await client.search({ header: { "message-id": m.messageId } }, { uid: true });
             if (!matches || matches.length !== 1)
-              throw new Error("Could not identify this archived email. Mark it read in your provider.");
+              throw new Error("Could not identify this archived email. Change it in your provider.");
             uid = String(matches[0]);
+            if (action === "trash" && (!/^[1-9]\d*$/.test(uid) || !Number.isSafeInteger(Number(uid)) || Number(uid) > 4294967295))
+              throw new Error("Could not identify this archived email. Move it in your provider.");
             const candidate = await client.fetchOne(uid, { headers: ["message-id"] }, { uid: true });
-            if (!candidate || !candidate.headers || (await simpleParser(candidate.headers)).messageId !== m.messageId)
-              throw new Error("Could not identify this archived email. Mark it read in your provider.");
+            if (!candidate || (action === "trash" && String(candidate.uid) !== uid) || !candidate.headers || (await simpleParser(candidate.headers)).messageId !== m.messageId)
+              throw new Error("Could not identify this archived email. Change it in your provider.");
           } else if (
             !client.mailbox ||
             String(client.mailbox.uidValidity) !== validity
@@ -538,7 +577,16 @@ function imapProvider() {
             throw new Error(
               "Mailbox identifiers changed. Sync before changing this email.",
             );
-          if (action === "read") {
+          if (action === "trash") {
+            if (!m.archived && m.messageId) {
+              const candidate = await client.fetchOne(uid, { headers: ["message-id"] }, { uid: true });
+              if (!candidate || String(candidate.uid) !== uid || !candidate.headers || (await simpleParser(candidate.headers)).messageId !== m.messageId)
+                throw new Error("Email identity changed. It was not moved to Trash.");
+            }
+            if (!(await client.messageMove(uid, trash!, { uid: true })))
+              throw new Error("Move to Trash was not confirmed. Check your provider before trying again.");
+            movedToTrash = true;
+          } else if (action === "read") {
             if (!(await client.messageFlagsAdd(uid, ["\\Seen"], { uid: true })))
               throw new Error(
                 "Could not mark this email as read. Sync and try again.",
@@ -559,11 +607,18 @@ function imapProvider() {
               );
           }
         } finally {
-          lock.release();
+          try { lock.release(); }
+          catch (error) { if (!movedToTrash) throw error; }
         }
       } finally {
-        if (client.usable) await client.logout();
-        else client.close();
+        try {
+          if (client.usable) await client.logout();
+          else client.close();
+        } catch (error) {
+          if (!movedToTrash) throw error;
+          // A confirmed move must not become retryable because cleanup failed.
+          try { client.close(); } catch {}
+        }
       }
     },
     async send(a: StoredAccount, input: SendInput) {

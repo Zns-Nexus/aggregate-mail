@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { all, account, put } from "./store.js";
+import { all, account, put, remove } from "./store.js";
 import { providers, sendSchema, SentCopyError, updateGmailLabels } from "./providers.js";
 
 let mailWork = Promise.resolve();
@@ -12,7 +12,7 @@ export function runMailWork<T>(task: () => Promise<T>): Promise<T> {
 
 export const messageActionSchema = z.discriminatedUnion("action", [
   z.object({
-    action: z.enum(["read", "archive", "snooze", "unsnooze"]),
+    action: z.enum(["read", "archive", "snooze", "unsnooze", "trash"]),
     until: z
       .number()
       .int()
@@ -41,6 +41,12 @@ export async function updateMessage(
   return runMailWork(async () => {
     const m = findMail(id);
     if (input.action === "read" && !m.unread) return m;
+    if (input.action === "trash") {
+      const a = account(m.accountId);
+      await providers[a.provider].update(a, m, "trash");
+      remove("mail", m.id);
+      return m;
+    }
     if (input.action === "labels") {
       const a = account(m.accountId);
       if (a.provider !== "gmail") throw new Error("Labels are only supported for Gmail accounts.");

@@ -524,8 +524,9 @@ export function App() {
   const [compose, setCompose] = useState<Compose | null>(null);
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
+  const [trashMail, setTrashMail] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
-  const navigationBlocked = !!(compose || teach || snooze || shortcuts || settings || labelMail || connecting);
+  const navigationBlocked = !!(compose || teach || snooze || trashMail || shortcuts || settings || labelMail || connecting);
   const navigate = (patch: Partial<MailLocation>, search = false) => {
     if (navigationBlocked) return false;
     navigation.visit(patch, search);
@@ -627,6 +628,8 @@ export function App() {
   const [recent, setRecent] = useState<string[]>([]);
   const csrf = useRef("");
   const pendingReads = useRef(new Set<string>());
+  const [reading, setReading] = useState(new Set<string>());
+  const trashLock = useRef(false);
   const loadRevision = useRef(0);
   const syncLock = useRef(false);
   const sendLock = useRef(false);
@@ -814,12 +817,43 @@ export function App() {
     );
   const markRead = (mail: Mail) => {
     void markMailRead(mail, pendingReads.current, async () => {
+      setReading(new Set(pendingReads.current));
       await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "read" });
-      await reload();
+      // Ignore state snapshots requested before the provider confirmed this read.
+      ++loadRevision.current;
+      setState((current) => ({ ...current, messages: current.messages.map((message) =>
+        message.id === mail.id && message.accountId === mail.accountId && message.remoteId === mail.remoteId
+          ? { ...message, unread: false, labelIds: message.labelIds?.filter((id) => id !== "UNREAD") }
+          : message) }));
+      void reload().catch(() => setNotice("Email marked as read. Inbox refresh failed. Refresh the inbox separately."));
     }).catch((error: unknown) => setNotice(
       error instanceof Error ? `${error.message} Use Mark as read or reopen the email to retry.`
         : "Could not mark this email as read. Use Mark as read or reopen it to retry.",
-    ));
+    )).finally(() => setReading(new Set(pendingReads.current)));
+  };
+  const trashUnavailable = (mail: Mail) => mail.archived && accountOf(mail)?.provider !== "gmail" && !mail.messageId
+    ? "Move to Trash is unavailable for this archived email because its Message-ID is missing. Move it in your provider."
+    : undefined;
+  const moveToTrash = async (mail: Mail) => {
+    if (busy || syncing || trashLock.current || trashUnavailable(mail)) return;
+    trashLock.current = true;
+    setBusy(true);
+    try {
+      await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "trash" });
+      ++loadRevision.current;
+      setState((current) => ({ ...current, messages: current.messages.filter((message) =>
+        !(message.id === mail.id && message.accountId === mail.accountId && message.remoteId === mail.remoteId)) }));
+      setTrashMail(null);
+      if (selectedId === mail.id) setOpened(false);
+      setNotice("Email moved to Trash.");
+      try { await reload(); }
+      catch { setNotice("Email moved to Trash. Inbox refresh failed. Refresh the inbox separately."); }
+    } catch (error) {
+      setNotice(`${error instanceof Error ? error.message : "Move to Trash could not be confirmed."} Check your provider before trying again.`);
+    } finally {
+      trashLock.current = false;
+      setBusy(false);
+    }
   };
   const openMail = (mail: Mail, context: Partial<MailLocation> = {}) => {
     if (!navigate({ ...context, selectedId: mail.id, opened: true })) return;
@@ -883,22 +917,23 @@ export function App() {
       const target = event.target;
       if (settings && target instanceof HTMLElement && target.closest("[data-interaction-settings]") &&
         event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
-        !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
+        !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
         event.preventDefault(); setSettings(false); return;
       }
       if (target instanceof HTMLElement && (target.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       const nextDensity = densityShortcut(event);
-      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
+      if (nextDensity && !settings && !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
         event.preventDefault(); setDensity(nextDensity); return;
       }
       if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey) {
         if (compose) return;
+        if (trashMail) { if (!trashLock.current) setTrashMail(null); return; }
         setOpened(false); setTeach(null); setSnooze(null); setShortcuts(false);
         setLabelMail(null); setSettings(false);
         return;
       }
-      if (compose || teach || snooze || shortcuts || labelMail || connecting) return;
+      if (compose || teach || snooze || trashMail || shortcuts || labelMail || connecting) return;
       const action = interactionActions.find(({ id }) => matches(event, id, interaction, window.desktop?.platform))?.id;
       if (action === "back" || action === "forward") {
         event.preventDefault(); travel(action === "back" ? -1 : 1); return;
@@ -1244,6 +1279,29 @@ export function App() {
                 </button>
                 {opened && selected && <span><kbd>Esc</kbd> Close email</span>}
               </nav>
+              {selected && (
+                <div className="mail-actions" role="group" aria-label={opened ? "Opened email actions" : "Selected email actions"}>
+                  <button type="button" className="button" disabled={!selected.unread || reading.has(selected.id)}
+                    aria-busy={reading.has(selected.id)} onClick={() => markRead(selected)}>
+                    {reading.has(selected.id) ? "Marking as read…" : selected.unread ? "Mark as read" : "Read"}
+                  </button>
+                  <button type="button" className="button" disabled={busy} onClick={() => startCompose(selected)}>Reply</button>
+                  <button type="button" className="button" disabled={busy || syncing || selected.archived}
+                    title="Archive in your provider" onClick={() => archive(selected)}>Done</button>
+                  {isSnoozed(selected) ? (
+                    <button type="button" className="button" disabled={busy || syncing}
+                      onClick={() => void changeMessage(selected, "unsnooze")}>Return to inbox</button>
+                  ) : (
+                    <button type="button" className="button" disabled={busy || syncing || selected.archived}
+                      onClick={() => setSnooze(selected)}>Snooze</button>
+                  )}
+                  <button type="button" className="button trash-action" disabled={busy || syncing || !!trashUnavailable(selected)}
+                    aria-describedby={trashUnavailable(selected) ? "trash-unavailable" : undefined}
+                    onClick={() => setTrashMail(selected)}>Move to Trash</button>
+                  <span role="status">{reading.has(selected.id) ? "Read update pending." : busy ? "Updating email…" : ""}</span>
+                  {trashUnavailable(selected) && <span id="trash-unavailable">{trashUnavailable(selected)}</span>}
+                </div>
+              )}
               <div key={paneKey} className={`pane ${pane.current.motion}`}>
                 {opened && selected ? (
                   <MailPrivacy mail={selected}><article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
@@ -1457,11 +1515,12 @@ export function App() {
             onClose={closeContextMenu}
             actions={[
               { label: "Open", key: shortcut("open"), run: () => openMail(menuMail) },
-              { label: "Mark as read", disabled: !menuMail.unread, run: () => markRead(menuMail) },
+              { label: reading.has(menuMail.id) ? "Marking as read…" : "Mark as read", disabled: !menuMail.unread || reading.has(menuMail.id), run: () => markRead(menuMail) },
               { label: "Reply", key: shortcut("reply"), disabled: busy, run: () => startCompose(menuMail) },
               { label: "Done", key: shortcut("done"), disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
               { label: "Snooze", key: shortcut("snooze"), disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
               ...(isSnoozed(menuMail) ? [{ label: "Return to inbox", disabled: busy || syncing, run: () => void changeMessage(menuMail, "unsnooze") }] : []),
+              { label: "Move to Trash", disabled: busy || syncing || !!trashUnavailable(menuMail), run: () => setTrashMail(menuMail) },
               { label: "Teach sorting", key: shortcut("teach"), disabled: busy || syncing, run: () => setTeach(menuMail) },
             ]}
           />
@@ -1595,6 +1654,16 @@ export function App() {
               </button>
             )}
           </Dialog></MailPrivacy>
+        )}
+        {trashMail && (
+          <Dialog title="Move to Trash" onClose={() => { if (!trashLock.current) setTrashMail(null); }}>
+            <p className="dialog-copy">Move this email to your provider’s Trash? It will be removed from this inbox. This does not permanently delete it.</p>
+            <div className="form-actions">
+              <button type="button" className="button" disabled={busy} onClick={() => setTrashMail(null)}>Cancel</button>
+              <button type="button" className="button trash-action" disabled={busy || syncing} aria-busy={busy}
+                onClick={() => void moveToTrash(trashMail)}>{busy ? "Moving to Trash…" : "Move to Trash"}</button>
+            </div>
+          </Dialog>
         )}
         {shortcuts && (
           <Dialog

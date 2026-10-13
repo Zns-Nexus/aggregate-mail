@@ -914,6 +914,25 @@ input[type="checkbox"][role="switch"]:disabled {
   margin-left: auto;
   color: var(--text-3);
 }
+.mail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.mail-actions .button {
+  height: 32px;
+  padding: 0 10px;
+}
+.mail-actions > span {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.trash-action {
+  color: var(--danger);
+}
 .message h1 {
   font-size: 20px;
   font-weight: 600;
