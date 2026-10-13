@@ -17,6 +17,11 @@ import {
   messageActionSchema,
   runMailWork,
   findMail,
+  assertMailAvailable,
+  mailIsQuiesced,
+  trackMailWork,
+  quiesceMailWork,
+  resumeMailWork,
 } from "./mail-actions.js";
 import { mountMcp, authorizeMcp } from "./mcp.js";
 import { classify, sortMail, SortingUnavailable } from "./sorting.js";
@@ -47,11 +52,19 @@ const activeAccounts = new Set<string>();
 const accountSyncStatus = (id: string) => activeAccounts.has(id) ? "running" as const : pendingAccounts.has(id) ? "queued" as const : undefined;
 let scanningLogos = false;
 const assertNotSyncing = () => {
+  assertMailAvailable();
   if (syncing)
     throw new Error("Wait for the current sync to finish, then try again.");
 };
 app.use("/mcp", authorizeMcp);
 app.use(express.json({ limit: "2mb" }));
+app.use("/mcp", (_req, res, next) => {
+  if (mailIsQuiesced())
+    return res.status(503).json({ error: "Mail is paused for an application update. Try again shortly." });
+  next();
+});
+const mailRequest = (handler: (req: express.Request, res: express.Response) => Promise<unknown>): express.RequestHandler =>
+  (req, res, next) => { void trackMailWork(() => handler(req, res)).catch(next); };
 app.use("/api", (req, res, next) => {
   res.set("Cache-Control", "no-store");
   const host = req.hostname;
@@ -74,6 +87,8 @@ app.use("/api", (req, res, next) => {
     req.headers["x-csrf-token"] !== csrf
   )
     return res.status(403).json({ error: "Reload the app and try again." });
+  if (mailIsQuiesced() && (req.path.startsWith("/oauth/") || !["GET", "HEAD"].includes(req.method)))
+    return res.status(503).json({ error: "Mail is paused for an application update. Try again shortly." });
   if (
     syncing &&
     !["GET", "HEAD"].includes(req.method) &&
@@ -168,7 +183,7 @@ app.get("/api/logo/:domain", async (req, res) => {
   res.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
   return res.send(image.body);
 });
-app.post("/api/logos/sync", async (_req, res) => {
+app.post("/api/logos/sync", mailRequest(async (_req, res) => {
   if (scanningLogos)
     return res.status(409).json({ error: "A logo scan is already running." });
   scanningLogos = true;
@@ -182,7 +197,7 @@ app.post("/api/logos/sync", async (_req, res) => {
   } finally {
     scanningLogos = false;
   }
-});
+}));
 const oauthStates = new Map<string, number>();
 function existingAccount(email: string, provider: Provider) {
   const matches = all("account").filter((a) => a.email.toLowerCase() === email.toLowerCase());
@@ -221,7 +236,7 @@ app.get("/api/oauth/google", (_req, res) => {
     }),
   );
 });
-app.get("/api/oauth/google/callback", async (req, res) => {
+app.get("/api/oauth/google/callback", mailRequest(async (req, res) => {
   const state = typeof req.query.state === "string" ? req.query.state : "";
   const cookie = req.headers.cookie
     ?.split(";")
@@ -282,7 +297,7 @@ app.get("/api/oauth/google/callback", async (req, res) => {
       `${appUrl}/?error=${encodeURIComponent(error instanceof Error ? error.message : "Google connection failed.")}`,
     );
   }
-});
+}));
 const imapSchema = z.object({
   provider: z.enum(["gmail-imap", "icloud", "fastmail", "yahoo", "imap"]),
   email: z.email(),
@@ -301,7 +316,7 @@ const imapSchema = z.object({
   imapPort: z.number().int().min(1).max(65535).default(993),
   smtpPort: z.union([z.literal(465), z.literal(587)]).default(465),
 });
-app.post("/api/accounts/imap", async (req, res) => {
+app.post("/api/accounts/imap", mailRequest(async (req, res) => {
   const input = imapSchema.parse(req.body);
   if (input.provider === "gmail-imap") {
     input.password = input.password.replace(/ /g, "");
@@ -329,10 +344,10 @@ app.post("/api/accounts/imap", async (req, res) => {
   a.id = current?.id || id;
   a.hasSynced = current?.hasSynced;
   put("account", a.id, a);
-  imapWatch?.reconcile(all("account"));
+  if (!mailIsQuiesced()) imapWatch?.reconcile(all("account"));
   void requestSync([a.id], true);
   res.json({ ok: true });
-});
+}));
 app.post("/api/accounts/:id/reconnect", (req, res) => {
   const a = all("account").find((a) => a.id === req.params.id);
   if (!a) return res.status(404).json({ error: "Account not found." });
@@ -359,11 +374,13 @@ app.post("/api/sync", async (_req, res) => {
 // The desktop process starts its own run while the window is hidden, so a
 // background sync reports the same errors a request would.
 export async function syncMail(): Promise<{ errors: string[] }> {
+  assertMailAvailable();
   imapWatch?.reconcile(all("account"));
   return { errors: await requestSync(all("account").map((a) => a.id)) };
 }
 
 function requestSync(ids: string[], reconnect = false): Promise<string[]> {
+  if (mailIsQuiesced()) return Promise.resolve([]);
   for (const id of ids) {
     if (reconnect || !scheduledAccounts.has(id)) pendingAccounts.add(id);
     scheduledAccounts.add(id);
@@ -514,8 +531,8 @@ async function syncAccount(
       syncWarning,
     });
 }
-app.post("/api/messages/:id/images", async (req, res) => {
-  const mail = findMail(req.params.id);
+app.post("/api/messages/:id/images", mailRequest(async (req, res) => {
+  const mail = findMail(z.string().parse(req.params.id));
   if (mail.images !== undefined) return res.json({ images: mail.images });
   const a = account(mail.accountId);
   const images = await providers[a.provider].images(a, mail);
@@ -524,9 +541,9 @@ app.post("/api/messages/:id/images", async (req, res) => {
   const current = findMail(mail.id);
   put("mail", mail.id, { ...current, images });
   res.json({ images });
-});
-app.post("/api/messages/:id/content", async (req, res) => {
-  const mail = findMail(req.params.id);
+}));
+app.post("/api/messages/:id/content", mailRequest(async (req, res) => {
+  const mail = findMail(z.string().parse(req.params.id));
   if (mail.html !== undefined) return res.json({ html: mail.html, images: mail.images });
   const a = account(mail.accountId);
   const content = await providers[a.provider].content(a, mail);
@@ -539,7 +556,7 @@ app.post("/api/messages/:id/content", async (req, res) => {
     images: current.images ?? content.images };
   put("mail", mail.id, updated);
   res.json({ html: updated.html, images: updated.images });
-});
+}));
 app.patch("/api/messages/:id", async (req, res) => {
   const input = messageActionSchema.parse(req.body);
   if (!all("mail").some((m) => m.id === req.params.id))
@@ -640,6 +657,16 @@ export function startServer(
       if (onNewMail) desktopEvents.off("new-mail", onNewMail);
     });
   });
+}
+export async function quiesceMail(timeout: number) {
+  // Block admission before closing watchers, including already queued sync and MCP sends.
+  const drained = quiesceMailWork(timeout);
+  imapWatch?.close();
+  await drained;
+}
+export function resumeMail() {
+  resumeMailWork();
+  imapWatch?.reconcile(all("account"));
 }
 if (!process.env.MAIL_DESKTOP_TOKEN)
   void startServer(3001)

@@ -3,11 +3,39 @@ import { all, account, put, remove } from "./store.js";
 import { providers, sendSchema, SentCopyError, updateGmailLabels } from "./providers.js";
 
 let mailWork = Promise.resolve();
+let quiesced = false;
+const activeWork = new Set<Promise<unknown>>();
+export function assertMailAvailable() {
+  if (quiesced) throw new Error("Mail is paused for an application update. Try again shortly.");
+}
+export function mailIsQuiesced() { return quiesced; }
+export function trackMailWork<T>(task: () => Promise<T>): Promise<T> {
+  try { assertMailAvailable(); } catch (error) { return Promise.reject(error); }
+  const result = task();
+  activeWork.add(result);
+  void result.then(() => activeWork.delete(result), () => activeWork.delete(result));
+  return result;
+}
+export async function quiesceMailWork(timeout: number) {
+  quiesced = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled([...activeWork, mailWork]),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Mail work did not finish before the update deadline.")), timeout);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+export function resumeMailWork() { quiesced = false; }
 // Sync and provider mutations must finish in order so stale metadata cannot undo a read.
 export function runMailWork<T>(task: () => Promise<T>): Promise<T> {
-  const result = mailWork.then(task);
-  mailWork = result.then(() => {}, () => {});
-  return result;
+  return trackMailWork(() => {
+    const result = mailWork.then(task);
+    mailWork = result.then(() => {}, () => {});
+    return result;
+  });
 }
 
 export const messageActionSchema = z.discriminatedUnion("action", [
@@ -91,14 +119,16 @@ export async function updateMessage(
 }
 
 export async function sendMail(value: unknown) {
-  const input = sendSchema.parse(value);
-  const a = account(input.accountId);
-  try {
-    await providers[a.provider].send(a, input);
-  } catch (error) {
-    if (error instanceof SentCopyError)
-      return { ok: true, warning: error.message };
-    throw error;
-  }
-  return { ok: true };
+  return trackMailWork(async () => {
+    const input = sendSchema.parse(value);
+    const a = account(input.accountId);
+    try {
+      await providers[a.provider].send(a, input);
+    } catch (error) {
+      if (error instanceof SentCopyError)
+        return { ok: true, warning: error.message };
+      throw error;
+    }
+    return { ok: true };
+  });
 }

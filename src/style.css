@@ -1754,3 +1754,17 @@ input[type="checkbox"][role="switch"]:disabled {
 [data-interaction-settings] > p { margin: 10px 0; }
 [data-interaction-settings] [role="status"]:empty { display: none; }
 .address:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.update-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 16px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.update-notice p { margin: 4px 0 0; max-width: 65ch; color: var(--text-2); }
+.update-notice progress { display: block; margin-top: 8px; width: 100%; max-width: 280px; accent-color: var(--accent); }

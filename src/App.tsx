@@ -38,6 +38,7 @@ import { FormattedMail } from "./FormattedMail";
 import { privateMailLink } from "../shared/mail-content";
 import { collectPrivateNames, redactPrivateText, segmentPrivateText } from "./privacy";
 import { InteractionSettings } from "./InteractionSettings";
+import { UpdateNotice } from "./UpdateNotice";
 import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel, type InteractionPreferences } from "./interaction";
 import type {
   Account,
@@ -522,6 +523,8 @@ export function App() {
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const [connecting, setConnecting] = useState<ImapProvider | "choose" | null>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const sendTask = useRef<Promise<void> | undefined>(undefined);
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
   const [trashMail, setTrashMail] = useState<Mail | null>(null);
@@ -728,6 +731,11 @@ export function App() {
       }),
     [reload],
   );
+  useEffect(() => window.desktop?.updates?.onDrain(async () => {
+    await sendTask.current;
+    // Let the send result update the draft/unload guard before native close.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }), []);
   const showSearch = () => {
     setSettings(false);
     setSearching(true);
@@ -966,7 +974,7 @@ export function App() {
   });
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
-      if (compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
+      if (sendLock.current || compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
         e.preventDefault();
     };
     window.addEventListener("beforeunload", handle);
@@ -1030,6 +1038,7 @@ export function App() {
       >
         <header
           className="topbar"
+          inert={updateInstalling}
           onDoubleClick={(event) => {
             // A frameless window gets no automatic maximize on the caption
             // area, so the header has to restore that convention itself.
@@ -1179,6 +1188,7 @@ export function App() {
           </div>
           {windowSide === "right" && <TrafficLights right maximized={maximized} />}
         </header>
+        <UpdateNotice bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
         {notice && (
           <div className="notice" role="status">
             <span>
@@ -1209,7 +1219,7 @@ export function App() {
             }}
           />
         ) : (
-          <main className="workspace">
+          <main className="workspace" inert={updateInstalling}>
             <section
               ref={listRef}
               className={`list ${density}`}
@@ -1555,11 +1565,11 @@ export function App() {
             draft={compose}
             setDraft={setCompose}
             accounts={state.accounts}
-            busy={busy}
+            busy={busy || updateInstalling}
             onClose={() => setCompose(null)}
             onSend={() => {
-              if (busy) return;
-              void sendCompose(compose, {
+              if (busy || sendLock.current || updateInstalling) return;
+              sendTask.current = sendCompose(compose, {
                 lock: sendLock,
                 send: (draft) => api("/send", "POST", draft),
                 reload,

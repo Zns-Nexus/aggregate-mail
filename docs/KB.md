@@ -31,6 +31,18 @@ Synthetic mounted-App tests cover combined controls, empty-result reset, privacy
 
 ## Desktop targets
 
+### App updates
+
+`desktop/updates.ts` checks the latest stable release from `screen-devs/aggregate-mail` once at normal startup and on explicit request. Development builds, current macOS builds and Linux processes outside an AppImage show an unsupported state without requesting a release. Compatible Windows NSIS and Linux AppImage candidates require a strictly higher stable version, the running process architecture, one unambiguous installer, matching manifest version and size, and a canonical SHA512 digest. CI-suffixed asset names under a stable tag are rejected. Metadata reads and downloads have size and time bounds.
+
+`electron-updater` is pinned to 6.8.10. Its provider uses the validated candidate; the renderer cannot supply a URL, path or executable arguments. IPC accepts only the current window's main frame at the application origin. Automatic download, install on ordinary quit, prereleases, downgrades, web installers and differential downloads are disabled. Packaged updater configuration supplies the library cache location and any configured Windows publisher check. The app preserves that signature check; SHA512 verification establishes file integrity against the selected release metadata, not an independent publisher identity.
+
+The notice's Download, install and restart action downloads, verifies the cached regular nonsymlink file, pauses admission of mail work, drains queued sync/mutations and active renderer/MCP sends, and waits for the renderer's send result. Native close still honors draft and unknown-send protection. Keep editing resumes mail without invoking the installer. Accepted close is followed by another file hash check and the platform library handoff. Drain, verification and launch failures resume mail; if the window already closed, the app opens it again. A normal quit never installs a downloaded update.
+
+Current published assets lack compatible updater manifests, and the observed stable release carries CI-suffixed installers. The approved macOS ad-hoc signature has no supported automatic installation route here. These conditions remain explicit unavailable/unsupported states. This application change does not publish metadata, change release workflows or signing, or prove a native two-version update. See [ADR 0019](adr/0019-app-update-prompt.md).
+
+Synthetic tests exercise candidate rejection, pinned-library options and Windows launch arguments, checksum changes, duplicate commands, download bounds, authenticated IPC, actual service drain/resume, mounted notice behavior and the renderer's unknown-send unload guard. Startup checks disable update traffic and cannot prove download/install/restart. Native installation requires separate disposable two-version fixtures on each supported platform; macOS installation remains unsupported.
+
 ### Background running and notifications
 
 The desktop window hides to a tray icon when it is closed; the app, its mail
