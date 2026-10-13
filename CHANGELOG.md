@@ -4,7 +4,7 @@
 
 - Use a 16-pixel template image for the macOS tray and a 22-pixel tray image on Linux. Keep the Windows tray image unchanged.
 - Add visible Read, Reply, Done, Snooze and Move to Trash controls for selected and opened mail. Show pending reads and apply confirmed read state before an inbox refresh completes. Report failed actions without removing mail.
-- Move mail to the provider's Trash only after confirmation. Require safe IMAP MOVE support and a unique special-use Trash folder; preserve Done as archive and never permanently delete mail.
+- Move mail to the provider's Trash only after confirmation. Require safe IMAP MOVE support and a unique server-declared Trash folder, counting mixed-case duplicates; preserve Done as archive and never permanently delete mail.
 - Document 13 public email-client feedback reports, their evidence limits and priorities for the mail UX stack.
 
 - Close the desktop window to the tray instead of exiting, keep the mail service and a five-minute sync running while it is hidden, and show one native notification for the new unread mail a sync finds. Reopen from the tray, its menu or a second launch, and quit from the tray. Fields and selected text keep a native right-click menu.

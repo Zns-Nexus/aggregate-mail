@@ -163,6 +163,7 @@ test("Trash actions use synthetic providers, safe targets and confirmed cache re
       const before = moves.length;
       for (folders of [
         [], [{ path: "Trash", flags: new Set<string>() }],
+        [{ path: "Bin A", flags: new Set(["\\Trash"]) }, { path: "Bin B", flags: new Set(["\\trash"]) }],
         // Real LIST results include name-inferred specialUse and only one winner for duplicates.
         [{ path: "Trash", specialUse: "\\Trash", flags: new Set<string>() }],
         [{ path: "Bin", specialUse: "\\Trash", flags: new Set(["\\Trash"]) }, { path: "Other Bin", flags: new Set(["\\Trash"]) }],
@@ -178,6 +179,22 @@ test("Trash actions use synthetic providers, safe targets and confirmed cache re
       await assert.rejects(updateMessage(mail.id, { action: "trash" }), /safe Move to Trash/);
       capabilities = ["MOVE"];
       assert.equal(moves.length, before);
+    });
+
+    await t.test("lowercase server flags identify Trash and archive folders", async () => {
+      try {
+        folders = [{ path: "Bin", flags: new Set(["\\trash"]) }, { path: "Saved", flags: new Set(["\\archive"]) }];
+        await providers.imap.update(account, mail, "trash");
+        assert.deepEqual(moves.at(-1), { uid: "5", target: "Bin" });
+        await providers.imap.update(account, { ...mail, archived: true }, "trash");
+        assert.equal(opened.at(-1), "Saved");
+        assert.deepEqual(moves.at(-1), { uid: "77", target: "Bin" });
+        folders = [{ path: "Google Bin", flags: new Set(["\\tRaSh"]) }, { path: "Everything", flags: new Set(["\\aLl"]) }];
+        await providers["gmail-imap"].update({ ...account, provider: "gmail-imap" }, { ...mail, archived: true }, "trash");
+        assert.equal(opened.at(-1), "Everything");
+      } finally {
+        folders = [{ path: "Bin", flags: new Set(["\\Trash"]) }, { path: "Saved", flags: new Set(["\\Archive"]) }];
+      }
     });
 
     await t.test("native MOVE follows active IMAP4rev2, not merely advertised rev2", async () => {
@@ -225,6 +242,15 @@ test("Trash actions use synthetic providers, safe targets and confirmed cache re
     await t.test("archived Trash requires a unique source and exact Message-ID; old inbox UID is never reused", async () => {
       const archived = { ...mail, archived: true };
       const before = moves.length;
+      const originalFolders = folders;
+      try {
+        for (const [provider, archiveFlag] of [["imap", "Archive"], ["gmail-imap", "All"]] as const) {
+          folders = [{ path: "Bin", flags: new Set(["\\Trash"]) },
+            { path: "A", flags: new Set([`\\${archiveFlag}`]) }, { path: "B", flags: new Set([`\\${archiveFlag.toLowerCase()}`]) }];
+          await assert.rejects(providers[provider].update({ ...account, provider }, archived, "trash"), /unique archive/);
+        }
+        assert.equal(moves.length, before);
+      } finally { folders = originalFolders; }
       for (folders of [
         [{ path: "Bin", specialUse: "\\Trash", flags: new Set(["\\Trash"]) }],
         [{ path: "Bin", specialUse: "\\Trash", flags: new Set(["\\Trash"]) }, { path: "Archive", flags: new Set<string>() }],

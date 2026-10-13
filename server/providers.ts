@@ -532,12 +532,14 @@ function imapProvider() {
             throw new Error("This server does not support safe Move to Trash. Move this email in your provider.");
           const folders = await client.list();
           // specialUse can be guessed from names and hides duplicate server flags.
-          const targets = folders.filter((folder) => folder.flags.has("\\Trash"));
+          const withFlag = (flag: string) => folders.filter((folder) =>
+            [...folder.flags].some((value) => value.toLowerCase() === flag));
+          const targets = withFlag("\\trash");
           if (targets.length !== 1 || !targets[0].path)
             throw new Error("A unique Trash folder is unavailable. Move this email in your provider.");
           trash = targets[0].path;
           if (m.archived) {
-            const sources = folders.filter((folder) => folder.flags.has(a.provider === "gmail-imap" ? "\\All" : "\\Archive"));
+            const sources = withFlag(a.provider === "gmail-imap" ? "\\all" : "\\archive");
             if (sources.length !== 1 || !sources[0].path)
               throw new Error("A unique archive folder is unavailable. Move this email in your provider.");
             trashSource = sources[0].path;
