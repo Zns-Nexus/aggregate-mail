@@ -311,29 +311,6 @@ input[type="checkbox"][role="switch"]:disabled {
   gap: 4px;
   min-width: 0;
 }
-.accounts {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-  overflow: hidden;
-  margin-right: 14px;
-}
-.accounts button {
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  transition: color 160ms var(--ease-out);
-}
-.accounts button:hover {
-  color: var(--text-2);
-}
-.accounts kbd {
-  display: none;
-}
-.accounts .active {
-  color: var(--text);
-}
 .sync {
   margin-right: 6px;
   font-size: 12px;
@@ -1021,6 +998,49 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--text);
 }
 
+/* Cached-mail controls reuse the app dropdown and wrap within the list pane. */
+.account-picker {
+  -webkit-app-region: no-drag;
+  width: clamp(130px, 16vw, 220px);
+  min-width: 0;
+}
+.account-picker .dropdown-trigger {
+  height: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.account-picker .dropdown-menu {
+  left: auto;
+  width: min(320px, calc(100vw - 32px));
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.mail-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 18px 16px;
+}
+.mail-filters > .dropdown {
+  width: 150px;
+  max-width: 100%;
+}
+.mail-filters .dropdown-trigger {
+  height: 32px;
+}
+.mail-filters .dropdown-menu li.active,
+.account-picker .dropdown-menu li.active {
+  background: var(--selected);
+  text-decoration: none;
+}
+.mail-filters .dropdown-trigger:focus-visible,
+.account-picker .dropdown-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Sender context: 280px side panel. */
 .label-filter {
   width: 140px;
@@ -1679,11 +1699,6 @@ input[type="checkbox"][role="switch"]:disabled {
   }
 }
 
-@media (max-width: 1280px) {
-  .accounts button:not(.active) > span:not(.provider-icon) {
-    display: none;
-  }
-}
 @media (max-width: 1080px) {
   .context,
   .sync {

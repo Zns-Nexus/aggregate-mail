@@ -31,7 +31,7 @@ import {
   Settings,
   Mail as MailIcon,
 } from "./icons";
-import { customLabels, densityShortcut, matchesLabel, markMailRead } from "./mail-ui";
+import { customLabels, densityShortcut, filterMail, matchesLabel, markMailRead } from "./mail-ui";
 import { appPasswordHelp, imageSource, jevProviders, logoDomain, providerNames } from "../shared/types";
 import { useMailNavigation, type MailLocation } from "./navigation";
 import { FormattedMail } from "./FormattedMail";
@@ -507,7 +507,7 @@ export function selectMail(
 export function App() {
   const [state, setState] = useState(empty);
   const navigation = useMailNavigation();
-  const { view, accountFilter, labelFilter, selectedId, query, opened } = navigation.location;
+  const { view, accountFilter, labelFilter, selectedId, query, opened, readFilter, relevanceFilter, sort } = navigation.location;
   const setSelectedId = (selectedId: string | null) =>
     navigation.update((current) => ({ ...current, selectedId }));
   const setOpened = (opened: boolean) =>
@@ -745,6 +745,12 @@ export function App() {
       );
     navigate({ view: next, opened: false, selectedId: null });
   };
+  const hasListControls = accountFilter !== "all" || labelFilter !== "all" || !!query ||
+    readFilter !== "all" || relevanceFilter !== "all" || sort !== "newest";
+  const resetListControls = () => {
+    if (navigate({ accountFilter: "all", labelFilter: "all", query: "", readFilter: "all",
+      relevanceFilter: "all", sort: "newest", selectedId: null, opened: false })) setSearching(false);
+  };
   const labels = state.labels.filter((label) =>
     accountFilter === "all" || label.accountId === accountFilter);
   const activeLabel = labels.find((label) => `${label.accountId}:${label.id}` === labelFilter);
@@ -754,24 +760,7 @@ export function App() {
   const now = Date.now();
   const isSnoozed = (m: Mail) =>
     m.snoozedUntil !== null && m.snoozedUntil > now;
-  const filtered = state.messages
-    .filter((m) => {
-      if (accountFilter !== "all" && m.accountId !== accountFilter)
-        return false;
-      if (!matchesLabel(m, activeLabel)) return false;
-      if (
-        view === "archive"
-          ? !m.archived
-          : view === "snoozed"
-            ? m.archived || !isSnoozed(m)
-            : m.archived || isSnoozed(m) || m.category !== view
-      )
-        return false;
-      return `${m.sender} ${m.address} ${m.subject} ${m.body}`
-        .toLowerCase()
-        .includes(query.toLowerCase());
-    })
-    .sort((a, b) => b.date - a.date);
+  const filtered = filterMail(state.messages, navigation.location, activeLabel, now);
   const selected = opened
     ? state.messages.find((m) => m.id === selectedId &&
         state.accounts.some((account) => account.id === m.accountId))
@@ -865,7 +854,7 @@ export function App() {
   const jumpTo = (mail: Mail) => {
     openMail(mail, {
       view: mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
-      accountFilter: "all", labelFilter: "all", query: "",
+      accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all",
     });
   };
   const startCompose = (reply?: Mail) => {
@@ -922,6 +911,7 @@ export function App() {
       }
       if (target instanceof HTMLElement && (target.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (target instanceof HTMLElement && target.tagName === "BUTTON" && target.getAttribute("role") === "combobox") return;
       const nextDensity = densityShortcut(event);
       if (nextDensity && !settings && !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
         event.preventDefault(); setDensity(nextDensity); return;
@@ -993,7 +983,7 @@ export function App() {
   const paneKey =
     opened && selected
       ? `mail:${selected.id}`
-      : `list:${view}:${accountFilter}:${labelFilter}`;
+      : `list:${view}:${accountFilter}:${labelFilter}:${readFilter}:${relevanceFilter}:${sort}`;
   const pane = useRef({ key: paneKey, motion });
   if (pane.current.key !== paneKey)
     pane.current = {
@@ -1105,65 +1095,20 @@ export function App() {
           )}
           <div className="topbar-end">
             {!settings && (
-              <nav className="accounts" aria-label="Filter accounts">
-                <button
-                  className={accountFilter === "all" ? "active" : undefined}
-                  aria-pressed={accountFilter === "all"}
-                  onClick={() => navigate({ accountFilter: "all", selectedId: null, opened: false })}
-                >
-                  <kbd>0</kbd>All
-                </button>
-                {state.accounts.map((a, i) => (
-                  <button
-                    key={a.id}
-                    title={
-                      privacy
-                        ? providerNames[a.provider]
-                        : a.error
-                          ? `${a.email}: ${a.error}`
-                          : a.email
-                    }
-                    className={accountFilter === a.id ? "active" : undefined}
-                    aria-pressed={accountFilter === a.id}
-                    onClick={() => {
-                      navigate({ accountFilter: a.id, selectedId: null, opened: false });
-                    }}
-                  >
-                    {i < 9 && <kbd>{i + 1}</kbd>}
-                    <ProviderIcon provider={a.provider} />
-                    <span>
-                      <Address value={a.email}>
-                        {a.provider === "icloud"
-                          ? "iCloud"
-                          : a.email.split("@")[0]}
-                      </Address>
-                    </span>
-                    {a.error && (
-                      <i className="error-dot" aria-label="Needs attention" />
-                    )}
-                  </button>
-                ))}
-              </nav>
-            )}
-            {!settings && labels.length > 0 && (
-              <div className="label-filter">
-                <Dropdown
-                  label="Filter by Gmail label"
-                  value={labelFilter}
+              <div className="account-picker">
+                <Dropdown label="Filter accounts" value={accountFilter} disabled={navigationBlocked}
                   options={[
-                    { value: "all", label: "All labels" },
-                    ...labels.map((label) => {
-                      const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
-                      const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
-                      return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name };
-                    }),
+                    { value: "all", label: "All accounts" },
+                    ...state.accounts.map((account, index) => ({ value: account.id,
+                      label: privacy ? `Account ${index + 1} · ${providerNames[account.provider]}${account.error ? " · Needs attention" : ""}`
+                        : `${account.email}${account.error ? " · Needs attention" : ""}`,
+                    })),
                   ]}
-                  onChange={(value) => {
-                    navigate({ labelFilter: value, selectedId: null, opened: false });
-                  }}
-                />
+                  onChange={(accountFilter) => navigate({ accountFilter, labelFilter: "all", selectedId: null, opened: false })} />
               </div>
             )}
+            {!settings && <button type="button" className="action" disabled={navigationBlocked || busy}
+              onClick={() => setConnecting("choose")}>Add account</button>}
             {!settings &&
               (searching ? (
                 <div className="search" role="search">
@@ -1279,6 +1224,40 @@ export function App() {
                 </button>
                 {opened && selected && <span><kbd>Esc</kbd> Close email</span>}
               </nav>
+              <div className="mail-filters" role="group" aria-label="Mail filters and sort">
+                <Dropdown label="Read status" value={readFilter} disabled={navigationBlocked}
+                  options={[{ value: "all", label: "All mail" }, { value: "unread", label: "Unread" }]}
+                  onChange={(readFilter) => navigate({ readFilter, selectedId: null, opened: false })} />
+                <Dropdown label="Relevance filter" value={relevanceFilter} disabled={navigationBlocked}
+                  options={[{ value: "all", label: "All relevance" }, { value: "3", label: "High relevance" },
+                    { value: "2", label: "Medium relevance" }, { value: "1", label: "Low relevance" }]}
+                  onChange={(relevanceFilter) => navigate({ relevanceFilter, selectedId: null, opened: false })} />
+                <Dropdown label="Sort mail" value={sort} disabled={navigationBlocked}
+                  options={[{ value: "newest", label: "Newest" }, { value: "oldest", label: "Oldest" }, { value: "relevance", label: "Relevance" }]}
+                  onChange={(sort) => navigate({ sort, selectedId: null, opened: false })} />
+                {labels.length > 0 && (
+                  <div className="label-filter">
+                    <Dropdown
+                      label="Filter by Gmail label"
+                      disabled={navigationBlocked}
+                      value={labelFilter}
+                      options={[
+                        { value: "all", label: "All labels" },
+                        ...labels.map((label) => {
+                          const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
+                          const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
+                          return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name };
+                        }),
+                      ]}
+                      onChange={(value) => {
+                        navigate({ labelFilter: value, selectedId: null, opened: false });
+                      }}
+                    />
+                  </div>
+                )}
+                {hasListControls && <button type="button" className="link" disabled={navigationBlocked}
+                  onClick={resetListControls}>Reset filters and sort</button>}
+              </div>
               {selected && (
                 <div className="mail-actions" role="group" aria-label={opened ? "Opened email actions" : "Selected email actions"}>
                   <button type="button" className="button" disabled={!selected.unread || reading.has(selected.id)}
@@ -1341,8 +1320,8 @@ export function App() {
                 ) : filtered.length ? (
                   filtered.map((m, i) => {
                     const group = dayGroup(m.date);
-                    const showGroup =
-                      i === 0 || dayGroup(filtered[i - 1].date) !== group;
+                    const showGroup = sort !== "relevance" && (
+                      i === 0 || dayGroup(filtered[i - 1].date) !== group);
                     const layout =
                       density === "compact" || m.relevance === 2
                         ? "inline"
@@ -1404,7 +1383,7 @@ export function App() {
                         ? "Loading"
                         : !state.accounts.length
                           ? "No accounts connected"
-                          : query
+                          : hasListControls
                             ? "No matching mail"
                             : view === "snoozed"
                               ? "No snoozed mail"
@@ -1420,8 +1399,11 @@ export function App() {
                         >
                           Connect an account <ArrowRight color="currentColor" size={11} />
                         </button>
-                      ) : query ? (
-                        <p>Try a different sender, subject or phrase.</p>
+                      ) : hasListControls ? (
+                        <>
+                          <p>No cached mail matches these controls in {viewNames[view]}.</p>
+                          <button type="button" className="link" onClick={resetListControls}>Reset filters and sort</button>
+                        </>
                       ) : (
                         <button
                           className="link"

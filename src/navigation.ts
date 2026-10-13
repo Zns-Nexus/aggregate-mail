@@ -6,13 +6,16 @@ export type MailLocation = {
   accountFilter: string;
   labelFilter: string;
   query: string;
+  readFilter: "all" | "unread";
+  relevanceFilter: "all" | "1" | "2" | "3";
+  sort: "newest" | "oldest" | "relevance";
   selectedId: string | null;
   opened: boolean;
 };
 
 export function useMailNavigation() {
   const [location, update] = useState<MailLocation>({
-    view: "important", accountFilter: "all", labelFilter: "all", query: "", selectedId: null, opened: false,
+    view: "important", accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest", selectedId: null, opened: false,
   });
   // Keep message IDs and search text in memory, never in URLs or storage.
   const history = useRef({ entries: [location], index: 0, editingSearch: false });

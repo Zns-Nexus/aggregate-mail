@@ -21,6 +21,14 @@ Move to Trash uses the existing authenticated message action route and serialize
 
 The [public-feedback report](ux-feedback-2026-10-12.md) records 13 inspected reports, their age/resolution limits and proposed UX priorities. It does not establish complaint prevalence, native behavior or live-provider verification.
 
+## Account selection and cached-mail controls
+
+Multiple IMAP accounts use the existing account store and provider setup. The top-bar Add account button reopens that setup, and the account picker shows all accounts or one account. Privacy mode uses account numbers and provider names instead of names, email addresses or raw errors. Choosing an account also resets its Gmail label filter; composing uses the selected account as From.
+
+`src/mail-ui.ts` filters the cached messages by view, account, Gmail label, search, unread status and relevance, then applies newest, oldest or relevance ordering with date and message-ID ties. These controls do not fetch additional provider history. `src/navigation.ts` keeps their state in window memory and restores it on Back/Forward. Explicit control changes close the reader; automatic read-on-open updates retain its message. Reset clears all controls within the current view.
+
+Synthetic mounted-App tests cover combined controls, empty-result reset, privacy-safe account labels, account-specific compose, setup entry, keyboard ownership, read-on-open and history. They do not prove actual account connections or native appearance.
+
 ## Desktop targets
 
 ### Background running and notifications
