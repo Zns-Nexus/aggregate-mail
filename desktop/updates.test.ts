@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { build } from "esbuild";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -99,11 +99,14 @@ test("downloaded files must be nonsymlink regular files with matching size and a
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("the actual pinned library disables automatic/downgrade paths and checks without staging-ID or network IO", async () => {
+async function libraryFixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "emc2-update-library-"));
   const priorImage = process.env.APPIMAGE;
   process.env.APPIMAGE = "/synthetic/Emc.AppImage";
-  const spy = { fail: false, calls: [] as (string | { command: string; args: string[] })[] };
+  const spy = { fail: false, moveFailure: false, chunks: null as Buffer[] | null, headers: {} as Record<string, string>,
+    written: 0, flushed: undefined as (() => void) | undefined,
+    holdResponse: false,
+    calls: [] as (string | { command: string; args: string[] })[] };
   Object.assign(globalThis, { __updaterSynthetic: spy });
   try {
     const bundle = path.join(directory, "updater.cjs");
@@ -111,16 +114,60 @@ test("the actual pinned library disables automatic/downgrade paths and checks wi
       plugins: [{ name: "synthetic-electron", setup(builder) {
         builder.onResolve({ filter: /^electron$/ }, () => ({ path: "electron", namespace: "synthetic" }));
         builder.onResolve({ filter: /^(node:)?child_process$/ }, () => ({ path: "child", namespace: "synthetic" }));
+        builder.onResolve({ filter: /^(node:)?fs$/ }, ({ namespace, importer }) => {
+          if (namespace === "synthetic-fs") return { path: "node:fs", external: true };
+          if (/(?:httpExecutor\.js|desktop[/\\]updates\.ts)$/.test(importer)) return { path: "fs", namespace: "synthetic-fs" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "synthetic-fs" }, () => ({ contents: `
+          export * from 'node:fs';
+          import { createWriteStream as realCreateWriteStream } from 'node:fs';
+          export function createWriteStream(...args) {
+            const output = realCreateWriteStream(...args), write = output.write;
+            output.write = function(chunk, encoding, callback) {
+              const spy = globalThis.__updaterSynthetic;
+              spy.written += chunk.length;
+              const done = typeof encoding === 'function' ? encoding : callback;
+              return write.call(this, chunk, typeof encoding === 'string' ? encoding : undefined, (error) => {
+                spy.flushed?.();
+                done?.(error);
+              });
+            };
+            return output;
+          }
+        ` }));
         builder.onLoad({ filter: /.*/, namespace: "synthetic" }, ({ path: module }) => ({ contents: module === "electron" ? `
           import { EventEmitter } from 'node:events';
+          import { Readable } from 'node:stream';
           export const app = Object.assign(new EventEmitter(), {
             getVersion: () => '0.1.6', getName: () => 'Emc²', isPackaged: true,
             whenReady: async () => {}, getPath: () => { throw Error('No profile or staging ID IO allowed'); },
             quit: () => { globalThis.__updaterSynthetic.calls.push('quit'); }
           });
-          export const net = { request: () => { throw Error('No network allowed'); } };
+          export const session = { fromPartition: () => ({}) };
+          export const net = { request: () => {
+            const spy = globalThis.__updaterSynthetic;
+            if (!spy.chunks) throw Error('No network allowed');
+            let response;
+            return Object.assign(new EventEmitter(), {
+              end() {
+                // Delay each next chunk/EOF until the preceding real file write settles.
+                response = Object.assign(Readable.from((async function*() {
+                  for (const chunk of spy.chunks) {
+                    const flushed = new Promise(resolve => { spy.flushed = resolve; });
+                    yield chunk;
+                    await flushed;
+                  }
+                })()), { statusCode: 200, headers: spy.headers });
+                const destroy = response.destroy;
+                response.destroy = function(...args) { spy.flushed?.(); return destroy.apply(this, args); };
+                if (!spy.holdResponse) queueMicrotask(() => this.emit('response', response));
+              },
+              abort() { spy.calls.push('abort'); spy.flushed?.(); response?.destroy(); }
+            });
+          } };
         ` : `
           import { EventEmitter } from 'node:events';
+          import { renameSync, writeFileSync } from 'node:fs';
           export function spawn(command, args) {
             const spy = globalThis.__updaterSynthetic;
             spy.calls.push({ command, args });
@@ -128,11 +175,36 @@ test("the actual pinned library disables automatic/downgrade paths and checks wi
             if (spy.fail) queueMicrotask(() => child.emit('error', Object.assign(Error('Synthetic spawn failure'), { code: 'ENOENT' })));
             return child;
           }
-          export function execFileSync() { throw Error('No native file replacement allowed in this test'); }
+          export function execFileSync(command, args) {
+            if (command !== 'mv') throw Error('No native command allowed in this test');
+            const spy = globalThis.__updaterSynthetic;
+            spy.calls.push({ command, args });
+            if (spy.moveFailure) {
+              writeFileSync(args[2], 'partial synthetic copy');
+              throw Object.assign(Error('Synthetic move failure'), { code: 'ENOSPC' });
+            }
+            renameSync(args[1], args[2]);
+          }
           export function spawnSync() { throw Error('No native command allowed in this test'); }
         ` }));
       } }] });
     const actual = createRequire(import.meta.url)(bundle) as typeof import("./updates.js");
+    return { actual, directory, spy, async cleanup() {
+      Reflect.deleteProperty(globalThis, "__updaterSynthetic");
+      if (priorImage === undefined) delete process.env.APPIMAGE; else process.env.APPIMAGE = priorImage;
+      await rm(directory, { recursive: true, force: true });
+    } };
+  } catch (error) {
+    Reflect.deleteProperty(globalThis, "__updaterSynthetic");
+    if (priorImage === undefined) delete process.env.APPIMAGE; else process.env.APPIMAGE = priorImage;
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+test("the actual pinned library disables automatic/downgrade paths and checks without staging-ID or network IO", async () => {
+  const { actual, spy, cleanup } = await libraryFixture();
+  try {
     for (const platform of ["win32", "linux"]) {
       const updater = await actual.createUpdater(candidate(), { ...target, platform, appImage: "/synthetic/Emc.AppImage" });
       assert.equal(updater.autoDownload, false); assert.equal(updater.autoInstallOnAppQuit, false);
@@ -155,10 +227,156 @@ test("the actual pinned library disables automatic/downgrade paths and checks wi
       assert.deepEqual(spy.calls[0], { command: "/synthetic/update.exe", args: ["--updated", "/S", "--force-run"] });
     }
   } finally {
-    Reflect.deleteProperty(globalThis, "__updaterSynthetic");
-    if (priorImage === undefined) delete process.env.APPIMAGE; else process.env.APPIMAGE = priorImage;
-    await rm(directory, { recursive: true, force: true });
+    await cleanup();
   }
+});
+
+test("actual AppImage replacement preserves both names and bytes before failure recovery, without retry or quit", async (t) => {
+  const { actual, directory, spy, cleanup } = await libraryFixture();
+  const linuxName = "Emc²-0.1.7-linux-x64.AppImage";
+  const originalBytes = Buffer.from("original synthetic image, never executable");
+  const destinationBytes = Buffer.from("prior destination synthetic image, never executable");
+  const linuxRelease = { ...release(), assets: [asset(linuxName), asset("latest-linux.yml", 300)] };
+  const linuxManifest = manifest({ files: [{ url: linuxName, size: bytes.length, sha512: digest }] });
+  try {
+    for (const originalName of ["Emc.AppImage", linuxName, "Emc²-0.1.6-linux-x64.AppImage"]) {
+      for (const failure of ["move", "launch", "success"] as const) {
+        for (const collision of originalName.includes("0.1.6") ? [false, true] : [false]) {
+          await t.test(`${originalName}/${failure}/collision=${collision}`, async () => {
+            const installed = await mkdtemp(path.join(directory, "installed-"));
+            const cached = await mkdtemp(path.join(directory, "cached-"));
+            const original = path.join(installed, originalName), installer = path.join(cached, linuxName);
+            const destination = path.join(installed, originalName.includes("0.1.6") ? linuxName : originalName);
+            await writeFile(original, originalBytes, { mode: 0o755 });
+            const originalMode = (await lstat(original)).mode & 0o777;
+            await writeFile(installer, bytes, { mode: 0o755 });
+            if (collision) await writeFile(destination, destinationBytes);
+            process.env.APPIMAGE = original;
+            spy.calls.length = 0; spy.moveFailure = failure === "move"; spy.fail = failure === "launch";
+            const linuxTarget = { ...target, platform: "linux", appImage: original };
+            const selected = actual.validateCandidate(actual.releaseAssets(linuxRelease, linuxTarget)!, linuxManifest);
+            const updater = await actual.createUpdater(selected, linuxTarget);
+            Object.assign(updater, { downloadedUpdateHelper: { file: installer, downloadedFileInfo: {} },
+              downloadUpdate: async () => [installer] });
+            const assertRestored = async () => {
+              assert.deepEqual(await readFile(original), originalBytes, `${originalName}/${failure}: original bytes`);
+              assert.equal((await lstat(original)).mode & 0o777, originalMode);
+              if (destination !== original) {
+                if (collision) assert.deepEqual(await readFile(destination), destinationBytes);
+                else await assert.rejects(lstat(destination), { code: "ENOENT" });
+              }
+            };
+            const updates = new actual.Updates({ target: linuxTarget, publish: () => {},
+              read: async (url) => url.includes("api.github.com") ? JSON.stringify(linuxRelease) : linuxManifest,
+              create: async () => updater,
+              quiesce: async () => { spy.calls.push("quiesce"); },
+              drainRenderer: async () => { spy.calls.push("drain"); },
+              closeWindow: async () => { spy.calls.push("close"); return true; },
+              restoreWindow: async () => { await assertRestored(); spy.calls.push("restore"); },
+              resume: () => { spy.calls.push("resume"); } });
+            assert.equal((await updates.command("check")).phase, "available");
+            assert.equal((await updates.command("download")).phase, "ready");
+            const result = await updates.command("install");
+            if (failure !== "success") {
+              assert.equal(result.reason, "installer");
+              await assertRestored();
+              assert.deepEqual(spy.calls.slice(-2), ["restore", "resume"]);
+              assert.ok(!spy.calls.includes("quit"));
+              const calls = spy.calls.length;
+              await updates.command("install");
+              assert.equal(spy.calls.length, calls, "Failed handoff cannot auto-retry");
+            } else {
+              assert.equal(result.phase, "installing");
+              assert.deepEqual(await readFile(destination), bytes);
+              if (destination !== original) await assert.rejects(lstat(original), { code: "ENOENT" });
+              assert.equal(spy.calls.at(-1), "quit");
+              assert.ok(!spy.calls.includes("restore") && !spy.calls.includes("resume"));
+            }
+            const moves = spy.calls.filter((call) => typeof call !== "string" && call.command === "mv");
+            assert.deepEqual(moves, [{ command: "mv", args: ["-f", installer, destination] }]);
+            const launches = spy.calls.filter((call) => typeof call !== "string" && call.command !== "mv");
+            assert.deepEqual(launches, failure === "move" ? [] : [{ command: destination, args: [] }]);
+          });
+        }
+      }
+    }
+  } finally { await cleanup(); }
+});
+
+test("actual Electron download adapter bounds headerless streams before disk and keeps digest/progress checks", async (t) => {
+  const { actual, directory, spy, cleanup } = await libraryFixture();
+  const payload = Buffer.alloc(64, 7);
+  const base = candidate(), sha512 = createHash("sha512").update(payload).digest("base64");
+  const selected = { ...base, asset: { ...base.asset, size: 64 }, sha512,
+    info: { ...base.info, sha512, files: [{ ...base.info.files[0], size: 64, sha512 }] } };
+  try {
+    for (const scenario of [
+      { name: "headerless-oversize", chunks: [Buffer.alloc(4096)], oversize: true },
+      { name: "headerless-cross-boundary", chunks: [payload.subarray(0, 32), Buffer.alloc(4096)], oversize: true },
+      { name: "headerless-exact", chunks: [payload.subarray(0, 32), payload.subarray(32)] },
+      { name: "headerless-wrong-digest", chunks: [Buffer.alloc(64, 8)], digestFailure: true },
+      { name: "headerless-short", chunks: [payload.subarray(0, 63)], digestFailure: true },
+      { name: "with-content-length", chunks: [payload], contentLength: "64" },
+    ]) {
+      await t.test(scenario.name, async () => {
+        spy.chunks = scenario.chunks;
+        spy.headers = scenario.contentLength ? { "content-length": scenario.contentLength } : {};
+        spy.calls.length = 0;
+        spy.written = 0; spy.flushed = undefined;
+        const updater = await actual.createUpdater(selected, target);
+        const executor = (updater as unknown as {
+          httpExecutor: import("electron-updater/out/electronHttpExecutor.js").ElectronHttpExecutor;
+        }).httpExecutor;
+        const { CancellationToken } = await import("builder-util-runtime");
+        const cancellationToken = new CancellationToken();
+        let progress = 0, cancellations = 0, error: unknown;
+        cancellationToken.on("cancel", () => { cancellations++; });
+        const destination = path.join(directory, scenario.name + ".exe");
+        try {
+          await executor.download(new URL(selected.asset.browser_download_url), destination,
+            { cancellationToken, sha512: selected.sha512, onProgress: () => { progress++; } });
+        } catch (caught) { error = caught; }
+        if (scenario.oversize) {
+          assert.ok(error instanceof Error);
+          const written = (await lstat(destination)).size;
+          assert.ok(written <= 64, `${scenario.name}: wrote ${written} bytes for a 64-byte candidate`);
+          assert.ok(spy.written <= 64, "Excess bytes must never enter the file output stream");
+          assert.match(error.message, /verification/);
+          assert.equal(spy.calls.filter((call) => call === "abort").length, 1);
+          assert.equal(cancellations, 0, "One abort, without a second cancellation");
+        } else if (scenario.digestFailure) {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /checksum mismatch/);
+        } else {
+          assert.equal(error, undefined);
+          assert.deepEqual(await readFile(destination), payload);
+          assert.equal(spy.calls.length, 0);
+        }
+        assert.equal(progress > 0, !!scenario.contentLength);
+      });
+    }
+  } finally { await cleanup(); }
+});
+
+test("actual Electron download adapter aborts once when cancelled before response headers", async () => {
+  const { actual, directory, spy, cleanup } = await libraryFixture();
+  try {
+    spy.chunks = [bytes]; spy.holdResponse = true;
+    const updater = await actual.createUpdater(candidate(), target);
+    const executor = (updater as unknown as {
+      httpExecutor: import("electron-updater/out/electronHttpExecutor.js").ElectronHttpExecutor;
+    }).httpExecutor;
+    const { CancellationToken } = await import("builder-util-runtime");
+    const cancellationToken = new CancellationToken();
+    const destination = path.join(directory, "cancelled.exe");
+    const downloading = executor.download(new URL(candidate().asset.browser_download_url), destination,
+      { cancellationToken, sha512: digest });
+    cancellationToken.cancel();
+    await assert.rejects(downloading, /cancelled/);
+    assert.deepEqual(spy.calls, ["abort"]);
+    assert.equal(spy.written, 0);
+    await assert.rejects(lstat(destination), { code: "ENOENT" });
+  } finally { await cleanup(); }
 });
 
 function fixture(overrides: Partial<ConstructorParameters<typeof Updates>[0]> = {}) {

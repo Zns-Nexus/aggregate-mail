@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { copyFile, lstat, mkdtemp, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { StdioOptions } from "node:child_process";
+import type { IncomingMessage, RequestOptions } from "node:http";
+import { pipeline, Transform } from "node:stream";
+import type { DownloadCallOptions } from "builder-util-runtime/out/httpExecutor.js";
 import type { BaseUpdater, UpdateInfo, CancellationToken as UpdaterCancellation } from "electron-updater";
 import { parseUpdateInfo } from "electron-updater/out/providers/Provider.js";
 import type { UpdateCommand, UpdateReason, UpdateState } from "../shared/updates.js";
@@ -154,6 +157,40 @@ type Driver = Pick<BaseUpdater, "autoDownload" | "autoInstallOnAppQuit" | "allow
 export async function createUpdater(candidate: Candidate, target: Target): Promise<Driver> {
   const { NsisUpdater, AppImageUpdater, Provider } = await import("electron-updater");
   const { ElectronHttpExecutor } = await import("electron-updater/out/electronHttpExecutor.js");
+  const { DigestTransform, ProgressCallbackTransform, safeGetHeader, CancellationError } = await import("builder-util-runtime");
+  class BoundedExecutor extends ElectronHttpExecutor {
+    private cancelDownload?: DownloadCallOptions["onCancel"];
+    createRequest(options: RequestOptions, callback: (response: IncomingMessage) => void) {
+      let received: IncomingMessage | undefined, aborted = false;
+      const abort = () => { if (!aborted) { aborted = true; request.abort(); } };
+      const request = super.createRequest(options, (response: IncomingMessage) => {
+        received = response;
+        response.once("close", () => { if (!response.readableEnded) abort(); });
+        callback(response);
+      });
+      this.cancelDownload?.(() => { abort(); received?.destroy(new CancellationError()); });
+      return request;
+    }
+    protected doDownload(request: RequestOptions, options: DownloadCallOptions, redirects: number) {
+      this.cancelDownload = options.onCancel;
+      if (options.responseHandler || !options.destination) return super.doDownload(request, options, redirects);
+      super.doDownload(request, { ...options, responseHandler: (response, callback) => {
+        let transferred = 0;
+        const streams: Transform[] = [new Transform({ transform(chunk: Buffer, _encoding, done) {
+          transferred += chunk.length;
+          if (transferred > candidate.asset.size) { done(new UpdateFailure("verification")); return; }
+          done(null, chunk);
+        } })];
+        const contentLength = safeGetHeader(response, "content-length");
+        if (options.options.onProgress && contentLength != null)
+          streams.push(new ProgressCallbackTransform(Number.parseInt(contentLength, 10), options.options.cancellationToken, options.options.onProgress));
+        streams.push(new DigestTransform(candidate.sha512));
+        response.removeListener("error", callback);
+        // Count before hashing or file output, including when the server omits Content-Length.
+        pipeline([response, ...streams, createWriteStream(options.destination!)], callback);
+      } }, redirects);
+    }
+  }
   class ReleaseProvider extends Provider<UpdateInfo> {
     constructor() { super({ platform: target.platform as "win32" | "linux", isUseMultipleRangeRequest: false, executor: new ElectronHttpExecutor() }); }
     async getLatestVersion() { return candidate.info; }
@@ -184,12 +221,48 @@ export async function createUpdater(candidate: Candidate, target: Target): Promi
       return this.launch.catch(() => false);
     }
     async quitAndInstall() {
-      if (!this.install(false, true) || !this.launch) return fail("installer");
-      await this.launch;
+      const original = process.env.APPIMAGE, installer = this.installerPath;
+      if (!original || original !== target.appImage || !path.isAbsolute(original) || original.includes("\0") || !installer)
+        return fail("installer");
+      const originalStat = await lstat(original);
+      if (!originalStat.isFile() || originalStat.isSymbolicLink()) return fail("installer");
+      // Match the pinned library's destination choice, protecting both paths before its unlink/move.
+      const base = path.basename(original);
+      const destination = path.basename(installer) === base || !/\d+\.\d+\.\d+/.test(base)
+        ? original : path.join(path.dirname(original), path.basename(installer));
+      const existing = destination === original ? null : await lstat(destination).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return null;
+      });
+      if (existing && (!existing.isFile() || existing.isSymbolicLink())) return fail("installer");
+      const backup = await mkdtemp(path.join(path.dirname(original), ".emc2-update-"));
+      const originalBackup = path.join(backup, "original"), destinationBackup = path.join(backup, "destination");
+      let keepBackup = false;
+      try {
+        await copyFile(original, originalBackup, constants.COPYFILE_EXCL);
+        if (existing) await copyFile(destination, destinationBackup, constants.COPYFILE_EXCL);
+        try {
+          if (!this.install(false, true) || !this.launch) return fail("installer");
+          await this.launch;
+        } catch (error) {
+          // A failed rollback must retain the independent copies for recovery.
+          keepBackup = true;
+          await rename(originalBackup, original);
+          if (destination !== original) {
+            if (existing) await rename(destinationBackup, destination);
+            else await rm(destination, { force: true });
+          }
+          keepBackup = false;
+          throw error;
+        }
+      } finally {
+        if (!keepBackup) await rm(backup, { recursive: true, force: true }).catch(() => {});
+      }
       this.app.quit();
     }
   }
   const updater = target.platform === "win32" ? new WindowsUpdater() : new LinuxUpdater();
+  Object.assign(updater, { httpExecutor: new BoundedExecutor((info, callback) => updater.emit("login", info, callback)) });
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
   updater.allowPrerelease = false;

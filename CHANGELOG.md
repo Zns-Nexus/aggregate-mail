@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve the installed AppImage and any existing destination when update replacement or launch fails. Enforce download size limits before writing excess bytes, including responses without a Content-Length header, and abort cancelled requests before headers arrive.
+
 - Add an app-update notice with download progress and a single download, install and restart action for compatible Windows NSIS and Linux AppImage releases. Verify release and file identity, drain mail work and honor draft cancellation before installer handoff. Show unavailable states for unsupported builds and release metadata; automatic macOS installation remains disabled under local ad-hoc signing.
 
 - Watch IMAP inbox events to refresh arrivals and read flags through the existing account sync queue. Keep Gmail API polling, bounded reconnect recovery and one notification per successful run; suppress notifications until the first complete import succeeds.
