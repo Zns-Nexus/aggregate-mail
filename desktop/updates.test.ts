@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { build } from "esbuild";
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -105,7 +106,11 @@ async function libraryFixture() {
   process.env.APPIMAGE = "/synthetic/Emc.AppImage";
   const spy = { fail: false, moveFailure: false, chunks: null as Buffer[] | null, headers: {} as Record<string, string>,
     written: 0, flushed: undefined as (() => void) | undefined,
-    holdResponse: false,
+    holdResponse: false, networkAttempts: 0,
+    cacheReads: {} as Record<string, number>, holdCacheRead: false,
+    cacheStarted: undefined as (() => void) | undefined, cacheRelease: undefined as (() => void) | undefined,
+    cacheClosed: 0, handleClosed: 0,
+    cacheOnStream: undefined as ((file: string) => void) | undefined,
     calls: [] as (string | { command: string; args: string[] })[] };
   Object.assign(globalThis, { __updaterSynthetic: spy });
   try {
@@ -114,13 +119,52 @@ async function libraryFixture() {
       plugins: [{ name: "synthetic-electron", setup(builder) {
         builder.onResolve({ filter: /^electron$/ }, () => ({ path: "electron", namespace: "synthetic" }));
         builder.onResolve({ filter: /^(node:)?child_process$/ }, () => ({ path: "child", namespace: "synthetic" }));
+        builder.onResolve({ filter: /^node:fs\/promises$/ }, ({ namespace }) => namespace === "synthetic-promises"
+          ? { path: "node:fs/promises", external: true } : { path: "fs/promises", namespace: "synthetic-promises" });
         builder.onResolve({ filter: /^(node:)?fs$/ }, ({ namespace, importer }) => {
           if (namespace === "synthetic-fs") return { path: "node:fs", external: true };
-          if (/(?:httpExecutor\.js|desktop[/\\]updates\.ts)$/.test(importer)) return { path: "fs", namespace: "synthetic-fs" };
+          if (/(?:httpExecutor\.js|DownloadedUpdateHelper\.js|desktop[/\\]updates\.ts)$/.test(importer)) return { path: "fs", namespace: "synthetic-fs" };
         });
+        const observeCacheStream = `
+          function observe(file, stream) {
+            const spy = globalThis.__updaterSynthetic;
+            if (spy.holdCacheRead) {
+              const read = stream._read;
+              stream._read = () => {};
+              spy.cacheRelease = () => { if (!stream.destroyed) { stream._read = read; read.call(stream, 65536); } };
+            }
+            stream.on('data', chunk => { spy.cacheReads[file] = (spy.cacheReads[file] || 0) + chunk.length; });
+            stream.on('close', () => { spy.cacheClosed++; });
+            queueMicrotask(() => spy.cacheStarted?.());
+            return stream;
+          }
+        `;
+        builder.onLoad({ filter: /.*/, namespace: "synthetic-promises" }, () => ({ contents: `
+          export * from 'node:fs/promises';
+          import { open as realOpen } from 'node:fs/promises';
+          ${observeCacheStream}
+          export async function open(file, ...args) {
+            const handle = await realOpen(file, ...args);
+            const createReadStream = handle.createReadStream, close = handle.close;
+            let closed = false;
+            handle.createReadStream = function(options) {
+              globalThis.__updaterSynthetic.cacheOnStream?.(file);
+              return observe(file, createReadStream.call(this, options));
+            };
+            handle.close = function() { return close.call(this).finally(() => {
+              if (!closed) { closed = true; globalThis.__updaterSynthetic.handleClosed++; }
+            }); };
+            return handle;
+          }
+        ` }));
         builder.onLoad({ filter: /.*/, namespace: "synthetic-fs" }, () => ({ contents: `
           export * from 'node:fs';
-          import { createWriteStream as realCreateWriteStream } from 'node:fs';
+          import { createWriteStream as realCreateWriteStream, createReadStream as realCreateReadStream } from 'node:fs';
+          ${observeCacheStream}
+          export function createReadStream(file, options) {
+            globalThis.__updaterSynthetic.cacheOnStream?.(file);
+            return observe(file, realCreateReadStream(file, options));
+          }
           export function createWriteStream(...args) {
             const output = realCreateWriteStream(...args), write = output.write;
             output.write = function(chunk, encoding, callback) {
@@ -146,6 +190,7 @@ async function libraryFixture() {
           export const session = { fromPartition: () => ({}) };
           export const net = { request: () => {
             const spy = globalThis.__updaterSynthetic;
+            spy.networkAttempts++;
             if (!spy.chunks) throw Error('No network allowed');
             let response;
             return Object.assign(new EventEmitter(), {
@@ -201,6 +246,151 @@ async function libraryFixture() {
     throw error;
   }
 }
+
+async function cachedUpdater(f: Awaited<ReturnType<typeof libraryFixture>>, selected = candidate(), platform = "win32") {
+  const updater = await f.actual.createUpdater(selected, { ...target, platform, appImage: "/synthetic/Emc.AppImage" });
+  const config = path.join(f.directory, "app-update.yml");
+  await writeFile(config, "updaterCacheDirName: synthetic-cache\n");
+  const configured = updater as unknown as { updateConfigPath: string; app: object };
+  configured.updateConfigPath = config;
+  Object.defineProperty(configured.app, "baseCachePath", { value: f.directory });
+  const pending = path.join(f.directory, "synthetic-cache", "pending");
+  await mkdir(pending, { recursive: true });
+  const file = path.join(pending, selected.asset.name);
+  await writeFile(path.join(pending, "update-info.json"), JSON.stringify({ fileName: selected.asset.name,
+    sha512: selected.sha512, isAdminRightsRequired: false }));
+  await updater.checkForUpdates();
+  return { updater, file, pending };
+}
+
+test("actual downloadUpdate rejects oversized regular and symlink caches before reading installer bytes", async (t) => {
+  for (const platform of ["win32", "linux"]) for (const kind of ["oversized", "symlink"]) {
+    if (kind === "symlink" && process.platform === "win32") continue;
+    await t.test(`${platform}/${kind}`, async () => {
+      const f = await libraryFixture();
+      try {
+        const selected = platform === "win32" ? candidate() : validateCandidate(releaseAssets({ ...release(),
+          assets: [asset("Emc²-0.1.7-linux-x64.AppImage"), asset("latest-linux.yml", 300)] },
+        { ...target, platform, appImage: "/synthetic/Emc.AppImage" })!, manifest({ files: [
+          { url: "Emc²-0.1.7-linux-x64.AppImage", size: bytes.length, sha512: digest } ] }));
+        const { updater, file } = await cachedUpdater(f, selected, platform);
+        if (kind === "oversized") await writeFile(file, Buffer.alloc(4096, 7));
+        else {
+          const outside = path.join(f.directory, "outside.exe");
+          await writeFile(outside, Buffer.alloc(4096, 7));
+          await symlink(outside, file);
+        }
+        await assert.rejects(updater.downloadUpdate(), /No network allowed/);
+        assert.equal(f.spy.cacheReads[file] || 0, 0, "Unsafe cache must be rejected before a byte is read");
+        assert.equal(f.spy.networkAttempts, 1, "Cache miss may use only the normal library downloader");
+        assert.equal(updater.installerPath, null);
+      } finally { await f.cleanup(); }
+    });
+  }
+});
+
+test("actual downloadUpdate reuses verified cache and rehashes same-instance changes", async () => {
+  const f = await libraryFixture();
+  try {
+    const { updater, file } = await cachedUpdater(f);
+    await writeFile(path.join(f.directory, "app-update.yml"), "updaterCacheDirName: synthetic-cache\npublisherName: Synthetic Publisher\n");
+    let signatures = 0;
+    (updater as unknown as { verifyUpdateCodeSignature: (names: string[], file: string) => Promise<null> }).verifyUpdateCodeSignature = async (names, file) => {
+      assert.deepEqual(names, ["Synthetic Publisher"]);
+      assert.deepEqual(await readFile(file), bytes);
+      signatures++;
+      return null;
+    };
+    await writeFile(file, bytes);
+    assert.deepEqual(await updater.downloadUpdate(), [file]);
+    assert.equal(f.spy.cacheReads[file], bytes.length);
+    assert.equal(f.spy.networkAttempts, 0);
+    assert.equal(updater.installerPath, file);
+    // The inherited same-instance shortcut must not accept changed bytes.
+    await writeFile(file, Buffer.alloc(bytes.length, 8));
+    f.spy.chunks = [bytes];
+    assert.deepEqual(await updater.downloadUpdate(), [file]);
+    assert.equal(f.spy.networkAttempts, 1);
+    assert.equal(signatures, 1, "The library must preserve configured publisher verification for the fresh download");
+    assert.deepEqual(await readFile(file), bytes);
+    assert.equal(f.spy.handleClosed, 2, "Each cache verification closes its file handle");
+  } finally { await f.cleanup(); }
+});
+
+test("actual downloadUpdate ignores cached metadata paths even on a new instance", async () => {
+  const f = await libraryFixture();
+  try {
+    const { updater, file, pending } = await cachedUpdater(f);
+    await writeFile(file, bytes);
+    const outside = path.join(f.directory, "outside.exe");
+    await writeFile(outside, Buffer.alloc(4096, 7));
+    await writeFile(path.join(pending, "update-info.json"), JSON.stringify({ fileName: "../../outside.exe", sha512: digest }));
+    assert.deepEqual(await updater.downloadUpdate(), [file]);
+    assert.equal(f.spy.networkAttempts, 0);
+    assert.equal(f.spy.cacheReads[outside] || 0, 0, "Metadata cannot select a path to hash");
+    assert.equal(f.spy.cacheReads[file], bytes.length);
+  } finally { await f.cleanup(); }
+});
+
+test("actual downloadUpdate caps cache bytes even when the file grows after the size check", async () => {
+  const f = await libraryFixture();
+  try {
+    const { updater, file } = await cachedUpdater(f);
+    await writeFile(file, bytes);
+    f.spy.cacheOnStream = (reading) => {
+      if (reading === file) writeFileSync(file, Buffer.concat([bytes, Buffer.alloc(4096, 7)]));
+    };
+    await assert.rejects(updater.downloadUpdate(), /No network allowed/);
+    assert.equal(f.spy.cacheReads[file], bytes.length, "Growth must not expand the candidate's read limit");
+    assert.equal(updater.installerPath, null);
+  } finally { await f.cleanup(); }
+});
+
+test("actual downloadUpdate cache hashing stops on timeout, explicit cancellation and ordinary stop", async (t) => {
+  for (const mode of ["timeout", "cancel", "stop"]) await t.test(mode, async () => {
+    const f = await libraryFixture();
+    let libraryDownload: Promise<unknown> | undefined;
+    try {
+      const { updater, file } = await cachedUpdater(f);
+      await writeFile(file, bytes);
+      f.spy.holdCacheRead = true;
+      const started = deferred<void>();
+      f.spy.cacheStarted = () => started.resolve();
+      const { CancellationToken } = await import("builder-util-runtime");
+      const token = new CancellationToken();
+      let cancellations = 0;
+      token.on("cancel", () => { cancellations++; });
+      const flow = fixture({ create: async () => updater, cancellation: async () => token,
+        timeouts: { download: mode === "timeout" ? 100 : 1000, drain: 1000 } });
+      await flow.updates.command("check");
+      const downloading = flow.updates.command("download");
+      await started.promise;
+      libraryDownload = updater.downloadUpdate(token);
+      const settled = libraryDownload.then(() => true, () => true);
+      if (mode === "cancel") token.cancel();
+      if (mode === "stop") flow.updates.stop();
+      const state = await downloading;
+      if (mode !== "stop") assert.equal(state.phase, "error");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        assert.equal(await Promise.race([settled, new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 250);
+        })]), true, "The library promise must settle without releasing the stalled file stream");
+      } finally { clearTimeout(timer); }
+      assert.equal(cancellations, 1);
+      assert.equal(f.spy.cacheClosed, 1);
+      assert.equal(f.spy.handleClosed, 1);
+      assert.equal(f.spy.cacheReads[file] || 0, 0);
+      assert.equal(f.spy.networkAttempts, 0);
+      assert.equal(updater.installerPath, null);
+      assert.ok(!flow.states.some((value) => value.phase === "ready"));
+    } finally {
+      f.spy.cacheRelease?.();
+      await libraryDownload?.catch(() => {});
+      await f.cleanup();
+    }
+  });
+});
 
 test("the actual pinned library disables automatic/downgrade paths and checks without staging-ID or network IO", async () => {
   const { actual, spy, cleanup } = await libraryFixture();

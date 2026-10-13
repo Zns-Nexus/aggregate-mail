@@ -7,6 +7,8 @@ import type { IncomingMessage, RequestOptions } from "node:http";
 import { pipeline, Transform } from "node:stream";
 import type { DownloadCallOptions } from "builder-util-runtime/out/httpExecutor.js";
 import type { BaseUpdater, UpdateInfo, CancellationToken as UpdaterCancellation } from "electron-updater";
+import type { DownloadExecutorTask } from "electron-updater/out/AppUpdater.js";
+import type { DownloadedUpdateHelper } from "electron-updater/out/DownloadedUpdateHelper.js";
 import { parseUpdateInfo } from "electron-updater/out/providers/Provider.js";
 import type { UpdateCommand, UpdateReason, UpdateState } from "../shared/updates.js";
 
@@ -122,31 +124,41 @@ async function readMetadata(url: string, limit: number) {
   } finally { clearTimeout(timer); }
 }
 
-export async function verifyInstaller(file: string, candidate: Candidate): Promise<void> {
-  if (!path.isAbsolute(file)) return fail("verification");
-  const before = await lstat(file);
-  if (!before.isFile() || before.isSymbolicLink() || before.size !== candidate.asset.size) return fail("verification");
-  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+export async function verifyInstaller(file: string, candidate: Candidate, cancellation?: UpdaterCancellation): Promise<void> {
+  const abort = new AbortController();
+  const cancel = () => abort.abort();
+  cancellation?.once("cancel", cancel);
+  if (cancellation?.cancelled) cancel();
+  const timer = setTimeout(cancel, drainTimeout);
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    abort.signal.throwIfAborted();
+    if (!path.isAbsolute(file)) return fail("verification");
+    const before = await lstat(file);
+    if (!before.isFile() || before.isSymbolicLink() || before.size !== candidate.asset.size) return fail("verification");
+    abort.signal.throwIfAborted();
+    handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
+    abort.signal.throwIfAborted();
     const stat = await handle.stat();
     if (!stat.isFile() || stat.dev !== before.dev || stat.ino !== before.ino || stat.size !== before.size) return fail("verification");
     const hash = createHash("sha512");
-    const buffer = Buffer.alloc(65536);
     let bytes = 0;
-    const deadline = Date.now() + drainTimeout;
-    while (true) {
-      if (Date.now() > deadline) return fail("verification");
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-      if (!bytesRead) break;
-      bytes += bytesRead;
-      if (bytes > candidate.asset.size) return fail("verification");
-      hash.update(buffer.subarray(0, bytesRead));
+    const stream = handle.createReadStream({ autoClose: false, start: 0, end: candidate.asset.size - 1,
+      highWaterMark: 65536, signal: abort.signal });
+    for await (const chunk of stream) {
+      bytes += chunk.length;
+      hash.update(chunk);
     }
     const after = await lstat(file);
+    abort.signal.throwIfAborted();
     if (bytes !== candidate.asset.size || hash.digest("base64") !== candidate.sha512 || !after.isFile() ||
         after.dev !== stat.dev || after.ino !== stat.ino || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs)
       return fail("verification");
-  } finally { await handle.close(); }
+  } finally {
+    clearTimeout(timer);
+    cancellation?.removeListener("cancel", cancel);
+    if (handle && handle.fd !== -1) await handle.close();
+  }
 }
 
 type Driver = Pick<BaseUpdater, "autoDownload" | "autoInstallOnAppQuit" | "allowPrerelease" | "allowDowngrade" |
@@ -158,6 +170,27 @@ export async function createUpdater(candidate: Candidate, target: Target): Promi
   const { NsisUpdater, AppImageUpdater, Provider } = await import("electron-updater");
   const { ElectronHttpExecutor } = await import("electron-updater/out/electronHttpExecutor.js");
   const { DigestTransform, ProgressCallbackTransform, safeGetHeader, CancellationError } = await import("builder-util-runtime");
+  const bindCache = async (updater: BaseUpdater, cancellation: UpdaterCancellation) => {
+    if (cancellation.cancelled) throw new CancellationError();
+    // Use the pinned library's cache configuration, replacing only its unbounded validator.
+    const helper = await (updater as unknown as {
+      getOrCreateDownloadHelper(): Promise<DownloadedUpdateHelper>;
+    }).getOrCreateDownloadHelper();
+    if (cancellation.cancelled) throw new CancellationError();
+    helper.validateDownloadedPath = async (file) => {
+      if (cancellation.cancelled) throw new CancellationError();
+      if (file !== path.join(helper.cacheDirForPendingUpdate, candidate.asset.name)) return fail("verification");
+      try { await verifyInstaller(file, candidate, cancellation); }
+      catch (error) {
+        if (cancellation.cancelled) throw new CancellationError();
+        if (error instanceof UpdateFailure || (error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+      if (cancellation.cancelled) throw new CancellationError();
+      // Rebuild cached install metadata from the selected candidate, never from cached JSON paths.
+      return file;
+    };
+  };
   class BoundedExecutor extends ElectronHttpExecutor {
     private cancelDownload?: DownloadCallOptions["onCancel"];
     createRequest(options: RequestOptions, callback: (response: IncomingMessage) => void) {
@@ -199,6 +232,10 @@ export async function createUpdater(candidate: Candidate, target: Target): Promi
   const pinned = async () => ({ info: candidate.info, provider: new ReleaseProvider() });
   class WindowsUpdater extends NsisUpdater {
     protected getUpdateInfoAndProvider = pinned;
+    protected async executeDownload(options: DownloadExecutorTask) {
+      await bindCache(this, options.downloadUpdateOptions.cancellationToken);
+      return super.executeDownload(options);
+    }
     get installerPath() { return super.installerPath; }
     private launch?: Promise<boolean>;
     protected spawnLog(command: string, args?: string[], env?: NodeJS.ProcessEnv, stdio?: StdioOptions) {
@@ -214,6 +251,10 @@ export async function createUpdater(candidate: Candidate, target: Target): Promi
   }
   class LinuxUpdater extends AppImageUpdater {
     protected getUpdateInfoAndProvider = pinned;
+    protected async executeDownload(options: DownloadExecutorTask) {
+      await bindCache(this, options.downloadUpdateOptions.cancellationToken);
+      return super.executeDownload(options);
+    }
     get installerPath() { return super.installerPath; }
     private launch?: Promise<boolean>;
     protected spawnLog(command: string, args?: string[], env?: NodeJS.ProcessEnv, stdio?: StdioOptions) {
@@ -356,6 +397,7 @@ export class Updates {
     this.set({ phase: "downloading", version: candidate.version, percent: 0 });
     this.downloadInvalid = false;
     this.cancel = this.deps.cancellation ? await this.deps.cancellation() : new (await import("electron-updater")).CancellationToken();
+    if (this.stopped) { this.cancel.cancel(); this.cancel = undefined; return; }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const files = await Promise.race([updater.downloadUpdate(this.cancel), new Promise<never>((_resolve, reject) => {
@@ -363,7 +405,8 @@ export class Updates {
       })]);
       if (this.stopped) return;
       if (this.downloadInvalid || files.length !== 1 || updater.installerPath !== files[0]) return fail("verification");
-      await (this.deps.verify || verifyInstaller)(files[0], candidate).catch(() => fail("verification"));
+      await (this.deps.verify || verifyInstaller)(files[0], candidate, this.cancel).catch(() => fail("verification"));
+      if (this.stopped) return;
       this.downloaded = files[0];
       this.set({ phase: "ready", version: candidate.version });
     } finally { clearTimeout(timer); this.cancel = undefined; }
