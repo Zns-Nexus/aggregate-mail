@@ -15,7 +15,39 @@ The renderer uses macOS-style dark chrome on every desktop platform: black outer
 
 Right-click mail rows or opened messages to use Mark as read without opening the message. Already-read mail disables that item. Explicit read and read-on-open both use `markMailRead` in `src/mail-ui.ts`, coalesce pending requests and call the existing read endpoint independently of other UI busy state. Requests wait behind server sync; failures keep unread state and can be retried from the menu or by reopening mail. Other context-menu provider writes remain disabled during sync.
 
+The visible mail-action group offers the same read, reply, archive and snooze paths for selected and opened mail. Pending reads have a visible status. A successful read invalidates earlier state snapshots and updates only the matching message/account/provider identity before refreshing the inbox. Refresh failure reports the already-confirmed outcome separately.
+
+Move to Trash uses the existing authenticated message action route and serialized mail-work queue. Gmail uses `messages.trash`. IMAP requires native MOVE support (including active IMAP4rev2) and exactly one server-declared Trash folder; it does not use ImapFlow's COPY/Deleted/EXPUNGE fallback. Inbox actions validate UIDVALIDITY and UID, plus Message-ID when available. Folder checks compare raw server flags case-insensitively, reject mixed-case duplicate declarations and exclude name-based guesses. Archived mail is resolved through a unique server-declared archive folder and an exact Message-ID match. The encrypted cache entry is removed only after provider success. Confirmed IMAP moves remain successful if connection cleanup throws. Missing folders, unsupported MOVE and unsafe identities fail without a mailbox mutation. See [ADR 0017](adr/0017-safe-trash-and-visible-mail-actions.md).
+
+The [public-feedback report](ux-feedback-2026-10-12.md) records 13 inspected reports, their age/resolution limits and proposed UX priorities. It does not establish complaint prevalence, native behavior or live-provider verification.
+
+## Account selection and cached-mail controls
+
+Multiple IMAP accounts use the existing account store and provider setup. The top-bar Add account button reopens that setup, and the account picker shows all accounts or one account. Privacy mode uses account numbers and provider names instead of names, email addresses or raw errors. Choosing an account also resets its Gmail label filter; composing uses the selected account as From.
+
+`src/mail-ui.ts` filters the cached messages by view, account, Gmail label, search, unread status and relevance, then applies newest, oldest or relevance ordering with date and message-ID ties. These controls do not fetch additional provider history. `src/navigation.ts` keeps their state in window memory and restores it on Back/Forward. Explicit control changes close the reader; automatic read-on-open updates retain its message. Reset clears all controls within the current view. Reader j/k navigation temporarily includes the opened message as a sorting anchor when automatic read removes it from the filtered results; the rendered Unread list still excludes read mail.
+
+Synthetic mounted-App tests cover combined controls, empty-result reset, privacy-safe account labels, account-specific compose, setup entry, keyboard ownership, read-on-open and history. They do not prove actual account connections or native appearance.
+
 ## Desktop targets
+
+### App updates
+
+`desktop/updates.ts` checks the latest stable release from `screen-devs/aggregate-mail` once at normal startup and on explicit request. Development builds, current macOS builds and Linux processes outside an AppImage show an unsupported state without requesting a release. Compatible Windows NSIS and Linux AppImage candidates require a strictly higher stable version, the running process architecture, one unambiguous installer, matching manifest version and size, and a canonical SHA512 digest. CI-suffixed asset names under a stable tag are rejected. Metadata reads and downloads have size and time bounds.
+
+`electron-updater` is pinned to 6.8.10. Its provider uses the validated candidate; the renderer cannot supply a URL, path or executable arguments. IPC accepts only the current window's main frame at the application origin. Automatic download, install on ordinary quit, prereleases, downgrades, web installers and differential downloads are disabled. Packaged updater configuration supplies the library cache location and any configured Windows publisher check. The app preserves that signature check; SHA512 verification establishes file integrity against the selected release metadata, not an independent publisher identity.
+
+The notice's Download, install and restart action downloads, verifies the cached regular nonsymlink file, pauses admission of mail work, drains queued sync/mutations and active renderer/MCP sends, and waits for the renderer's send result. Native close still honors draft and unknown-send protection. Keep editing resumes mail without invoking the installer. Accepted close is followed by another file hash check and the platform library handoff. Drain, verification and launch failures resume mail; if the window already closed, the app opens it again. A normal quit never installs a downloaded update.
+
+The download stream checks the candidate's byte limit before hashing or file output, even without Content-Length. An oversized chunk stops the stream and aborts the request; cancellation also aborts a request still waiting for headers. SHA512 and configured Windows publisher checks remain active.
+
+Cache validation uses the candidate's canonical filename and ignores filenames in cached JSON. It rejects oversized or symlinked files before reading, bounds hashing to the expected size, and checks file identity, size and modification time afterward. It rehashes files already used by the running instance. A hash mismatch falls back to the normal library downloader; cancellation or timeout stops hashing without that fallback. The verification stream closes its handle and cancels application-level reads, but cannot preempt an OS filesystem call already in progress. The adapter uses the protected download hook and the pinned library's private cache initializer; dependency upgrades must recheck this integration with the actual-library regressions.
+
+Before the library replaces an AppImage, the app copies the installed image and any existing destination into a temporary directory beside the installed image. A replacement or launch failure restores their names, bytes and permissions before restoring the window and resuming mail. Failed handoffs do not quit or retry automatically. Successful handoff or rollback removes the backup directory; failed rollback retains any remaining backup copies for recovery. This protects handled failures, not power loss or a process crash during replacement.
+
+Current published assets lack compatible updater manifests, and the observed stable release carries CI-suffixed installers. The approved macOS ad-hoc signature has no supported automatic installation route here. These conditions remain explicit unavailable/unsupported states. This application change does not publish metadata, change release workflows or signing, or prove a native two-version update. See [ADR 0019](adr/0019-app-update-prompt.md).
+
+Synthetic tests exercise candidate rejection, pinned-library options and Windows launch arguments, checksum changes, duplicate commands, download bounds, authenticated IPC, actual service drain/resume, mounted notice behavior and the renderer's unknown-send unload guard. Tests of the pinned AppImage library use temporary files and synthetic process adapters to check replacement/launch failure, filename preservation and destination collisions. The Electron download adapter receives synthetic streams to check headerless overflow, exact size, checksum failures and preheader cancellation. Actual library download tests cover unsafe cache files, cache growth, valid reuse, changed hashes, untrusted metadata paths, and stalled-read timeout, cancellation and stop. The Windows publisher callback test is synthetic. Startup checks disable update traffic and cannot prove download/install/restart. Native installation requires separate disposable two-version fixtures on each supported platform; macOS installation remains unsupported.
 
 ### Background running and notifications
 
@@ -24,6 +56,12 @@ service and its five-minute main-process sync keep running, and only the tray's
 Quit item, a system session end or an application quit ends the process. The
 tray reopens the window, and a second launch restores it.
 
+The macOS tray uses a 16-pixel template image so the system renders it for the
+menu bar appearance. Linux resizes the application icon to 22 pixels; Windows
+keeps it unchanged. `desktop/main.test.ts` checks platform image selection, size
+and macOS template mode. These source tests do not prove behavior in a Linux
+desktop panel.
+
 `startServer` accepts an `onNewMail` callback and the server emits `new-mail`
 with the number of new unread messages found by a completed sync run. The
 desktop main process turns that into one native notification, which reopens the
@@ -31,6 +69,14 @@ window when clicked. The first sync of a mailbox, which imports the cache, and
 a sync that failed for an account report no arrivals. `StoredAccount.hasSynced`
 records the first successful sync for that decision. See
 [ADR 0016](adr/0016-background-running-and-notifications.md).
+
+### IMAP inbox events
+
+`server/imap-watch.ts` opens one read-only INBOX watch per IMAP account, including Gmail IMAP. It reuses the protected provider connection setup and ImapFlow's idle handling. Exists, flags and expunge events coalesce over 100 ms before requesting an account-specific sync. A watcher never fetches mail, so sync fetch responses cannot trigger its own events. Opening or reconnecting also requests sync to recover changes missed while disconnected. Gmail API accounts continue polling.
+
+The existing scheduler keeps at most two account syncs active and serializes mail actions. Events during an active account sync request one pending follow-up. Watch identity includes account, provider, email and credentials; replacement/removal stops the old connection and prevents stale sync batches from overwriting current data. Disconnects allow five automatic reconnect attempts with exponential delays; manual or periodic sync can start a new recovery window. Server close removes watcher listeners and timers and closes its clients.
+
+The first complete import enables later arrival notifications. A partial first import saves fetched mail but keeps that notification boundary closed. Existing caches without a stored boundary retain migration compatibility. See [ADR 0018](adr/0018-imap-inbox-events.md). Synthetic service tests cover events through cache refresh and the existing new-mail callback, account isolation, bursts, read serialization, partial failures, credential replacement/removal and shutdown. They do not prove live-provider event behavior or native notification delivery.
 
 ### Protected mail keys on macOS
 
@@ -216,8 +262,13 @@ notification after AI starts and asserts one provider run. It does not issue
 another sync as a wait, which could arrive late and clear the expected warning.
 The [provider tests](../server/providers.test.ts) check cached work,
 pagination, progressive batches, IMAP command order and actual transport abort
-against a synthetic loopback endpoint. They shorten the timeout clock while
-asserting the configured 30-second bound. The
+against a synthetic loopback endpoint. They assert the configured 30-second
+timeout and trigger it only after the request arrives, avoiding a race with
+connection setup. Each phase must make one request, report the expected safe
+timeout error and close the connection within one second. A negative control
+keeps the transport open after the caller times out and must fail that closure
+check. These tests do not establish live-provider behavior or the cause of a
+historical CI failure. The
 [recovery tests](../server/sync-recovery.test.ts) exercise the actual loopback
 service with synthetic OAuth transport and ImapFlow command/emitter fixtures.
 They cover safe failures, guarded saved-credential reconnect, duplicate clicks,
@@ -364,7 +415,7 @@ while retaining the existing script, connection and sandbox restrictions.
 Loading remote images can expose the reader's IP address and send cookies to
 the image host. URL filtering does not verify DNS resolution or redirect
 chains. Consent therefore applies only to the current reader opening and is
-never saved as a preference. Images can contain readable personal information, so privacy mode disables activation and removes all body images. Embedded CID images remain
+never saved as a preference. Show images works while personal text is hidden. Enabling privacy clears earlier consent; a new click can show supported images while known private text, alt descriptions and captions stay masked. Formatted image descriptions are redacted before the 500 UTF-16-unit display limit. Gallery metadata may already be truncated by the provider; descriptions of 500 or more units use a generic Image N label while privacy is enabled, in both alt text and loaded captions. Short descriptions keep their existing masking and explicit caption reveal. Sources containing detected private information remain blocked in privacy mode. Image pixels may contain personal information and are not redacted. See [ADR 0020](adr/0020-explicit-images-with-hidden-text.md). Embedded CID images remain
 unsupported; showing them would require a separate bounded attachment path.
 
 Older cached mail lacks image metadata. The authenticated, CSRF-protected
@@ -403,7 +454,7 @@ Sources: [reader](../src/App.tsx), [styles](../src/style.css),
 
 [The content parser](../shared/mail-content.ts) allows a bounded element, attribute and inline-style subset. It rejects scripts, forms, frames, SVG, sender stylesheets, fonts, event handlers, srcset, resource CSS, positioning and transforms. Node, depth and dimension limits bound work and layout. [FormattedMail](../src/FormattedMail.tsx) constructs React elements; it never injects sender HTML. Table layout, heading hierarchy, emphasis and safe HTTP(S) links remain supported. The renderer maps sender text, backgrounds and borders to app colors, and links use the app's blue. This includes legacy color attributes and validated border shorthand. Image pixels and privacy bars remain unchanged. See [ADR 0014](adr/0014-themed-formatted-mail.md). Missing or rejected content uses cached plain text. CID attachments remain unsupported.
 
-[The reader](../src/App.tsx) loads missing formatting on open, shows cached text during loading or failure and offers one manual retry. Show images sits above the body. No body image element exists until activation; consent resets on closure, message change or privacy activation. Delayed content and image responses cannot reveal another message. Formatted images stay inline without a duplicate gallery. Privacy mode suppresses body images and private link destinations.
+[The reader](../src/App.tsx) loads missing formatting on open, shows cached text during loading or failure and offers one manual retry. Show images sits above the body. No body image element exists until activation; consent resets on closure, message change or privacy activation. Delayed content and image responses cannot reveal another message. Formatted images stay inline without a duplicate gallery. Privacy ranges use the full text and map back to the original text leaves with UTF-16 offsets. This keeps supported sender formatting and image/caption order while masking tokens split across tags or images. Split segments share the whole source token as their reveal key; revealing a full name does not reveal a separate surname. Privacy mode suppresses private link and image destinations while allowing explicit display of other supported images. Scrollbar indicators are hidden by CSS without changing scrollable overflow or input handling.
 
 [Privacy matching](../src/privacy.ts) learns names from optional account display names and the current To/Cc display names tied to connected account addresses. It covers full names, first names and surnames, including one-letter Unicode components, with Unicode-aware boundaries, case/whitespace variation and URL encoding. The opened message's dictionary also protects Gmail label filter options and the label editor. A sender avatar uses a neutral dot when its displayed initial matches a known private name component; ordinary company initials stay visible. Sender-markup splits cannot expose a known name. Hidden bars have no private children, title or accessibility text. Explicit reveal applies to the clicked token; re-enabling privacy clears it. Unknown names that appear only in a body cannot be identified. A name that is also an ordinary word can hide that word while privacy is on. Editable compose fields retain their focus-to-reveal behavior.
 

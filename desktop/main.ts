@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   Notification,
+  nativeImage,
   safeStorage,
   session,
   shell,
@@ -25,6 +26,7 @@ import type { Server } from "node:http";
 import { editingMenu } from "./context-menu.js";
 import { isExternalLink, isLocalNavigation } from "./navigation.js";
 import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
+import type { Updates } from "./updates.js";
 
 app.setName("Emc²");
 app.setAppUserModelId("dev.screen.aggregate-mail");
@@ -75,6 +77,9 @@ let server: Server | undefined;
 let tray: Tray | undefined;
 let syncTimer: ReturnType<typeof setInterval> | undefined;
 let quitting = false;
+let updates: Updates | undefined;
+let updateClosing = false;
+let finishUpdateClose: ((accepted: boolean) => void) | undefined;
 const origin = "http://127.0.0.1:32145";
 const developing = !app.isPackaged && process.argv.includes("--dev");
 const rendererOrigin = developing ? "http://127.0.0.1:5173" : origin;
@@ -235,93 +240,166 @@ else {
         (_contents, _permission, callback) => callback(false),
       );
       localSession.setPermissionCheckHandler(() => false);
-      window = new BrowserWindow({
-        title: "Emc²",
-        width: 1440,
-        height: 900,
-        minWidth: 900,
-        minHeight: 560,
-        backgroundColor: "#0a0a0a",
-        icon: path.join(app.getAppPath(), "build/icon.png"),
-        show: false,
-        // macOS keeps its native traffic lights. Elsewhere the window is
-        // frameless and the renderer draws its own; Windows still rounds and
-        // shadows the frame, so the corners belong to the OS.
-        titleBarStyle: isMac ? "hiddenInset" : "hidden",
-        trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
-        webPreferences: {
-          preload: path.join(__dirname, "preload.cjs"),
-          contextIsolation: true,
-          sandbox: true,
-          nodeIntegration: false,
-          session: localSession,
-        },
-      });
-      tray = new Tray(path.join(app.getAppPath(), "build/icon.png"));
-      tray.setToolTip("Emc²");
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: "Open Emc²", click: showWindow },
-          { type: "separator" },
-          { label: "Quit", click: () => app.quit() },
-        ]),
-      );
-      tray.on("click", showWindow);
-      // Closing the window leaves the app, its mail service and its sync
-      // running; only Quit in the tray menu or the system session ends it.
-      window.on("close", (event) => {
-        if (quitting) return;
-        event.preventDefault();
-        window?.hide();
-      });
-      window.on("session-end", () => {
-        quitting = true;
-      });
-      // A maximized window fills the screen, so its corners square off.
-      const reportWindowState = () =>
-        window?.webContents.send("window-state", !!window?.isMaximized());
-      window.on("maximize", reportWindowState);
-      window.on("unmaximize", reportWindowState);
-      window.webContents.on("context-menu", (_event, params) => {
-        const items = editingMenu(params);
-        if (items.length && window) Menu.buildFromTemplate(items).popup({ window });
-      });
-      window.on("app-command", (_event, command) => {
-        if (command === "browser-backward" || command === "browser-forward")
-          window?.webContents.send("mail-navigation", command === "browser-backward" ? "back" : "forward");
-      });
-      window.webContents.setWindowOpenHandler(({ url }) => {
-        if (isExternalLink(url, origin)) void shell.openExternal(url);
-        return { action: "deny" };
-      });
-      window.webContents.on("will-navigate", (event, url) => {
-        if (isLocalNavigation(url, rendererOrigin)) return;
-        event.preventDefault();
-        if (isExternalLink(url, origin)) void shell.openExternal(url);
-      });
-      window.webContents.on("will-prevent-unload", (event) => {
-        if (!window) return;
-        showWindow();
-        if (
-          dialog.showMessageBoxSync(window, {
-            type: "question",
-            buttons: ["Keep editing", "Discard draft"],
-            defaultId: 0,
-            cancelId: 0,
-            message: "Discard your draft?",
-          }) === 1
-        )
+      const openWindow = async () => {
+        window = new BrowserWindow({
+          title: "Emc²",
+          width: 1440,
+          height: 900,
+          minWidth: 900,
+          minHeight: 560,
+          backgroundColor: "#0a0a0a",
+          icon: path.join(app.getAppPath(), "build/icon.png"),
+          show: false,
+          // macOS keeps its native traffic lights. Elsewhere the window is
+          // frameless and the renderer draws its own; Windows still rounds and
+          // shadows the frame, so the corners belong to the OS.
+          titleBarStyle: isMac ? "hiddenInset" : "hidden",
+          trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
+          webPreferences: {
+            preload: path.join(__dirname, "preload.cjs"),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+            additionalArguments: checking ? ["--emc2-disable-updates"] : [],
+            session: localSession,
+          },
+        });
+        if (!tray) {
+          const trayImage = nativeImage.createFromPath(
+            path.join(app.getAppPath(), isMac ? "build/tray-icon.png" : "build/icon.png"),
+          );
+          if (isMac) {
+            const image = trayImage.resize({ width: 16, height: 16 });
+            image.setTemplateImage(true);
+            tray = new Tray(image);
+          } else if (process.platform === "linux") {
+            tray = new Tray(trayImage.resize({ width: 22, height: 22 }));
+          } else {
+            tray = new Tray(trayImage);
+          }
+          tray.setToolTip("Emc²");
+          tray.setContextMenu(
+            Menu.buildFromTemplate([
+              { label: "Open Emc²", click: showWindow },
+              { type: "separator" },
+              { label: "Quit", click: () => app.quit() },
+            ]),
+          );
+          tray.on("click", showWindow);
+        }
+        // Closing the window leaves the app, its mail service and its sync
+        // running; only Quit in the tray menu or the system session ends it.
+        window.on("close", (event) => {
+          if (quitting) return;
           event.preventDefault();
-        else quitting = false;
-      });
-      // Entrance animations start at opacity 0 and a hidden window never runs
-      // them, so ready-to-show alone can wait forever for a visible paint.
-      const reveal = () => {
-        if (!checking && !window?.isVisible()) window?.show();
+          window?.hide();
+        });
+        window.on("session-end", () => {
+          quitting = true;
+        });
+        // A maximized window fills the screen, so its corners square off.
+        const reportWindowState = () =>
+          window?.webContents.send("window-state", !!window?.isMaximized());
+        window.on("maximize", reportWindowState);
+        window.on("unmaximize", reportWindowState);
+        window.webContents.on("context-menu", (_event, params) => {
+          const items = editingMenu(params);
+          if (items.length && window) Menu.buildFromTemplate(items).popup({ window });
+        });
+        window.on("app-command", (_event, command) => {
+          if (command === "browser-backward" || command === "browser-forward")
+            window?.webContents.send("mail-navigation", command === "browser-backward" ? "back" : "forward");
+        });
+        window.webContents.setWindowOpenHandler(({ url }) => {
+          if (isExternalLink(url, origin)) void shell.openExternal(url);
+          return { action: "deny" };
+        });
+        window.webContents.on("will-navigate", (event, url) => {
+          if (isLocalNavigation(url, rendererOrigin)) return;
+          event.preventDefault();
+          if (isExternalLink(url, origin)) void shell.openExternal(url);
+        });
+        window.webContents.on("will-prevent-unload", (event) => {
+          if (!window) return;
+          showWindow();
+          if (
+            dialog.showMessageBoxSync(window, {
+              type: "question",
+              buttons: ["Keep editing", "Discard draft"],
+              defaultId: 0,
+              cancelId: 0,
+              message: "Discard your draft?",
+              detail: "If the send status is unknown, this message may already have been sent.",
+            }) === 1
+          )
+            event.preventDefault();
+          else {
+            quitting = false;
+            finishUpdateClose?.(false);
+          }
+        });
+        // Entrance animations start at opacity 0 and a hidden window never runs
+        // them, so ready-to-show alone can wait forever for a visible paint.
+        const reveal = () => {
+          if (!checking && !window?.isVisible()) window?.show();
+        };
+        window.once("ready-to-show", reveal);
+        window.webContents.once("did-finish-load", reveal);
+        await window.loadURL(rendererOrigin);
       };
-      window.once("ready-to-show", reveal);
-      window.webContents.once("did-finish-load", reveal);
-      await window.loadURL(rendererOrigin);
+      if (!checking) {
+        const { Updates, registerUpdateIpc, trustedUpdateSender } = await import("./updates.js");
+        updates = new Updates({
+          target: { platform: process.platform, arch: process.arch, version: app.getVersion(),
+            packaged: app.isPackaged, appImage: process.env.APPIMAGE },
+          publish: (state) => window?.webContents.send("update-state", state),
+          quiesce: backend.quiesceMail,
+          resume: backend.resumeMail,
+          drainRenderer: (timeout) => new Promise<void>((resolve, reject) => {
+            if (!window) { reject(new Error("Update renderer unavailable.")); return; }
+            const request = randomBytes(16).toString("hex");
+            const listener = (event: Electron.IpcMainEvent, response: unknown) => {
+              if (response !== request || !window || !trustedUpdateSender(event, window.webContents, rendererOrigin)) return;
+              clearTimeout(timer);
+              ipcMain.removeListener("update-drained", listener);
+              resolve();
+            };
+            const timer = setTimeout(() => {
+              ipcMain.removeListener("update-drained", listener);
+              reject(new Error("Update renderer did not drain."));
+            }, timeout);
+            ipcMain.on("update-drained", listener);
+            window.webContents.send("update-drain", request);
+          }),
+          closeWindow: () => new Promise<boolean>((resolve) => {
+            if (!window || window.isDestroyed()) { resolve(false); return; }
+            const closingWindow = window;
+            const closed = () => { window = null; finish(true); };
+            const finish = (accepted: boolean) => {
+              clearTimeout(timer);
+              closingWindow.removeListener("closed", closed);
+              finishUpdateClose = undefined;
+              if (!accepted) { quitting = false; updateClosing = false; }
+              resolve(accepted);
+            };
+            const timer = setTimeout(() => finish(false), 30000);
+            finishUpdateClose = finish;
+            closingWindow.once("closed", closed);
+            showWindow();
+            updateClosing = true;
+            quitting = true;
+            closingWindow.close();
+          }),
+          restoreWindow: async () => {
+            quitting = false; updateClosing = false;
+            if (!window || window.isDestroyed()) await openWindow();
+            showWindow();
+          },
+        });
+        registerUpdateIpc(ipcMain, () => window?.webContents, rendererOrigin, updates);
+      }
+      await openWindow();
+      if (updates) void updates.command("check");
       if (!checking) {
         // A main-process timer keeps mail current while the window is hidden
         // and the renderer has no reason to paint.
@@ -364,8 +442,10 @@ else {
             throw new Error("Development API isolation failed.");
         }
         // Closing the window must leave the app and its tray in place.
-        window.close();
-        if (window.isDestroyed() || window.isVisible() || !tray || tray.isDestroyed())
+        const checkingWindow = window;
+        if (!checkingWindow) throw new Error("The desktop window is unavailable.");
+        checkingWindow.close();
+        if (checkingWindow.isDestroyed() || checkingWindow.isVisible() || !tray || tray.isDestroyed())
           throw new Error("Closing the window did not preserve the background app.");
         console.log(
           JSON.stringify({
@@ -396,11 +476,12 @@ else {
       );
       app.quit();
     });
-  app.on("window-all-closed", () => app.quit());
+  app.on("window-all-closed", () => { if (!updateClosing) app.quit(); });
   app.on("before-quit", () => {
     quitting = true;
   });
   app.on("will-quit", () => {
+    updates?.stop();
     clearInterval(syncTimer);
     tray?.destroy();
     server?.close();

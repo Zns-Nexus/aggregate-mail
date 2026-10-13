@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { google } from "googleapis";
 import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
+import { quietImapWatch } from "./imap-watch-fixture.js";
 import type { Mail, State } from "../shared/types.js";
 import type { StoredAccount } from "./store.js";
 
@@ -62,7 +63,7 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
     mock.method(nodemailer, "createTransport", () => ({ verify: async () => true }));
     mock.method(google, "gmail", () => ({ users: { labels: { list: async () => ({ data: { labels: [] } }) } } }), {});
     let onMailChanged: (() => void) | undefined;
-    const server = await startServer(0, undefined, () => onMailChanged?.());
+    const server = await startServer(0, undefined, () => onMailChanged?.(), undefined, quietImapWatch);
     const address = server.address();
     assert.ok(address && typeof address === "object");
     const origin = `http://127.0.0.1:${address.port}`;

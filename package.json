@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "electron-updater": "6.8.10",
     "express": "^5.1.0",
     "googleapis": "^160.0.0",
     "htmlparser2": "10.1.0",
@@ -63,6 +64,7 @@
       "dist/**",
       "package.json",
       "build/icon.png",
+      "build/tray-icon.png",
       "!**/{.env,.env.*,*.env,*.env.*,*.key,*.pem,*.p12,*.pfx,*.mobileprovision,*.sqlite,*.sqlite-*,*.db,*.db-*,key.protected}",
       "!**/{.data,.handoff,.ssh,.aws}/**"
     ],

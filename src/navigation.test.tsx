@@ -75,6 +75,13 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
     return found;
   };
   const click = async (target: HTMLElement) => { await act(async () => target.click()); };
+  const choose = async (label: string, value: string) => {
+    await click(button(label));
+    const option = [...container.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((option) => option.textContent?.trim() === value);
+    assert.ok(option, `option ${value}`);
+    await click(option);
+  };
   const back = () => button("Back");
   const forward = () => button("Forward");
   const open = async (id: string) => {
@@ -99,7 +106,7 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
       field.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     });
   };
-  return { state, storage: dom.window.localStorage, window: dom.window, container, button, click, back, forward, open, mouse, key, input, mutations,
+  return { state, storage: dom.window.localStorage, window: dom.window, container, button, click, choose, back, forward, open, mouse, key, input, mutations,
     title: () => container.querySelector(".message h1")?.textContent,
     native: async (direction: "back" | "forward") => { await act(async () => navigate?.(direction)); },
     refresh: async () => { await act(async () => changed?.()); },
@@ -174,7 +181,7 @@ test("mounted App traverses intentional mail routes, restores context and trunca
     await app.click(app.button("Other1"));
     assert.equal(app.title(), undefined);
     assert.ok(app.forward().disabled);
-    await app.click(app.button("1first"));
+    await app.choose("Filter accounts", "first@example.com");
     await app.click(app.button("Search mail"));
     const search = app.container.querySelector<HTMLInputElement>(".search input")!;
     await app.input(search, "Other");
@@ -182,7 +189,7 @@ test("mounted App traverses intentional mail routes, restores context and trunca
     await app.open("a:3");
     await app.click(app.back());
     assert.equal(app.container.querySelector<HTMLInputElement>(".search input")?.value, "Other message");
-    assert.equal(app.button("1first").getAttribute("aria-pressed"), "true");
+    assert.equal(app.button("Filter accounts").textContent, "first@example.com");
     assert.equal(app.container.querySelector(".tabs .active")?.getAttribute("aria-current"), "page");
     await app.click(app.back()); // All keystrokes form one search visit.
     assert.equal(app.container.querySelector<HTMLInputElement>(".search input"), null);
@@ -198,7 +205,7 @@ test("mounted App traverses intentional mail routes, restores context and trunca
     await app.refresh();
     await app.click(app.forward());
     assert.equal(app.title(), undefined);
-    assert.equal(app.button("0All").getAttribute("aria-pressed"), "true");
+    assert.equal(app.button("Filter accounts").textContent, "All accounts");
     assert.equal(app.container.ownerDocument.location.href, "http://localhost/");
     assert.equal(app.container.ownerDocument.defaultView!.localStorage.length, 0);
   } finally { await app.close(); }
@@ -317,12 +324,12 @@ test("privacy removes connected recipient names and addresses from list, headers
     state.messages[0] = { ...state.messages[0], to: '"Nora Lane" <first@example.com>',
       cc: "Kai Rivers <second@example.com>", subject: "For Nora Lane", preview: "Hello Nora and Kai",
       body: "Hello Nora Lane", reason: "Priority for Nora Lane",
-      html: '<table style="background-color:#fff;color:#222"><tbody><tr><td>Hello <b>Nora</b> Lane and Kai</td></tr><tr><td><a href="https://example.com/?name=Nora%2520Lane" title="Nora Lane">Private destination</a><img src="https://images.example.com/photo.png" alt="Nora Lane"></td></tr></tbody></table>' };
+      html: '<table style="background-color:#fff;color:#222"><tbody><tr><td>Hello <b>Nora</b> Lane and Kai first<span>@example.com<img src="https://images.example.com/photo.png" alt="Nora Lane first@example.com" title="Nora Lane" aria-label="Nora Lane"></span></td></tr><tr><td><a href="https://example.com/?name=Nora%2520Lane" title="Nora Lane">Private destination</a><img src="https://images.example.com/?to=first%40example.com" alt="Nora Lane"></td></tr></tbody></table>' };
   });
   try {
     const assertHidden = () => {
       const markup = app.container.innerHTML;
-      for (const value of ["Nora", "Lane", "Kai", "first@example.com", "second@example.com", "%2520"])
+      for (const value of ["Nora", "Lane", "Kai", "first@example.com", "second@example.com", "%2520", "%40"])
         assert.ok(!markup.includes(value), `hidden ${value} must not be in markup`);
     };
     assertHidden();
@@ -331,7 +338,13 @@ test("privacy removes connected recipient names and addresses from list, headers
     await app.key("s"); assert.ok(app.container.querySelector('[role="dialog"]'));
     assertHidden(); await app.click(app.button("Close dialog"));
     assert.equal(app.container.querySelector(".message-body img"), null);
-    assert.equal(app.button("Show images").disabled, true);
+    assert.equal(app.button("Show images").disabled, false);
+    await app.click(app.button("Show images"));
+    assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
+    assertHidden();
+    assert.ok(app.container.textContent?.includes("Image unavailable while personal information is hidden"));
+    await app.click(app.button("Hide images"));
+    assert.equal(app.container.querySelector(".message-body img"), null);
     assert.ok(app.container.querySelector(".formatted-mail table"));
     const control = app.container.querySelector(".image-controls")!;
     const body = app.container.querySelector(".message-body")!;
@@ -339,10 +352,69 @@ test("privacy removes connected recipient names and addresses from list, headers
     await app.click(app.button("Show personal information"));
     assert.ok(app.container.textContent?.includes("Nora"));
     await app.click(app.button("Show images"));
-    assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
+    assert.equal(app.container.querySelectorAll(".message-body img").length, 2);
     assert.equal(app.container.querySelectorAll(".message-images figure").length, 0, "formatted images are not duplicated");
     await app.key("p");
     assertHidden(); assert.equal(app.container.querySelector(".message-body img"), null);
+    await app.click(app.button("Show images"));
+    assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
+    assertHidden();
+    await app.click(app.back()); await app.click(app.forward());
+    assert.equal(app.container.querySelector(".message-body img"), null, "history return requires new consent in privacy mode");
+    assert.equal(app.button("Show images").disabled, false);
+  } finally { await app.close(); }
+});
+
+test("formatted privacy keeps image order and keyboard reveal across image boundaries", async () => {
+  const app = await mount(false, (state, storage) => {
+    storage.setItem("privacy", "on");
+    state.messages[0] = { ...state.messages[0], to: '"Nora Lane" <first@example.com>',
+      html: '<p>😀BEFORE <b>No<img src="https://images.example.com/first.png" alt="Nora Lane">ra</b> Lane BETWEEN first<span>@<img src="https://images.example.com/second.png" alt="first@example.com">example.com</span> AFTER<img src="https://images.example.com/?to=first%40example.com" alt="Nora Lane"> Separate Lane.</p>' };
+  });
+  try {
+    await app.open("a:1");
+    const body = app.container.querySelector<HTMLElement>(".message-body")!;
+    const assertHidden = () => {
+      for (const token of ["Nora", "Lane", "first@example.com", "%40"])
+        assert.ok(!body.innerHTML.includes(token), token);
+      for (const bar of body.querySelectorAll(".address.veiled")) {
+        assert.equal(bar.textContent, "");
+        assert.equal(bar.getAttribute("tabindex"), "0");
+        assert.equal(bar.getAttribute("role"), "button");
+      }
+    };
+    assertHidden();
+    assert.equal(body.querySelector("img"), null);
+    await app.click(app.button("Show images"));
+    assertHidden();
+    assert.equal(body.querySelectorAll("img").length, 2);
+    assert.equal(body.querySelectorAll("[src]").length, 2);
+    assert.ok(body.textContent?.includes("Image unavailable while personal information is hidden"));
+    const copy = body.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll(".formatted-mail-image-status").forEach((status) => status.remove());
+    copy.querySelectorAll("img").forEach((image, index) => image.replaceWith(`[image${index + 1}]`));
+    assert.match(copy.textContent || "", /😀BEFORE.*\[image1\].*BETWEEN.*\[image2\].*AFTER/s);
+    const name = body.querySelector<HTMLElement>('[aria-label="Reveal hidden name"]')!;
+    name.focus();
+    await act(async () => name.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    assert.equal(app.window.document.activeElement, name);
+    assert.match(body.textContent || "", /NoLoading image…ra Lane/);
+    assert.ok(!body.innerHTML.includes("first@example.com"));
+    assert.ok(body.textContent?.endsWith(" Separate ."), "revealing the full name leaves a separate surname hidden");
+    await act(async () => name.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })));
+    assertHidden();
+    const address = body.querySelector<HTMLElement>('[aria-label="Reveal hidden address"]')!;
+    await app.click(address);
+    assert.match(body.textContent || "", /first@Loading image…example.com/);
+    assert.ok(!body.innerHTML.includes("Nora") && !body.innerHTML.includes("Lane"));
+    await app.click(address);
+    assertHidden();
+    await app.click(app.button("Hide images"));
+    assert.equal(body.querySelector("img"), null);
+    await app.click(app.button("Show images"));
+    assert.equal(body.querySelectorAll("img").length, 2);
+    await app.key("Escape"); await app.open("a:1");
+    assert.equal(app.container.querySelector(".message-body img"), null);
   } finally { await app.close(); }
 });
 
@@ -426,7 +498,8 @@ test("empty and rejected formatting retain readable text and consent-controlled 
   for (const html of [null, "", "<script>discard</script>", "<br>".repeat(4001),
     "<html><head><style>p { color: red }</style></head><body><form><p>Discarded form</p></form></body></html>",
     "<div><span>   </span></div>", '<div><img src="javascript:invalid"></div>']) {
-    const app = await mount(false, (state) => {
+    const app = await mount(false, (state, storage) => {
+      storage.setItem("privacy", "on");
       state.messages[0] = { ...state.messages[0], html, body: "First paragraph\n\nSecond paragraph" };
     });
     try {
@@ -441,6 +514,175 @@ test("empty and rejected formatting retain readable text and consent-controlled 
       await app.click(app.button("Show images"));
       await app.key("Escape"); await app.open("a:1");
       assert.equal(app.container.querySelector(".message-images img"), null, "reopening requires fresh consent");
+    } finally { await app.close(); }
+  }
+});
+
+test("mounted cached-mail controls combine filters, retain the read-on-open reader and restore history", async () => {
+  const app = await mount(false, (state) => {
+    state.accounts[0].provider = "gmail";
+    state.labels = [{ id: "team", accountId: "a", name: "Team", type: "user" }];
+    state.messages[0] = { ...state.messages[0], relevance: 3, labelIds: ["team"], date: 30 };
+    state.messages[1] = { ...state.messages[1], relevance: 1, labelIds: ["team"], date: 20 };
+    state.messages[2] = { ...state.messages[2], relevance: 3, date: 40 };
+  });
+  const rows = () => [...app.container.querySelectorAll(".row")].map(row => row.id);
+  try {
+    assert.deepEqual(rows(), ["mail-b:1", "mail-a:1", "mail-a:2"]);
+    await app.choose("Filter accounts", "first@example.com");
+    await app.choose("Filter by Gmail label", "Team");
+    await app.choose("Read status", "Unread");
+    await app.choose("Relevance filter", "High relevance");
+    await app.choose("Sort mail", "Oldest");
+    await app.click(app.button("Search mail"));
+    await app.input(app.container.querySelector<HTMLInputElement>(".search input")!, "ALPHA");
+    assert.deepEqual(rows(), ["mail-a:1"]);
+    await app.open("a:1");
+    assert.equal(app.title(), "Alpha");
+    assert.equal(app.state.messages[0].unread, false);
+    assert.equal(app.button("Read status").textContent, "Unread");
+    await app.refresh();
+    assert.equal(app.title(), "Alpha", "automatic cache updates retain the opened reader");
+    await app.choose("Sort mail", "Relevance");
+    assert.equal(app.title(), undefined, "explicit sort change closes the reader");
+    assert.deepEqual(rows(), []);
+    assert.match(app.container.querySelector(".empty")!.textContent!, /No matching mail/);
+    await app.click(app.back());
+    assert.equal(app.title(), "Alpha");
+    assert.equal(app.button("Sort mail").textContent, "Oldest");
+    await app.click(app.forward());
+    assert.equal(app.title(), undefined);
+    const reset = app.container.querySelector<HTMLButtonElement>(".empty button")!;
+    assert.equal(reset.textContent, "Reset filters and sort");
+    await app.click(reset);
+    assert.deepEqual(rows(), ["mail-b:1", "mail-a:1", "mail-a:2"]);
+    for (const [label, value] of [["Filter accounts", "All accounts"], ["Read status", "All mail"],
+      ["Relevance filter", "All relevance"], ["Sort mail", "Newest"], ["Filter by Gmail label", "All labels"]])
+      assert.equal(app.button(label).textContent, value);
+    assert.equal(app.container.querySelector(".search input"), null);
+    await app.click(app.back());
+    assert.deepEqual(rows(), []);
+    assert.equal(app.button("Sort mail").textContent, "Relevance");
+    assert.equal(app.button("Filter accounts").textContent, "first@example.com");
+    assert.equal(app.button("Read status").textContent, "Unread");
+    assert.equal(app.button("Relevance filter").textContent, "High relevance");
+    assert.equal(app.button("Filter by Gmail label").textContent, "Team");
+    assert.equal(app.container.querySelector<HTMLInputElement>(".search input")?.value, "ALPHA");
+    await app.choose("Read status", "All mail");
+    assert.deepEqual(rows(), ["mail-a:1"]);
+    assert.ok(app.forward().disabled, "new control visit truncates Forward");
+    assert.equal(app.storage.length, 0, "mail filter history remains in memory");
+  } finally { await app.close(); }
+});
+
+test("multiple IMAP accounts stay distinguishable and private, choose compose From and reuse Add account", async () => {
+  const app = await mount(false, (state, storage) => {
+    storage.setItem("privacy", "on");
+    state.accounts[1].error = "second@example.com connection failed";
+  });
+  try {
+    const hidden = () => {
+      for (const token of ["first@example.com", "second@example.com"])
+        assert.ok(!app.container.innerHTML.includes(token), `${token} hidden in text and attributes`);
+    };
+    await app.click(app.button("Filter accounts"));
+    assert.equal(app.container.querySelectorAll('.account-picker [role="option"]').length, 3);
+    hidden();
+    await app.click([...app.container.querySelectorAll<HTMLElement>('[role="option"]')][2]);
+    assert.equal(app.button("Filter accounts").textContent, "Account 2 · Custom IMAP · Needs attention");
+    hidden();
+    assert.deepEqual([...app.container.querySelectorAll(".row")].map(row => row.id), ["mail-b:1"]);
+    await app.key("c");
+    assert.equal(app.container.querySelector<HTMLSelectElement>(".compose-form select")?.value, "b");
+    await app.key("Escape");
+    await app.click(app.button("Add account"));
+    assert.equal(app.container.querySelector('[role="dialog"] h2')?.textContent, "Connect account");
+    assert.ok(app.container.querySelector(".provider-row"), "existing provider choice is reused");
+    assert.ok(app.back().disabled && app.forward().disabled);
+    assert.ok(app.button("Filter accounts").disabled);
+    await app.key("Escape");
+    await app.click(app.button("Show personal information"));
+    await app.click(app.button("Filter accounts"));
+    assert.match(app.container.textContent!, /first@example.com/);
+    assert.match(app.container.textContent!, /second@example.com · Needs attention/);
+    assert.equal(app.mutations.length, 0, "filter and setup entry do not mutate mail");
+  } finally { await app.close(); }
+});
+
+test("dropdown keyboard input stays within controls and explicit account changes close the reader", async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1");
+    const picker = app.button("Filter accounts");
+    await app.click(picker);
+    const dispatch = async (key: string) => {
+      await act(async () => picker.dispatchEvent(new app.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })));
+    };
+    await dispatch("2");
+    await dispatch("j");
+    assert.equal(app.title(), "Alpha");
+    assert.equal(picker.textContent, "All accounts");
+    await dispatch("ArrowDown");
+    await dispatch("Enter");
+    assert.equal(picker.textContent, "first@example.com");
+    assert.equal(app.title(), undefined);
+    await app.click(app.back());
+    assert.equal(app.title(), "Alpha");
+    await app.choose("Filter accounts", "second@example.com");
+    assert.equal(app.title(), undefined);
+    assert.equal(app.container.querySelector(".row.selected")?.id, "mail-b:1");
+    await app.key("0");
+    assert.equal(picker.textContent, "All accounts", "number shortcuts still work outside a control");
+  } finally { await app.close(); }
+});
+
+test("mounted Oldest and Relevance controls reorder cached rows and history restores the sort", async () => {
+  const app = await mount(false, (state) => {
+    state.messages[0] = { ...state.messages[0], date: 30, relevance: 1 };
+    state.messages[1] = { ...state.messages[1], date: 20, relevance: 3 };
+    state.messages[2] = { ...state.messages[2], date: 10, relevance: 2 };
+  });
+  const rows = () => [...app.container.querySelectorAll(".row")].map(row => row.id);
+  try {
+    assert.deepEqual(rows(), ["mail-a:1", "mail-a:2", "mail-b:1"]);
+    await app.choose("Sort mail", "Oldest");
+    assert.deepEqual(rows(), ["mail-b:1", "mail-a:2", "mail-a:1"]);
+    await app.choose("Sort mail", "Relevance");
+    assert.deepEqual(rows(), ["mail-a:2", "mail-b:1", "mail-a:1"]);
+    assert.equal(app.container.querySelector(".group"), null, "date groups do not interrupt relevance ordering");
+    await app.click(app.back());
+    assert.equal(app.button("Sort mail").textContent, "Oldest");
+    assert.deepEqual(rows(), ["mail-b:1", "mail-a:2", "mail-a:1"]);
+    await app.click(app.forward());
+    assert.equal(app.button("Sort mail").textContent, "Relevance");
+    assert.deepEqual(rows(), ["mail-a:2", "mail-b:1", "mail-a:1"]);
+  } finally { await app.close(); }
+});
+
+test("Unread reader navigation keeps the opened message as an ordering anchor", async () => {
+  const scenarios = [
+    { sort: "Newest", opened: "a:2", key: "j", expected: "Gamma" },
+    { sort: "Newest", opened: "b:1", key: "k", expected: "Beta" },
+    { sort: "Oldest", opened: "a:2", key: "j", expected: "Alpha" },
+    { sort: "Relevance", opened: "a:2", key: "j", expected: "Gamma" },
+    { sort: "Newest", opened: "b:1", key: "j", expected: "Gamma" },
+    { sort: "Newest", opened: "a:1", key: "k", expected: "Alpha" },
+  ];
+  for (const scenario of scenarios) {
+    const app = await mount(false, (state) => {
+      state.messages[0] = { ...state.messages[0], date: 30, relevance: 3 };
+      state.messages[1] = { ...state.messages[1], date: 20, relevance: 2 };
+      state.messages[2] = { ...state.messages[2], date: 10, relevance: 1 };
+    });
+    try {
+      await app.choose("Read status", "Unread");
+      await app.choose("Sort mail", scenario.sort);
+      await app.open(scenario.opened);
+      assert.equal(app.state.messages.find(mail => mail.id === scenario.opened)?.unread, false);
+      await app.key(scenario.key);
+      assert.equal(app.title(), scenario.expected, JSON.stringify(scenario));
+      await app.key("Escape");
+      assert.ok(!app.container.querySelector(`[id="mail-${scenario.opened}"]`), "read anchor stays out of the Unread list");
     } finally { await app.close(); }
   }
 });

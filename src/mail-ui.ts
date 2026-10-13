@@ -1,3 +1,4 @@
+import type { MailLocation } from "./navigation";
 import type { GmailLabel, Mail } from "../shared/types";
 
 export function densityShortcut(event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "altKey" | "metaKey">) {
@@ -29,4 +30,26 @@ export async function markMailRead(mail: Mail, pending: Set<string>, update: () 
   } finally {
     pending.delete(mail.id);
   }
+}
+
+export function filterMail(messages: Mail[], location: Pick<MailLocation,
+  "view" | "accountFilter" | "query" | "readFilter" | "relevanceFilter" | "sort">,
+  label?: GmailLabel, now = Date.now(), readerId?: string) {
+  const query = location.query.toLowerCase();
+  return messages.filter((mail) => {
+    // The open reader stays an ordering anchor after read-on-open removes it from the list.
+    if (mail.id === readerId) return true;
+    if (location.accountFilter !== "all" && mail.accountId !== location.accountFilter) return false;
+    if (!matchesLabel(mail, label)) return false;
+    if (location.readFilter === "unread" && !mail.unread) return false;
+    if (location.relevanceFilter !== "all" && mail.relevance !== Number(location.relevanceFilter)) return false;
+    const snoozed = mail.snoozedUntil !== null && mail.snoozedUntil > now;
+    if (location.view === "archive" ? !mail.archived : location.view === "snoozed"
+      ? mail.archived || !snoozed : mail.archived || snoozed || mail.category !== location.view) return false;
+    return `${mail.sender} ${mail.address} ${mail.subject} ${mail.body}`.toLowerCase().includes(query);
+  }).sort((a, b) => {
+    const relevance = location.sort === "relevance" ? b.relevance - a.relevance : 0;
+    const date = location.sort === "oldest" ? a.date - b.date : b.date - a.date;
+    return relevance || date || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  });
 }

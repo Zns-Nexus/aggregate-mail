@@ -40,22 +40,13 @@
 }
 * {
   box-sizing: border-box;
+  scrollbar-width: none;
 }
 input[type="checkbox"] {
   accent-color: var(--accent);
 }
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: #38383d padding-box;
-}
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-corner {
-  background: transparent;
+  display: none;
 }
 body {
   margin: 0;
@@ -310,29 +301,6 @@ input[type="checkbox"][role="switch"]:disabled {
   align-items: center;
   gap: 4px;
   min-width: 0;
-}
-.accounts {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-  overflow: hidden;
-  margin-right: 14px;
-}
-.accounts button {
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  transition: color 160ms var(--ease-out);
-}
-.accounts button:hover {
-  color: var(--text-2);
-}
-.accounts kbd {
-  display: none;
-}
-.accounts .active {
-  color: var(--text);
 }
 .sync {
   margin-right: 6px;
@@ -914,6 +882,25 @@ input[type="checkbox"][role="switch"]:disabled {
   margin-left: auto;
   color: var(--text-3);
 }
+.mail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.mail-actions .button {
+  height: 32px;
+  padding: 0 10px;
+}
+.mail-actions > span {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.trash-action {
+  color: var(--danger);
+}
 .message h1 {
   font-size: 20px;
   font-weight: 600;
@@ -1000,6 +987,49 @@ input[type="checkbox"][role="switch"]:disabled {
 .message-body a:hover,
 .message-body a:focus-visible {
   color: var(--text);
+}
+
+/* Cached-mail controls reuse the app dropdown and wrap within the list pane. */
+.account-picker {
+  -webkit-app-region: no-drag;
+  width: clamp(130px, 16vw, 220px);
+  min-width: 0;
+}
+.account-picker .dropdown-trigger {
+  height: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.account-picker .dropdown-menu {
+  left: auto;
+  width: min(320px, calc(100vw - 32px));
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.mail-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 18px 16px;
+}
+.mail-filters > .dropdown {
+  width: 150px;
+  max-width: 100%;
+}
+.mail-filters .dropdown-trigger {
+  height: 32px;
+}
+.mail-filters .dropdown-menu li.active,
+.account-picker .dropdown-menu li.active {
+  background: var(--selected);
+  text-decoration: none;
+}
+.mail-filters .dropdown-trigger:focus-visible,
+.account-picker .dropdown-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Sender context: 280px side panel. */
@@ -1660,11 +1690,6 @@ input[type="checkbox"][role="switch"]:disabled {
   }
 }
 
-@media (max-width: 1280px) {
-  .accounts button:not(.active) > span:not(.provider-icon) {
-    display: none;
-  }
-}
 @media (max-width: 1080px) {
   .context,
   .sync {
@@ -1720,3 +1745,17 @@ input[type="checkbox"][role="switch"]:disabled {
 [data-interaction-settings] > p { margin: 10px 0; }
 [data-interaction-settings] [role="status"]:empty { display: none; }
 .address:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.update-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 16px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.update-notice p { margin: 4px 0 0; max-width: 65ch; color: var(--text-2); }
+.update-notice progress { display: block; margin-top: 8px; width: 100%; max-width: 280px; accent-color: var(--accent); }

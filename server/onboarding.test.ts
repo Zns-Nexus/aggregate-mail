@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { quietImapWatch } from "./imap-watch-fixture.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -52,7 +53,7 @@ test("account onboarding keeps transport identities and Gmail mailbox semantics"
   const { startServer } = await import("./index.js");
   const { all, put, closeStore } = await import("./store.js");
   const { providers } = await import("./providers.js");
-  const server = await startServer(0);
+  const server = await startServer(0, undefined, undefined, undefined, quietImapWatch);
   try {
     const address = server.address();
     assert.ok(address && typeof address === "object");

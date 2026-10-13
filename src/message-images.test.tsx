@@ -52,9 +52,9 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     calls.push(id);
     return new Promise<{ images: MailImage[] }>((yes, no) => { resolve = yes; reject = no; });
   };
-  const render = async (id: string, images?: MailImage[]) => {
+  const render = async (id: string, images?: MailImage[], privacy = true) => {
     await act(async () => root.render(
-      <PrivacyContext.Provider value={{ on: false, revealed: new Set(), toggle() {} }}>
+      <PrivacyContext.Provider value={{ on: privacy, names: ["Alice Example"], revealed: new Set(), toggle() {} }}>
         <MessageImages mail={{ id, images }} loadImages={loadImages} />
       </PrivacyContext.Provider>));
   };
@@ -64,6 +64,7 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     await render("a:1");
     assert.equal(button().textContent, "Show images");
     assert.equal(button().type, "button"); // Native keyboard activation and focus semantics.
+    assert.equal(button().disabled, false);
     assert.equal(button().getAttribute("aria-expanded"), "false");
     assert.equal(container.querySelector("img"), null);
     assert.deepEqual(calls, []);
@@ -76,7 +77,7 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     assert.equal(container.querySelectorAll("img").length, 1);
     assert.equal(img.getAttribute("src"), image.src);
     assert.equal(img.getAttribute("referrerpolicy"), "no-referrer");
-    assert.equal(img.alt, image.alt);
+    assert.ok(!img.alt.includes("alice@example.com"));
     assert.equal(button().getAttribute("aria-expanded"), "true");
     await act(async () => img.dispatchEvent(new dom.window.Event("load")));
     assert.ok(!container.textContent?.includes("Loading image 1"));
@@ -103,12 +104,41 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     assert.ok(container.textContent?.includes("No supported remote images"));
     assert.equal(container.querySelector("img"), null);
 
+    await render("privacy-pending", undefined, false);
+    await click();
+    const beforePrivacy = resolve;
+    await render("privacy-pending", undefined, true);
+    assert.equal(button().textContent, "Show images");
+    await click();
+    const afterPrivacy = resolve;
+    await act(async () => beforePrivacy({ images: [image] }));
+    assert.equal(button().textContent, "Loading images…", "old request cannot satisfy fresh privacy consent");
+    assert.equal(container.querySelector("img"), null);
+    await act(async () => afterPrivacy({ images: [image] }));
+    assert.equal(container.querySelectorAll("img").length, 1);
+
     calls = [];
-    await render("cached", [image]);
+    const privateImages = [image, { src: "https://images.example.com/?to=alice%2540example.com", alt: "Alice Example" },
+      { src: "https://images.example.com/Alice+Example.png", alt: "alice@example.com" }];
+    await render("cached", privateImages);
     assert.equal(container.querySelector("img"), null);
     await click();
-    assert.ok(container.querySelector("img"));
+    assert.equal(container.querySelectorAll("img").length, 1);
+    assert.ok(container.textContent?.includes("Image unavailable while personal information is hidden"));
+    for (const token of ["alice", "Alice", "Example", "%2540"])
+      assert.ok(!container.innerHTML.includes(token), token);
+    await act(async () => container.querySelector("img")!.dispatchEvent(new dom.window.Event("load")));
+    assert.ok(!container.innerHTML.includes("alice@example.com"), "loaded captions stay masked");
     assert.deepEqual(calls, []);
+    await click();
+    await render("cached", privateImages, false);
+    await click();
+    assert.equal(container.querySelectorAll("img").length, 3);
+    await render("cached", privateImages, true);
+    assert.equal(container.querySelector("img"), null, "privacy activation revokes existing consent");
+    assert.equal(button().disabled, false);
+    await click();
+    assert.equal(container.querySelectorAll("img").length, 1);
     await render("empty", []);
     await click();
     assert.ok(container.textContent?.includes("Embedded images are not shown"));
@@ -167,9 +197,97 @@ test("formatted reader recovery keeps text on failure, ignores late content and 
     await act(async () => button("Show images").click());
     assert.equal(container.querySelectorAll("img").length, 1); assert.equal(metadataCalls, 0);
     await render("formatted", true);
-    assert.equal(container.querySelector("img"), null); assert.equal(button("Show images").disabled, true);
+    assert.equal(container.querySelector("img"), null); assert.equal(button("Show images").disabled, false);
+    await act(async () => button("Show images").click());
+    assert.equal(container.querySelectorAll("img").length, 1);
+    await act(async () => button("Hide images").click());
     await render("formatted", false);
     assert.equal(container.querySelector("img"), null, "disabling privacy does not grant consent again");
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+test("fallback image metadata keeps truncated private tokens out of alt and loaded captions", async (t) => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>");
+  const descriptors = new Map(["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const toggled: string[] = [];
+  const render = async (id: string, alt: string, privacy: boolean, revealed = new Set<string>()) => {
+    await act(async () => root.render(
+      <PrivacyContext.Provider value={{ on: privacy, names: ["Nora Lane"], revealed, toggle: (key) => { toggled.push(key); } }}>
+        <MessageImages mail={{ id, html: null, images: [{ ...image, alt }] }}
+          loadImages={async () => { throw new Error("cached metadata must not fetch"); }} />
+      </PrivacyContext.Provider>));
+  };
+  const button = () => container.querySelector("button")!;
+  const click = async () => { await act(async () => button().click()); };
+  const load = async () => { await act(async () => container.querySelector("img")!.dispatchEvent(new dom.window.Event("load"))); };
+  try {
+    const descriptions = [
+      ["address", ("x".repeat(490) + " reader@example.com").slice(0, 500)],
+      ["name", ("x".repeat(497) + " Nora Lane").slice(0, 500)],
+      ["UTF-16 name", ("😀".repeat(248) + " Nora Lane").slice(0, 500)],
+      ["public at boundary", "p".repeat(500)],
+      ["over boundary", "x".repeat(497) + " Nora Lane"],
+    ];
+    for (const [label, description] of descriptions) {
+      for (const target of ["alt", "loaded caption"]) {
+        await t.test(`${label}: ${target}`, async () => {
+          const id = `${label}:${target}`;
+          await render(id, description, false);
+          assert.equal(container.querySelector("img"), null);
+          assert.equal(button().type, "button");
+          assert.equal(button().getAttribute("aria-expanded"), "false");
+          button().focus();
+          await click();
+          assert.equal(dom.window.document.activeElement, button(), "activation retains focus");
+          assert.equal(container.querySelector("img")?.alt, description, "privacy off preserves metadata");
+          await load();
+          assert.equal(container.querySelector("figcaption")?.textContent, description);
+          await render(id, description, true);
+          assert.equal(container.querySelector("img"), null, "privacy activation revokes consent");
+          await click();
+          if (target === "loaded caption") await load();
+          assert.equal(target === "alt" ? container.querySelector("img")?.alt : container.querySelector("figcaption")?.textContent,
+            "Image 1", "uncertain metadata uses a safe description");
+          assert.ok(!container.innerHTML.includes(description), "raw metadata is absent from DOM");
+          await click();
+          assert.equal(container.querySelector("img"), null, "Hide revokes consent");
+        });
+      }
+    }
+    await t.test("short private descriptions remain masked and explicitly revealable", async () => {
+      const description = "Photo for Nora Lane and reader@example.com";
+      await render("short-private", description, true);
+      await click();
+      assert.equal(container.querySelector("img")?.alt, "Photo for •••••••• and ••••••••");
+      await load();
+      const caption = container.querySelector("figcaption")!;
+      assert.equal(caption.textContent, "Photo for  and ");
+      const reveal = caption.querySelector<HTMLElement>('[aria-label="Reveal hidden name"]')!;
+      assert.equal(reveal.tabIndex, 0);
+      await act(async () => reveal.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+      assert.deepEqual(toggled, ["nora lane"]);
+      await render("short-private", description, true, new Set(toggled));
+      assert.equal(caption.textContent, "Photo for Nora Lane and ");
+      assert.equal(container.querySelector("img")?.alt, "Photo for •••••••• and ••••••••", "caption reveal does not reveal alt");
+    });
+    await t.test("short public descriptions remain readable", async () => {
+      await render("short-public", "Public landscape", true);
+      assert.equal(container.querySelector("img"), null);
+      await click();
+      assert.equal(container.querySelector("img")?.alt, "Public landscape");
+      await load();
+      assert.equal(container.querySelector("figcaption")?.textContent, "Public landscape");
+    });
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of descriptors) {

@@ -55,33 +55,62 @@ test("cached Gmail uses paginated inbox/unread lists without metadata gets, keep
 });
 
 test("Gmail token, list and raw read timeouts abort actual transport and do not retry", async (t) => {
-  for (const phase of ["token", "list", "raw"] as const) {
-    await t.test(phase, async () => {
-      let aborted!: () => void;
-      const closed = new Promise<void>((resolve) => { aborted = resolve; });
-      const server = createServer((req, res) => {
-        req.resume();
-        res.on("close", () => { if (!res.writableEnded) aborted(); });
-      });
-      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  async function checkTransport(phase: "token" | "list" | "raw", dropAbort = false) {
+    const timeouts: AbortController[] = [];
+    const cleanup = new AbortController();
+    const reason = new DOMException("Synthetic private timeout details", "TimeoutError");
+    let arrivals = 0, stalledCalls = 0;
+    let arrived!: () => void, aborted!: () => void;
+    const active = new Promise<void>((resolve) => { arrived = resolve; });
+    const closed = new Promise<void>((resolve) => { aborted = resolve; });
+    const server = createServer((req, res) => {
+      arrivals++;
+      req.resume();
+      res.on("close", () => { if (!res.writableEnded) aborted(); });
+      // Fire the timeout only after the real transport reaches the server.
+      arrived();
+      timeouts.forEach((timeout) => timeout.abort(reason));
+    });
+    let restoreMocks = () => {};
+    let rejected: Promise<void> | undefined, transport: Promise<Response> | undefined;
+    async function withinBound(work: Promise<unknown>, message: string, ms = 1000) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([work, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })]);
+      } finally { clearTimeout(timer); }
+    }
+    try {
+      await new Promise<void>((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
       const address = server.address(); assert.ok(address && typeof address === "object");
       const originalGmail = google.gmail;
-      const originalTimeout = AbortSignal.timeout;
       const timeoutMock = mock.method(AbortSignal, "timeout", (ms: number) => {
-        assert.equal(ms, 30000); return originalTimeout(40);
+        assert.equal(ms, 30000);
+        const timeout = new AbortController();
+        timeouts.push(timeout);
+        return timeout.signal;
       });
-      let stalledCalls = 0;
+      restoreMocks = () => timeoutMock.mock.restore();
       const gmailMock = mock.method(google, "gmail", (options: Parameters<typeof google.gmail>[0]) => {
         assert.ok(typeof options === "object" && options && typeof options.auth === "object");
         const auth = options.auth as InstanceType<typeof google.auth.OAuth2>;
         assert.equal(auth.transporter.defaults.timeout, 30000);
+        assert.equal(auth.transporter.defaults.retry, false);
         assert.equal(auth.transporter.defaults.retryConfig?.retry, 0);
         auth.transporter.defaults.fetchImplementation = async (url, init) => {
           const token = String(url).includes("/token");
           const list = String(url).split("?")[0].endsWith("/messages");
           if ((phase === "token" && token) || (phase === "list" && list) || (phase === "raw" && !token && !list)) {
             stalledCalls++;
-            return fetch(`http://127.0.0.1:${address.port}`, init);
+            const signal = init?.signal; assert.ok(signal);
+            assert.equal(signal.aborted, false, "transport must start before timeout");
+            transport = fetch(`http://127.0.0.1:${address.port}`, { ...init, signal: dropAbort ? cleanup.signal : signal });
+            if (!dropAbort) return transport;
+            // Negative control: reject the caller on timeout but leave its socket open.
+            let rejectAbort!: () => void;
+            const rejected = new Promise<never>((_resolve, reject) => { rejectAbort = () => reject(signal.reason); });
+            signal.addEventListener("abort", rejectAbort, { once: true });
+            try { return await Promise.race([transport, rejected]); }
+            finally { signal.removeEventListener("abort", rejectAbort); }
           }
           return new Response(JSON.stringify(token
             ? { access_token: "synthetic-access", expires_in: 3600, token_type: "Bearer" }
@@ -89,26 +118,38 @@ test("Gmail token, list and raw read timeouts abort actual transport and do not 
         };
         return originalGmail.call(google, options);
       }, {});
-      try {
-        await assert.rejects(providers.gmail.list({ ...account, credentials: { refreshToken: "synthetic-refresh" } }, new Map()), (error: unknown) => {
-          assert.ok(error instanceof SyncError);
-          assert.deepEqual(error.failure, { kind: "transient", phase: phase === "raw" ? "read" : "list", code: "ETIMEDOUT" });
-          assert.match(error.message, /temporarily unavailable/);
-          return true;
-        });
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([closed, new Promise<void>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Transport did not close")), 1000); })]);
-        } finally { clearTimeout(timer); }
-        assert.equal(stalledCalls, 1);
-        console.log(`synthetic Gmail ${phase}: transport closed after abort, 1 attempt`);
-      } finally {
-        gmailMock.mock.restore(); timeoutMock.mock.restore();
-        server.closeAllConnections();
-        await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-      }
-    });
+      restoreMocks = () => { gmailMock.mock.restore(); timeoutMock.mock.restore(); };
+      rejected = assert.rejects(providers.gmail.list({ ...account, credentials: { refreshToken: "synthetic-refresh" } }, new Map()), (error: unknown) => {
+        assert.ok(error instanceof SyncError);
+        assert.deepEqual(error.failure, { kind: "transient", phase: phase === "raw" ? "read" : "list", code: "ETIMEDOUT" });
+        assert.match(error.message, /temporarily unavailable/);
+        assert.ok(!error.message.includes(reason.message));
+        return true;
+      });
+      void rejected.catch(() => {});
+      await withinBound(Promise.all([active, rejected]), "Transport did not arrive or time out", 30000);
+      assert.equal(arrivals, 1);
+      assert.equal(stalledCalls, 1);
+      await withinBound(closed, "Transport did not close");
+      assert.equal(stalledCalls, 1);
+      assert.equal(arrivals, 1);
+      console.log(`synthetic Gmail ${phase}: 1 request arrived, transport closed after abort, 1 attempt`);
+    } finally {
+      timeouts.forEach((timeout) => timeout.abort(reason));
+      cleanup.abort();
+      restoreMocks();
+      server.closeAllConnections();
+      await Promise.allSettled([rejected, transport]);
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   }
+  for (const phase of ["token", "list", "raw"] as const) {
+    await t.test(phase, () => checkTransport(phase));
+  }
+  await t.test("missing transport abort fails the closure assertion", async () => {
+    await assert.rejects(checkTransport("raw", true), { message: "Transport did not close" });
+    console.log("synthetic Gmail negative control: caller timed out but open transport failed the 1000ms closure bound");
+  });
 });
 
 test("fresh Gmail batches appear before the next page, and all in-flight gets settle on failure", async () => {

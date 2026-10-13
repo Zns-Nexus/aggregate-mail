@@ -31,13 +31,14 @@ import {
   Settings,
   Mail as MailIcon,
 } from "./icons";
-import { customLabels, densityShortcut, matchesLabel, markMailRead } from "./mail-ui";
+import { customLabels, densityShortcut, filterMail, matchesLabel, markMailRead } from "./mail-ui";
 import { appPasswordHelp, imageSource, jevProviders, logoDomain, providerNames } from "../shared/types";
 import { useMailNavigation, type MailLocation } from "./navigation";
 import { FormattedMail } from "./FormattedMail";
 import { privateMailLink } from "../shared/mail-content";
-import { collectPrivateNames, redactPrivateText, segmentPrivateText } from "./privacy";
+import { collectPrivateNames, redactPrivateText, segmentPrivateText, type PrivacySegment } from "./privacy";
 import { InteractionSettings } from "./InteractionSettings";
+import { UpdateNotice } from "./UpdateNotice";
 import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel, type InteractionPreferences } from "./interaction";
 import type {
   Account,
@@ -283,12 +284,12 @@ function Address({ value, children, kind = "address" }: { value: string; childre
     {shown ? children ?? value : null}
   </span>;
 }
-function Redact({ text }: { text: string }) {
+function Redact({ text, segments }: { text: string; segments?: readonly PrivacySegment[] }) {
   const { on, names } = useContext(PrivacyContext);
   if (!on || !text) return <>{text}</>;
-  return <>{segmentPrivateText(text, names).map((part, index) => part.kind === "text" ?
-    <Fragment key={index}>{part.text}</Fragment> :
-    <Address key={index} value={part.text} kind={part.kind} />)}</>;
+  return <>{(segments ?? segmentPrivateText(text, names)).map((part, index) => part.kind === "text" ?
+    <Fragment key={index}>{segments ? <Redact text={part.text} /> : part.text}</Fragment> :
+    <Address key={index} value={segments ? part.value ?? part.text : part.text} kind={part.kind}>{part.text}</Address>)}</>;
 }
 export function MessageBody({ text }: { text: string }) {
   const { on, names } = useContext(PrivacyContext);
@@ -335,19 +336,23 @@ export function MessageText({ text }: { text: string }) {
 function ReaderImage({ image, index }: { image: MailImage; index: number }) {
   const { on, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("loading");
+  // Provider metadata may end mid-token at its 500-unit limit.
+  const description = on && image.alt.length >= 500 ? `Image ${index + 1}` : image.alt;
+  const privateSource = on && privateMailLink(image.src, (value) => redactPrivateText(value, names));
   return <figure>
-    {!on && status !== "error" && <img
+    {!privateSource && status !== "error" && <img
       src={image.src}
-      alt={on ? redactPrivateText(image.alt, names) : image.alt}
+      alt={on ? redactPrivateText(description, names) : description}
       referrerPolicy="no-referrer"
       decoding="async"
       onLoad={() => setStatus("loaded")}
       onError={() => setStatus("error")}
     />}
     <figcaption>
-      {status === "loading" ? `Loading image ${index + 1}…` :
+      {privateSource ? "Image unavailable while personal information is hidden." :
+        status === "loading" ? `Loading image ${index + 1}…` :
         status === "error" ? `Image ${index + 1} could not be loaded.` :
-        <Redact text={image.alt || `Image ${index + 1}`} />}
+        <Redact text={description || `Image ${index + 1}`} />}
     </figcaption>
   </figure>;
 }
@@ -367,6 +372,7 @@ export function ReaderContent(props: ImageProps & { loadContent: (id: string) =>
 function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
   const { on: privacy, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("blocked");
+  const [consentInPrivacy, setConsentInPrivacy] = useState(false);
   const [images, setImages] = useState<MailImage[]>([]);
   const [content, setContent] = useState<ContentResult>({ html: mail.html ?? null, images: mail.images });
   const [contentStatus, setContentStatus] = useState(mail.html === undefined && loadContent ? "loading" : "ready");
@@ -378,6 +384,7 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     return () => { active.current = false; imageRequest.current++; };
   }, []);
   useEffect(() => {
+    setConsentInPrivacy(false);
     if (privacy) { imageRequest.current++; setStatus("blocked"); setImages([]); }
   }, [privacy]);
   const recoverContent = async () => {
@@ -394,8 +401,8 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     if (mail.html === undefined && loadContent) void recoverContent();
   }, []);
   const show = async () => {
-    if (privacy) return;
     const request = ++imageRequest.current;
+    setConsentInPrivacy(privacy);
     setStatus("loading");
     try {
       const result = mail.images ?? content.images ?? (await loadImages(mail.id)).images;
@@ -409,7 +416,7 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
       if (active.current && request === imageRequest.current) setStatus("error");
     }
   };
-  const shown = status === "shown" && !privacy;
+  const shown = status === "shown" && (!privacy || consentInPrivacy);
   const gallery = shown && (images.length ? images.map((image, index) =>
     <ReaderImage key={image.src} image={image} index={index} />) :
     <p role="status">No supported remote images in this email. Embedded images are not shown.</p>);
@@ -418,7 +425,7 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     <div className="image-controls">
       <button className="button" type="button"
         aria-expanded={shown} aria-controls={region}
-        disabled={status === "loading" || privacy}
+        disabled={status === "loading"}
         onClick={() => {
           if (shown) { imageRequest.current++; setStatus("blocked"); }
           else void show();
@@ -426,16 +433,16 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
         {status === "loading" ? "Loading images…" : shown ? "Hide images" :
           status === "error" ? "Try images again" : "Show images"}
       </button>
-      <span>{privacy ? "Images are hidden while personal information is hidden." :
-        "Remote images can tell the sender you opened this email."}</span>
+      <span>Remote images can tell the sender you opened this email.
+        {privacy && " Image pixels may contain personal information."}</span>
     </div>
     {body && contentStatus === "loading" && <p role="status">Loading formatted email…</p>}
     {body && contentStatus === "error" && <p role="status">Formatted email is unavailable. The text is shown below. <button type="button" className="link" onClick={() => void recoverContent()}>Try again</button></p>}
     <div id={region}>
       {status === "error" && <p role="status">Images could not be loaded. The email may be unavailable or archived.</p>}
       {body && <div className="message-body">
-        {content.html ? <FormattedMail html={content.html} showImages={shown} privacy={privacy}
-          renderText={(text) => <Redact text={text} />} redactText={(text) => redactPrivateText(text, names)}
+        {content.html ? <FormattedMail html={content.html} showImages={shown} privacy={privacy} privateNames={names}
+          renderText={(text, segments) => <Redact text={text} segments={segments} />} redactText={(text) => redactPrivateText(text, names)}
           fallback={<>{textBody}{gallery}</>} /> : textBody}
       </div>}
       {(!body || !content.html) && gallery}
@@ -507,7 +514,7 @@ export function selectMail(
 export function App() {
   const [state, setState] = useState(empty);
   const navigation = useMailNavigation();
-  const { view, accountFilter, labelFilter, selectedId, query, opened } = navigation.location;
+  const { view, accountFilter, labelFilter, selectedId, query, opened, readFilter, relevanceFilter, sort } = navigation.location;
   const setSelectedId = (selectedId: string | null) =>
     navigation.update((current) => ({ ...current, selectedId }));
   const setOpened = (opened: boolean) =>
@@ -522,10 +529,13 @@ export function App() {
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const [connecting, setConnecting] = useState<ImapProvider | "choose" | null>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const sendTask = useRef<Promise<void> | undefined>(undefined);
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
+  const [trashMail, setTrashMail] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
-  const navigationBlocked = !!(compose || teach || snooze || shortcuts || settings || labelMail || connecting);
+  const navigationBlocked = !!(compose || teach || snooze || trashMail || shortcuts || settings || labelMail || connecting);
   const navigate = (patch: Partial<MailLocation>, search = false) => {
     if (navigationBlocked) return false;
     navigation.visit(patch, search);
@@ -627,6 +637,8 @@ export function App() {
   const [recent, setRecent] = useState<string[]>([]);
   const csrf = useRef("");
   const pendingReads = useRef(new Set<string>());
+  const [reading, setReading] = useState(new Set<string>());
+  const trashLock = useRef(false);
   const loadRevision = useRef(0);
   const syncLock = useRef(false);
   const sendLock = useRef(false);
@@ -725,6 +737,11 @@ export function App() {
       }),
     [reload],
   );
+  useEffect(() => window.desktop?.updates?.onDrain(async () => {
+    await sendTask.current;
+    // Let the send result update the draft/unload guard before native close.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }), []);
   const showSearch = () => {
     setSettings(false);
     setSearching(true);
@@ -742,6 +759,12 @@ export function App() {
       );
     navigate({ view: next, opened: false, selectedId: null });
   };
+  const hasListControls = accountFilter !== "all" || labelFilter !== "all" || !!query ||
+    readFilter !== "all" || relevanceFilter !== "all" || sort !== "newest";
+  const resetListControls = () => {
+    if (navigate({ accountFilter: "all", labelFilter: "all", query: "", readFilter: "all",
+      relevanceFilter: "all", sort: "newest", selectedId: null, opened: false })) setSearching(false);
+  };
   const labels = state.labels.filter((label) =>
     accountFilter === "all" || label.accountId === accountFilter);
   const activeLabel = labels.find((label) => `${label.accountId}:${label.id}` === labelFilter);
@@ -751,24 +774,7 @@ export function App() {
   const now = Date.now();
   const isSnoozed = (m: Mail) =>
     m.snoozedUntil !== null && m.snoozedUntil > now;
-  const filtered = state.messages
-    .filter((m) => {
-      if (accountFilter !== "all" && m.accountId !== accountFilter)
-        return false;
-      if (!matchesLabel(m, activeLabel)) return false;
-      if (
-        view === "archive"
-          ? !m.archived
-          : view === "snoozed"
-            ? m.archived || !isSnoozed(m)
-            : m.archived || isSnoozed(m) || m.category !== view
-      )
-        return false;
-      return `${m.sender} ${m.address} ${m.subject} ${m.body}`
-        .toLowerCase()
-        .includes(query.toLowerCase());
-    })
-    .sort((a, b) => b.date - a.date);
+  const filtered = filterMail(state.messages, navigation.location, activeLabel, now);
   const selected = opened
     ? state.messages.find((m) => m.id === selectedId &&
         state.accounts.some((account) => account.id === m.accountId))
@@ -814,12 +820,43 @@ export function App() {
     );
   const markRead = (mail: Mail) => {
     void markMailRead(mail, pendingReads.current, async () => {
+      setReading(new Set(pendingReads.current));
       await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "read" });
-      await reload();
+      // Ignore state snapshots requested before the provider confirmed this read.
+      ++loadRevision.current;
+      setState((current) => ({ ...current, messages: current.messages.map((message) =>
+        message.id === mail.id && message.accountId === mail.accountId && message.remoteId === mail.remoteId
+          ? { ...message, unread: false, labelIds: message.labelIds?.filter((id) => id !== "UNREAD") }
+          : message) }));
+      void reload().catch(() => setNotice("Email marked as read. Inbox refresh failed. Refresh the inbox separately."));
     }).catch((error: unknown) => setNotice(
       error instanceof Error ? `${error.message} Use Mark as read or reopen the email to retry.`
         : "Could not mark this email as read. Use Mark as read or reopen it to retry.",
-    ));
+    )).finally(() => setReading(new Set(pendingReads.current)));
+  };
+  const trashUnavailable = (mail: Mail) => mail.archived && accountOf(mail)?.provider !== "gmail" && !mail.messageId
+    ? "Move to Trash is unavailable for this archived email because its Message-ID is missing. Move it in your provider."
+    : undefined;
+  const moveToTrash = async (mail: Mail) => {
+    if (busy || syncing || trashLock.current || trashUnavailable(mail)) return;
+    trashLock.current = true;
+    setBusy(true);
+    try {
+      await api(`/messages/${encodeURIComponent(mail.id)}`, "PATCH", { action: "trash" });
+      ++loadRevision.current;
+      setState((current) => ({ ...current, messages: current.messages.filter((message) =>
+        !(message.id === mail.id && message.accountId === mail.accountId && message.remoteId === mail.remoteId)) }));
+      setTrashMail(null);
+      if (selectedId === mail.id) setOpened(false);
+      setNotice("Email moved to Trash.");
+      try { await reload(); }
+      catch { setNotice("Email moved to Trash. Inbox refresh failed. Refresh the inbox separately."); }
+    } catch (error) {
+      setNotice(`${error instanceof Error ? error.message : "Move to Trash could not be confirmed."} Check your provider before trying again.`);
+    } finally {
+      trashLock.current = false;
+      setBusy(false);
+    }
   };
   const openMail = (mail: Mail, context: Partial<MailLocation> = {}) => {
     if (!navigate({ ...context, selectedId: mail.id, opened: true })) return;
@@ -831,7 +868,7 @@ export function App() {
   const jumpTo = (mail: Mail) => {
     openMail(mail, {
       view: mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
-      accountFilter: "all", labelFilter: "all", query: "",
+      accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all",
     });
   };
   const startCompose = (reply?: Mail) => {
@@ -883,22 +920,24 @@ export function App() {
       const target = event.target;
       if (settings && target instanceof HTMLElement && target.closest("[data-interaction-settings]") &&
         event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
-        !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
+        !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
         event.preventDefault(); setSettings(false); return;
       }
       if (target instanceof HTMLElement && (target.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (target instanceof HTMLElement && target.tagName === "BUTTON" && target.getAttribute("role") === "combobox") return;
       const nextDensity = densityShortcut(event);
-      if (nextDensity && !settings && !compose && !teach && !snooze && !shortcuts && !labelMail && !connecting) {
+      if (nextDensity && !settings && !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
         event.preventDefault(); setDensity(nextDensity); return;
       }
       if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey) {
         if (compose) return;
+        if (trashMail) { if (!trashLock.current) setTrashMail(null); return; }
         setOpened(false); setTeach(null); setSnooze(null); setShortcuts(false);
         setLabelMail(null); setSettings(false);
         return;
       }
-      if (compose || teach || snooze || shortcuts || labelMail || connecting) return;
+      if (compose || teach || snooze || trashMail || shortcuts || labelMail || connecting) return;
       const action = interactionActions.find(({ id }) => matches(event, id, interaction, window.desktop?.platform))?.id;
       if (action === "back" || action === "forward") {
         event.preventDefault(); travel(action === "back" ? -1 : 1); return;
@@ -913,8 +952,10 @@ export function App() {
       else if (inbox && (action === "important" || action === "other")) switchView(action);
       else if (inbox && (action === "next" || action === "previous")) {
         event.preventDefault();
-        const index = filtered.findIndex((mail) => mail.id === selected?.id);
-        const next = filtered[Math.max(0, Math.min(filtered.length - 1, index + (action === "next" ? 1 : -1)))];
+        const neighbours = opened && selected
+          ? filterMail(state.messages, navigation.location, activeLabel, now, selected.id) : filtered;
+        const index = neighbours.findIndex((mail) => mail.id === selected?.id);
+        const next = neighbours[Math.max(0, Math.min(neighbours.length - 1, index + (action === "next" ? 1 : -1)))];
         if (next) { if (opened) openMail(next); else setSelectedId(next.id); }
       } else if (inbox && action === "open" && selected &&
         (!(target instanceof HTMLElement) || !target.closest("button, a, [role=button]") || target.closest(".row"))) {
@@ -939,7 +980,7 @@ export function App() {
   });
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
-      if (compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
+      if (sendLock.current || compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
         e.preventDefault();
     };
     window.addEventListener("beforeunload", handle);
@@ -958,7 +999,7 @@ export function App() {
   const paneKey =
     opened && selected
       ? `mail:${selected.id}`
-      : `list:${view}:${accountFilter}:${labelFilter}`;
+      : `list:${view}:${accountFilter}:${labelFilter}:${readFilter}:${relevanceFilter}:${sort}`;
   const pane = useRef({ key: paneKey, motion });
   if (pane.current.key !== paneKey)
     pane.current = {
@@ -1003,6 +1044,7 @@ export function App() {
       >
         <header
           className="topbar"
+          inert={updateInstalling}
           onDoubleClick={(event) => {
             // A frameless window gets no automatic maximize on the caption
             // area, so the header has to restore that convention itself.
@@ -1070,65 +1112,20 @@ export function App() {
           )}
           <div className="topbar-end">
             {!settings && (
-              <nav className="accounts" aria-label="Filter accounts">
-                <button
-                  className={accountFilter === "all" ? "active" : undefined}
-                  aria-pressed={accountFilter === "all"}
-                  onClick={() => navigate({ accountFilter: "all", selectedId: null, opened: false })}
-                >
-                  <kbd>0</kbd>All
-                </button>
-                {state.accounts.map((a, i) => (
-                  <button
-                    key={a.id}
-                    title={
-                      privacy
-                        ? providerNames[a.provider]
-                        : a.error
-                          ? `${a.email}: ${a.error}`
-                          : a.email
-                    }
-                    className={accountFilter === a.id ? "active" : undefined}
-                    aria-pressed={accountFilter === a.id}
-                    onClick={() => {
-                      navigate({ accountFilter: a.id, selectedId: null, opened: false });
-                    }}
-                  >
-                    {i < 9 && <kbd>{i + 1}</kbd>}
-                    <ProviderIcon provider={a.provider} />
-                    <span>
-                      <Address value={a.email}>
-                        {a.provider === "icloud"
-                          ? "iCloud"
-                          : a.email.split("@")[0]}
-                      </Address>
-                    </span>
-                    {a.error && (
-                      <i className="error-dot" aria-label="Needs attention" />
-                    )}
-                  </button>
-                ))}
-              </nav>
-            )}
-            {!settings && labels.length > 0 && (
-              <div className="label-filter">
-                <Dropdown
-                  label="Filter by Gmail label"
-                  value={labelFilter}
+              <div className="account-picker">
+                <Dropdown label="Filter accounts" value={accountFilter} disabled={navigationBlocked}
                   options={[
-                    { value: "all", label: "All labels" },
-                    ...labels.map((label) => {
-                      const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
-                      const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
-                      return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name };
-                    }),
+                    { value: "all", label: "All accounts" },
+                    ...state.accounts.map((account, index) => ({ value: account.id,
+                      label: privacy ? `Account ${index + 1} · ${providerNames[account.provider]}${account.error ? " · Needs attention" : ""}`
+                        : `${account.email}${account.error ? " · Needs attention" : ""}`,
+                    })),
                   ]}
-                  onChange={(value) => {
-                    navigate({ labelFilter: value, selectedId: null, opened: false });
-                  }}
-                />
+                  onChange={(accountFilter) => navigate({ accountFilter, labelFilter: "all", selectedId: null, opened: false })} />
               </div>
             )}
+            {!settings && <button type="button" className="action" disabled={navigationBlocked || busy}
+              onClick={() => setConnecting("choose")}>Add account</button>}
             {!settings &&
               (searching ? (
                 <div className="search" role="search">
@@ -1197,6 +1194,7 @@ export function App() {
           </div>
           {windowSide === "right" && <TrafficLights right maximized={maximized} />}
         </header>
+        <UpdateNotice bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
         {notice && (
           <div className="notice" role="status">
             <span>
@@ -1227,7 +1225,7 @@ export function App() {
             }}
           />
         ) : (
-          <main className="workspace">
+          <main className="workspace" inert={updateInstalling}>
             <section
               ref={listRef}
               className={`list ${density}`}
@@ -1244,6 +1242,63 @@ export function App() {
                 </button>
                 {opened && selected && <span><kbd>Esc</kbd> Close email</span>}
               </nav>
+              <div className="mail-filters" role="group" aria-label="Mail filters and sort">
+                <Dropdown label="Read status" value={readFilter} disabled={navigationBlocked}
+                  options={[{ value: "all", label: "All mail" }, { value: "unread", label: "Unread" }]}
+                  onChange={(readFilter) => navigate({ readFilter, selectedId: null, opened: false })} />
+                <Dropdown label="Relevance filter" value={relevanceFilter} disabled={navigationBlocked}
+                  options={[{ value: "all", label: "All relevance" }, { value: "3", label: "High relevance" },
+                    { value: "2", label: "Medium relevance" }, { value: "1", label: "Low relevance" }]}
+                  onChange={(relevanceFilter) => navigate({ relevanceFilter, selectedId: null, opened: false })} />
+                <Dropdown label="Sort mail" value={sort} disabled={navigationBlocked}
+                  options={[{ value: "newest", label: "Newest" }, { value: "oldest", label: "Oldest" }, { value: "relevance", label: "Relevance" }]}
+                  onChange={(sort) => navigate({ sort, selectedId: null, opened: false })} />
+                {labels.length > 0 && (
+                  <div className="label-filter">
+                    <Dropdown
+                      label="Filter by Gmail label"
+                      disabled={navigationBlocked}
+                      value={labelFilter}
+                      options={[
+                        { value: "all", label: "All labels" },
+                        ...labels.map((label) => {
+                          const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
+                          const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
+                          return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name };
+                        }),
+                      ]}
+                      onChange={(value) => {
+                        navigate({ labelFilter: value, selectedId: null, opened: false });
+                      }}
+                    />
+                  </div>
+                )}
+                {hasListControls && <button type="button" className="link" disabled={navigationBlocked}
+                  onClick={resetListControls}>Reset filters and sort</button>}
+              </div>
+              {selected && (
+                <div className="mail-actions" role="group" aria-label={opened ? "Opened email actions" : "Selected email actions"}>
+                  <button type="button" className="button" disabled={!selected.unread || reading.has(selected.id)}
+                    aria-busy={reading.has(selected.id)} onClick={() => markRead(selected)}>
+                    {reading.has(selected.id) ? "Marking as read…" : selected.unread ? "Mark as read" : "Read"}
+                  </button>
+                  <button type="button" className="button" disabled={busy} onClick={() => startCompose(selected)}>Reply</button>
+                  <button type="button" className="button" disabled={busy || syncing || selected.archived}
+                    title="Archive in your provider" onClick={() => archive(selected)}>Done</button>
+                  {isSnoozed(selected) ? (
+                    <button type="button" className="button" disabled={busy || syncing}
+                      onClick={() => void changeMessage(selected, "unsnooze")}>Return to inbox</button>
+                  ) : (
+                    <button type="button" className="button" disabled={busy || syncing || selected.archived}
+                      onClick={() => setSnooze(selected)}>Snooze</button>
+                  )}
+                  <button type="button" className="button trash-action" disabled={busy || syncing || !!trashUnavailable(selected)}
+                    aria-describedby={trashUnavailable(selected) ? "trash-unavailable" : undefined}
+                    onClick={() => setTrashMail(selected)}>Move to Trash</button>
+                  <span role="status">{reading.has(selected.id) ? "Read update pending." : busy ? "Updating email…" : ""}</span>
+                  {trashUnavailable(selected) && <span id="trash-unavailable">{trashUnavailable(selected)}</span>}
+                </div>
+              )}
               <div key={paneKey} className={`pane ${pane.current.motion}`}>
                 {opened && selected ? (
                   <MailPrivacy mail={selected}><article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
@@ -1283,8 +1338,8 @@ export function App() {
                 ) : filtered.length ? (
                   filtered.map((m, i) => {
                     const group = dayGroup(m.date);
-                    const showGroup =
-                      i === 0 || dayGroup(filtered[i - 1].date) !== group;
+                    const showGroup = sort !== "relevance" && (
+                      i === 0 || dayGroup(filtered[i - 1].date) !== group);
                     const layout =
                       density === "compact" || m.relevance === 2
                         ? "inline"
@@ -1346,7 +1401,7 @@ export function App() {
                         ? "Loading"
                         : !state.accounts.length
                           ? "No accounts connected"
-                          : query
+                          : hasListControls
                             ? "No matching mail"
                             : view === "snoozed"
                               ? "No snoozed mail"
@@ -1362,8 +1417,11 @@ export function App() {
                         >
                           Connect an account <ArrowRight color="currentColor" size={11} />
                         </button>
-                      ) : query ? (
-                        <p>Try a different sender, subject or phrase.</p>
+                      ) : hasListControls ? (
+                        <>
+                          <p>No cached mail matches these controls in {viewNames[view]}.</p>
+                          <button type="button" className="link" onClick={resetListControls}>Reset filters and sort</button>
+                        </>
                       ) : (
                         <button
                           className="link"
@@ -1457,11 +1515,12 @@ export function App() {
             onClose={closeContextMenu}
             actions={[
               { label: "Open", key: shortcut("open"), run: () => openMail(menuMail) },
-              { label: "Mark as read", disabled: !menuMail.unread, run: () => markRead(menuMail) },
+              { label: reading.has(menuMail.id) ? "Marking as read…" : "Mark as read", disabled: !menuMail.unread || reading.has(menuMail.id), run: () => markRead(menuMail) },
               { label: "Reply", key: shortcut("reply"), disabled: busy, run: () => startCompose(menuMail) },
               { label: "Done", key: shortcut("done"), disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
               { label: "Snooze", key: shortcut("snooze"), disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
               ...(isSnoozed(menuMail) ? [{ label: "Return to inbox", disabled: busy || syncing, run: () => void changeMessage(menuMail, "unsnooze") }] : []),
+              { label: "Move to Trash", disabled: busy || syncing || !!trashUnavailable(menuMail), run: () => setTrashMail(menuMail) },
               { label: "Teach sorting", key: shortcut("teach"), disabled: busy || syncing, run: () => setTeach(menuMail) },
             ]}
           />
@@ -1512,11 +1571,11 @@ export function App() {
             draft={compose}
             setDraft={setCompose}
             accounts={state.accounts}
-            busy={busy}
+            busy={busy || updateInstalling}
             onClose={() => setCompose(null)}
             onSend={() => {
-              if (busy) return;
-              void sendCompose(compose, {
+              if (busy || sendLock.current || updateInstalling) return;
+              sendTask.current = sendCompose(compose, {
                 lock: sendLock,
                 send: (draft) => api("/send", "POST", draft),
                 reload,
@@ -1595,6 +1654,16 @@ export function App() {
               </button>
             )}
           </Dialog></MailPrivacy>
+        )}
+        {trashMail && (
+          <Dialog title="Move to Trash" onClose={() => { if (!trashLock.current) setTrashMail(null); }}>
+            <p className="dialog-copy">Move this email to your provider’s Trash? It will be removed from this inbox. This does not permanently delete it.</p>
+            <div className="form-actions">
+              <button type="button" className="button" disabled={busy} onClick={() => setTrashMail(null)}>Cancel</button>
+              <button type="button" className="button trash-action" disabled={busy || syncing} aria-busy={busy}
+                onClick={() => void moveToTrash(trashMail)}>{busy ? "Moving to Trash…" : "Move to Trash"}</button>
+            </div>
+          </Dialog>
         )}
         {shortcuts && (
           <Dialog

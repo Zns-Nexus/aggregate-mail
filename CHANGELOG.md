@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Trigger synthetic Gmail timeout tests after the loopback request arrives, preserving real connection-close and no-retry checks. Add a negative control for lost transport cancellation.
+
+- Hide scrollbar indicators without disabling scrolling. Allow Show images while personal text is hidden, with per-opening consent and masked text, captions and image descriptions. Image URLs containing detected private information remain blocked. Keep captions and inline images in order when private text spans sender markup or image boundaries. Redact image descriptions before truncating them; use a generic description when privacy-mode gallery metadata may already be cut mid-token.
+
+- Check cached updater files before reading them, limit hashing to the expected size, and stop hashing on cancellation or timeout. Ignore cached metadata paths and recheck cache contents before reuse.
+
+- Preserve the installed AppImage and any existing destination when update replacement or launch fails. Enforce download size limits before writing excess bytes, including responses without a Content-Length header, and abort cancelled requests before headers arrive.
+
+- Add an app-update notice with download progress and a single download, install and restart action for compatible Windows NSIS and Linux AppImage releases. Verify release and file identity, drain mail work and honor draft cancellation before installer handoff. Show unavailable states for unsupported builds and release metadata; automatic macOS installation remains disabled under local ad-hoc signing.
+
+- Watch IMAP inbox events to refresh arrivals and read flags through the existing account sync queue. Keep Gmail API polling, bounded reconnect recovery and one notification per successful run; suppress notifications until the first complete import succeeds.
+
+- Keep reader keyboard navigation in the chosen sort order when read-on-open removes the current message from Unread results.
+
+- Add a visible account setup button and a compact picker for multiple accounts. Combine unread, relevance, account, label and search filters; sort by newest, oldest or relevance and restore controls with Back/Forward. Keep account names and addresses hidden in privacy mode.
+
+- Use a 16-pixel template image for the macOS tray and a 22-pixel tray image on Linux. Keep the Windows tray image unchanged.
+- Add visible Read, Reply, Done, Snooze and Move to Trash controls for selected and opened mail. Show pending reads and apply confirmed read state before an inbox refresh completes. Report failed actions without removing mail.
+- Move mail to the provider's Trash only after confirmation. Require safe IMAP MOVE support and a unique server-declared Trash folder, counting mixed-case duplicates; preserve Done as archive and never permanently delete mail.
+- Document 13 public email-client feedback reports, their evidence limits and priorities for the mail UX stack.
+
 - Close the desktop window to the tray instead of exiting, keep the mail service and a five-minute sync running while it is hidden, and show one native notification for the new unread mail a sync finds. Reopen from the tray, its menu or a second launch, and quit from the tray. Fields and selected text keep a native right-click menu.
 
 - Preserve macOS Keychain identity for existing protected mail keys, with one bounded legacy retry and no replacement of unreadable keys. Keep explicit startup-check profiles isolated from saved accounts.

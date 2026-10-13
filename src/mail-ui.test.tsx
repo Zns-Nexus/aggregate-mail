@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { GmailLabel, Mail } from "../shared/types";
 import { LabelForm, PrivacyContext } from "./App";
-import { customLabels, densityShortcut, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
+import { customLabels, densityShortcut, filterMail, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
 
 const mail: Mail = {
   id: "a:1", accountId: "a", remoteId: "1", sender: "Sender",
@@ -79,4 +79,56 @@ test("opened mail stays visible after marking read removes it from the Unread la
   const next = { ...mail, id: "a:2" };
   assert.equal(selectedMail([read, next], [next], read.id, true), read);
   assert.equal(selectedMail([read, next], [next], read.id, false), next);
+});
+
+const location = {
+  view: "important", accountFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest",
+} as const;
+
+test("local cache combines account, label, query, read and relevance without mutating mail", () => {
+  const messages: Mail[] = [
+    { ...mail, id: "a:1", archived: false, subject: "Match", relevance: 3 },
+    { ...mail, id: "a:2", archived: false, subject: "Match", relevance: 3, unread: false },
+    { ...mail, id: "a:3", archived: false, subject: "Match", relevance: 1 },
+    { ...mail, id: "b:1", accountId: "b", archived: false, subject: "Match", relevance: 3 },
+    { ...mail, id: "a:4", archived: false, subject: "Else", relevance: 3 },
+    { ...mail, id: "a:5", archived: false, subject: "Match", relevance: 3, labelIds: [] },
+  ];
+  const snapshot = structuredClone(messages);
+  const result = filterMail(messages, { ...location, accountFilter: "a", query: "mAtCh", readFilter: "unread", relevanceFilter: "3" }, labels[0]);
+  assert.deepEqual(result.map(mail => mail.id), ["a:1"]);
+  assert.deepEqual(messages, snapshot);
+  assert.equal(filterMail(messages, { ...location, query: "sender@example.com" }).length, 6);
+  assert.equal(filterMail(messages, { ...location, query: "body" }).length, 6);
+});
+
+test("local cache preserves category, archive and active snooze boundaries", () => {
+  const messages: Mail[] = [
+    { ...mail, id: "inbox", archived: false },
+    { ...mail, id: "expired", archived: false, snoozedUntil: 99 },
+    { ...mail, id: "snoozed", archived: false, snoozedUntil: 101 },
+    { ...mail, id: "archive", archived: true, snoozedUntil: 101 },
+    { ...mail, id: "other", archived: false, category: "other" },
+  ];
+  const ids = (view: "important" | "other" | "snoozed" | "archive") =>
+    filterMail(messages, { ...location, view }, undefined, 100).map(mail => mail.id);
+  assert.deepEqual(ids("important"), ["expired", "inbox"]);
+  assert.deepEqual(ids("other"), ["other"]);
+  assert.deepEqual(ids("snoozed"), ["snoozed"]);
+  assert.deepEqual(ids("archive"), ["archive"]);
+});
+
+test("Newest, Oldest and Relevance sorts have deterministic date and ID ties across accounts", () => {
+  const messages: Mail[] = [
+    { ...mail, archived: false, id: "b:1", accountId: "b", date: 30, relevance: 1 },
+    { ...mail, archived: false, id: "a:2", date: 20, relevance: 3 },
+    { ...mail, archived: false, id: "a:1", date: 20, relevance: 3 },
+    { ...mail, archived: false, id: "a:3", date: 10, relevance: 2 },
+  ];
+  for (const input of [messages, [...messages].reverse()]) {
+    const ids = (sort: "newest" | "oldest" | "relevance") => filterMail(input, { ...location, sort }).map(mail => mail.id);
+    assert.deepEqual(ids("newest"), ["b:1", "a:1", "a:2", "a:3"]);
+    assert.deepEqual(ids("oldest"), ["a:3", "a:1", "a:2", "b:1"]);
+    assert.deepEqual(ids("relevance"), ["a:1", "a:2", "a:3", "b:1"]);
+  }
 });
