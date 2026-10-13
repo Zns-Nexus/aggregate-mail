@@ -1,23 +1,28 @@
 import { Fragment, createElement, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { imageSource } from "../shared/types";
 import { mailLink, mailStyle, parseMailContent, privateMailLink, type MailContentNode } from "../shared/mail-content";
+import { segmentPrivateParts, type PrivacySegment } from "./privacy";
 
 type Props = {
   html: string | null | undefined;
   showImages: boolean;
-  renderText: (text: string) => ReactNode;
+  renderText: (text: string, segments?: readonly PrivacySegment[]) => ReactNode;
   redactText: (text: string) => string;
   privacy: boolean;
+  privateNames?: readonly string[];
   fallbackText?: string;
   fallback?: ReactNode;
 };
 
 // Parent owns opening-specific consent and text redaction. Hooks: formatted-mail,
 // formatted-mail-fallback, formatted-mail-image, formatted-mail-image-status.
-export function FormattedMail({ html, showImages, renderText, redactText, privacy, fallbackText = "", fallback }: Props) {
+export function FormattedMail({ html, showImages, renderText, redactText, privacy, privateNames = [], fallbackText = "", fallback }: Props) {
   const nodes = useMemo(() => typeof html === "string" ? parseMailContent(html) : null, [html]);
+  const textParts = nodes ? contentParts(nodes) : [];
+  const privateParts = privacy ? segmentPrivateParts(textParts, privateNames) : undefined;
+  let textIndex = 0;
   const render = (node: MailContentNode, key: number): ReactNode => {
-    if (typeof node === "string") return <Fragment key={key}>{renderText(node)}</Fragment>;
+    if (typeof node === "string") return <Fragment key={key}>{renderText(node, privateParts?.[textIndex++])}</Fragment>;
     const { tag, attributes: a, children } = node;
     const style: CSSProperties = {};
     // Legacy email presentation attributes pass through the same CSS validators.
@@ -69,24 +74,16 @@ export function FormattedMail({ html, showImages, renderText, redactText, privac
       }
     }
     if (tag === "ol" && /^-?\d{1,4}$/.test(a.start || "")) props.start = Number(a.start);
+    const content = children.map(render);
+    // Consume the same block separator used by cross-leaf privacy matching.
+    if (blockTags.has(tag)) textIndex++;
     if (["br", "hr", "col"].includes(tag)) return createElement(element, props);
-    return createElement(element, props, renderChildren(children));
+    return createElement(element, props, content);
   };
-  const renderChildren = (children: MailContentNode[]): ReactNode => {
-    if (privacy) {
-      const text = contentText(children);
-      // A hidden token split by sender tags must still reach the parent's redactor whole.
-      if (redactText(text) !== redactedParts(children, redactText)) return <>
-        {renderText(text)}
-        {imageNodes(children).map(render)}
-      </>;
-    }
-    return children.map(render);
-  };
-  const formatted = !!nodes && !!(contentText(nodes).trim() || hasImage(nodes));
+  const formatted = !!nodes && !!(textParts.join("").trim() || hasImage(nodes));
   return <div className={formatted ? "formatted-mail" : "formatted-mail formatted-mail-fallback"}
     style={{ maxWidth: "100%", minWidth: 0, overflow: "auto", overflowWrap: "anywhere", contain: "layout paint", isolation: "isolate", whiteSpace: formatted ? "normal" : "pre-wrap" }}>
-    {formatted ? renderChildren(nodes) : fallback ?? renderText(fallbackText)}
+    {formatted ? nodes.map(render) : fallback ?? renderText(fallbackText)}
   </div>;
 }
 
@@ -103,20 +100,11 @@ function FormattedImage({ src, alt, style }: { src: string; alt: string; style: 
 }
 
 const blockTags = new Set("div p br hr h1 h2 h3 h4 h5 h6 blockquote pre ul ol li table tr td th caption".split(" "));
-function contentText(nodes: MailContentNode[]): string {
-  return nodes.map((node) => typeof node === "string" ? node :
-    contentText(node.children) + (blockTags.has(node.tag) ? "\n" : "")).join("");
-}
-function redactedParts(nodes: MailContentNode[], redactText: (text: string) => string): string {
-  return nodes.map((node) => typeof node === "string" ? redactText(node) :
-    redactText(contentText(node.children)) + (blockTags.has(node.tag) ? "\n" : "")).join("");
+function contentParts(nodes: MailContentNode[]): string[] {
+  return nodes.flatMap((node) => typeof node === "string" ? [node] :
+    [...contentParts(node.children), ...(blockTags.has(node.tag) ? ["\n"] : [])]);
 }
 
 function hasImage(nodes: MailContentNode[]): boolean {
   return nodes.some((node) => typeof node !== "string" && ((node.tag === "img" && !!imageSource(node.attributes.src || "")) || hasImage(node.children)));
-}
-
-function imageNodes(nodes: MailContentNode[]): MailContentNode[] {
-  return nodes.flatMap((node) => typeof node === "string" ? [] :
-    node.tag === "img" ? [node] : imageNodes(node.children));
 }

@@ -112,6 +112,16 @@ test("names separated by block text and unknown body-only names stay distinct", 
     "Unknown Person says hello");
 });
 
+test("split private parts share the source-token reveal key despite overlapping names and encoding", () => {
+  const parts = segmentPrivateParts(["😀No", "ra", " Lane; first%", "40example.com"], ["Nora Lane", "Nora", "Lane"]);
+  assert.deepEqual(parts.flat().filter((part) => part.kind === "name").map((part) => part.value),
+    ["Nora Lane", "Nora Lane", "Nora Lane"]);
+  assert.deepEqual(parts.flat().filter((part) => part.kind === "address").map((part) => part.value),
+    ["first%40example.com", "first%40example.com"]);
+  assert.equal(parts[0][1].start, 2);
+  assert.equal(parts[0][1].text, "No");
+});
+
 test("long ordinary words do not trigger quadratic address matching", () => {
   const text = "z".repeat(30000);
   const start = performance.now();

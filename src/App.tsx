@@ -36,7 +36,7 @@ import { appPasswordHelp, imageSource, jevProviders, logoDomain, providerNames }
 import { useMailNavigation, type MailLocation } from "./navigation";
 import { FormattedMail } from "./FormattedMail";
 import { privateMailLink } from "../shared/mail-content";
-import { collectPrivateNames, redactPrivateText, segmentPrivateText } from "./privacy";
+import { collectPrivateNames, redactPrivateText, segmentPrivateText, type PrivacySegment } from "./privacy";
 import { InteractionSettings } from "./InteractionSettings";
 import { UpdateNotice } from "./UpdateNotice";
 import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel, type InteractionPreferences } from "./interaction";
@@ -284,12 +284,12 @@ function Address({ value, children, kind = "address" }: { value: string; childre
     {shown ? children ?? value : null}
   </span>;
 }
-function Redact({ text }: { text: string }) {
+function Redact({ text, segments }: { text: string; segments?: readonly PrivacySegment[] }) {
   const { on, names } = useContext(PrivacyContext);
   if (!on || !text) return <>{text}</>;
-  return <>{segmentPrivateText(text, names).map((part, index) => part.kind === "text" ?
-    <Fragment key={index}>{part.text}</Fragment> :
-    <Address key={index} value={part.text} kind={part.kind} />)}</>;
+  return <>{(segments ?? segmentPrivateText(text, names)).map((part, index) => part.kind === "text" ?
+    <Fragment key={index}>{segments ? <Redact text={part.text} /> : part.text}</Fragment> :
+    <Address key={index} value={segments ? part.value ?? part.text : part.text} kind={part.kind}>{part.text}</Address>)}</>;
 }
 export function MessageBody({ text }: { text: string }) {
   const { on, names } = useContext(PrivacyContext);
@@ -439,8 +439,8 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     <div id={region}>
       {status === "error" && <p role="status">Images could not be loaded. The email may be unavailable or archived.</p>}
       {body && <div className="message-body">
-        {content.html ? <FormattedMail html={content.html} showImages={shown} privacy={privacy}
-          renderText={(text) => <Redact text={text} />} redactText={(text) => redactPrivateText(text, names)}
+        {content.html ? <FormattedMail html={content.html} showImages={shown} privacy={privacy} privateNames={names}
+          renderText={(text, segments) => <Redact text={text} segments={segments} />} redactText={(text) => redactPrivateText(text, names)}
           fallback={<>{textBody}{gallery}</>} /> : textBody}
       </div>}
       {(!body || !content.html) && gallery}

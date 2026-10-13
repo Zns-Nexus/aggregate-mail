@@ -10,7 +10,9 @@ import { MAIL_HTML_LIMIT, MAIL_NODE_LIMIT, MAIL_DEPTH_LIMIT } from "../shared/ma
 const redact = (text: string) => text.replace(/reader@example\.com|Morgan Example/gi, "[hidden]");
 const render = (html: string | null | undefined, privacy = false, showImages = false, fallbackText = "Plain fallback") => renderToStaticMarkup(
   <FormattedMail html={html} privacy={privacy} showImages={showImages}
-    renderText={(text) => privacy ? redact(text) : text} redactText={(text) => privacy ? redact(text) : text} fallbackText={fallbackText} />,
+    privateNames={["Morgan Example"]}
+    renderText={(text, segments) => privacy ? segments ? segments.map((part) => part.kind === "text" ? redact(part.text) : "[hidden]").join("") : redact(text) : text}
+    redactText={(text) => privacy ? redact(text) : text} fallbackText={fallbackText} />,
 );
 const documentOf = (markup: string) => new JSDOM(markup).window.document;
 
@@ -116,6 +118,37 @@ test("inline images require consent and suppress private sources and metadata in
   assert.equal(image.style.width, "");
   assert.equal(image.parentElement?.previousElementSibling?.textContent, "Before");
   assert.equal(image.parentElement?.nextElementSibling?.textContent, "After");
+});
+
+for (const acrossImage of [false, true]) {
+  test(`privacy preserves interleaved captions with private tokens split across ${acrossImage ? "images" : "tags"}`, () => {
+    const first = '<img src="https://images.example.com/first.png" alt="Morgan Example">';
+    const second = '<img src="https://images.example.com/second.png" alt="reader@example.com">';
+    const html = acrossImage ?
+      `<p>😀BEFORE Morgan <b>Ex${first}ample</b> BETWEEN reader<span>@${second}example.com</span> AFTER</p>` :
+      `<p>😀BEFORE Morgan <b>Example</b>${first} BETWEEN reader<span>@example.com</span>${second} AFTER</p>`;
+    const hidden = render(html, true, true);
+    for (const token of ["Morgan", "Example", "reader", "@example.com"])
+      assert.ok(!hidden.includes(token), token);
+    const document = documentOf(hidden);
+    const images = [...document.querySelectorAll("img")];
+    assert.equal(images.length, 2);
+    assert.deepEqual(images.map((image) => image.alt), ["[hidden]", "[hidden]"]);
+    document.querySelectorAll(".formatted-mail-image-status").forEach((status) => status.remove());
+    images.forEach((image, index) => image.replaceWith(` [image${index + 1}] `));
+    assert.match(document.body.textContent || "", /😀BEFORE.*\[image1\].*BETWEEN.*\[image2\].*AFTER/s);
+  });
+}
+
+test("privacy leaf offsets stay aligned after nested blocks and void separators", () => {
+  const hidden = render('<div><p>Public</p><br><hr><table><tbody><tr><td>😀Morgan <b>Example</b></td><td>reader<span>@example.com</span></td></tr></tbody></table><p>After</p></div>', true);
+  for (const token of ["Morgan", "Example", "reader", "@example.com"])
+    assert.ok(!hidden.includes(token), token);
+  const document = documentOf(hidden);
+  assert.equal(document.querySelector("b")?.textContent, "[hidden]");
+  assert.equal(document.querySelectorAll("td").length, 2);
+  assert.equal(document.querySelectorAll("br,hr").length, 2);
+  assert.match(document.body.textContent || "", /^Public😀\[hidden\]\[hidden\]\[hidden\]\[hidden\]After$/);
 });
 
 test("supported image-only mail keeps its formatted image without replacing it with fallback text", () => {

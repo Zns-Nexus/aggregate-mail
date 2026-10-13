@@ -365,6 +365,59 @@ test("privacy removes connected recipient names and addresses from list, headers
   } finally { await app.close(); }
 });
 
+test("formatted privacy keeps image order and keyboard reveal across image boundaries", async () => {
+  const app = await mount(false, (state, storage) => {
+    storage.setItem("privacy", "on");
+    state.messages[0] = { ...state.messages[0], to: '"Nora Lane" <first@example.com>',
+      html: '<p>😀BEFORE <b>No<img src="https://images.example.com/first.png" alt="Nora Lane">ra</b> Lane BETWEEN first<span>@<img src="https://images.example.com/second.png" alt="first@example.com">example.com</span> AFTER<img src="https://images.example.com/?to=first%40example.com" alt="Nora Lane"> Separate Lane.</p>' };
+  });
+  try {
+    await app.open("a:1");
+    const body = app.container.querySelector<HTMLElement>(".message-body")!;
+    const assertHidden = () => {
+      for (const token of ["Nora", "Lane", "first@example.com", "%40"])
+        assert.ok(!body.innerHTML.includes(token), token);
+      for (const bar of body.querySelectorAll(".address.veiled")) {
+        assert.equal(bar.textContent, "");
+        assert.equal(bar.getAttribute("tabindex"), "0");
+        assert.equal(bar.getAttribute("role"), "button");
+      }
+    };
+    assertHidden();
+    assert.equal(body.querySelector("img"), null);
+    await app.click(app.button("Show images"));
+    assertHidden();
+    assert.equal(body.querySelectorAll("img").length, 2);
+    assert.equal(body.querySelectorAll("[src]").length, 2);
+    assert.ok(body.textContent?.includes("Image unavailable while personal information is hidden"));
+    const copy = body.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll(".formatted-mail-image-status").forEach((status) => status.remove());
+    copy.querySelectorAll("img").forEach((image, index) => image.replaceWith(`[image${index + 1}]`));
+    assert.match(copy.textContent || "", /😀BEFORE.*\[image1\].*BETWEEN.*\[image2\].*AFTER/s);
+    const name = body.querySelector<HTMLElement>('[aria-label="Reveal hidden name"]')!;
+    name.focus();
+    await act(async () => name.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    assert.equal(app.window.document.activeElement, name);
+    assert.match(body.textContent || "", /NoLoading image…ra Lane/);
+    assert.ok(!body.innerHTML.includes("first@example.com"));
+    assert.ok(body.textContent?.endsWith(" Separate ."), "revealing the full name leaves a separate surname hidden");
+    await act(async () => name.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })));
+    assertHidden();
+    const address = body.querySelector<HTMLElement>('[aria-label="Reveal hidden address"]')!;
+    await app.click(address);
+    assert.match(body.textContent || "", /first@Loading image…example.com/);
+    assert.ok(!body.innerHTML.includes("Nora") && !body.innerHTML.includes("Lane"));
+    await app.click(address);
+    assertHidden();
+    await app.click(app.button("Hide images"));
+    assert.equal(body.querySelector("img"), null);
+    await app.click(app.button("Show images"));
+    assert.equal(body.querySelectorAll("img").length, 2);
+    await app.key("Escape"); await app.open("a:1");
+    assert.equal(app.container.querySelector(".message-body img"), null);
+  } finally { await app.close(); }
+});
+
 for (const target of ["filter", "editor"]) {
   test(`privacy hides message-derived names and destinations in Gmail label ${target}`, async () => {
     const app = await mount(false, (state, storage) => {

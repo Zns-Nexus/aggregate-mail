@@ -171,9 +171,10 @@ export function redactPrivateText(text: string, names: readonly string[] = []): 
 }
 
 // Pass decoded visible text leaves in order, with explicit block separators.
-// Returned offsets are local to each leaf; hidden segments keep their shared value.
+// Returned offsets are local to each leaf; reveal keys keep the whole source token.
 export function segmentPrivateParts(parts: readonly string[], names: readonly string[] = []): PrivacySegment[][] {
-  const segments = segmentPrivateText(parts.join(""), names);
+  const segments = segmentPrivateText(parts.join(""), names)
+    .map((segment) => segment.kind === "text" ? segment : { ...segment, value: segment.text });
   let offset = 0;
   let cursor = 0;
   return parts.map((part) => {
