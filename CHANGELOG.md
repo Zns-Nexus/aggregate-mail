@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Watch IMAP inbox events to refresh arrivals and read flags through the existing account sync queue. Keep Gmail API polling, bounded reconnect recovery and one notification per successful run; suppress notifications until the first complete import succeeds.
+
 - Keep reader keyboard navigation in the chosen sort order when read-on-open removes the current message from Unread results.
 
 - Add a visible account setup button and a compact picker for multiple accounts. Combine unread, relevance, account, label and search filters; sort by newest, oldest or relevance and restore controls with Back/Forward. Keep account names and addresses hidden in privacy mode.

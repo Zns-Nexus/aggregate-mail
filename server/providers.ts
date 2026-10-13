@@ -51,7 +51,7 @@ async function syncOperation<T>(provider: Provider, phase: SyncFailure["phase"],
   catch (error) { throw syncError(error, provider, phase); }
 }
 const imapFailures = new WeakMap<ImapFlow, { failed: Promise<never>; error?: SyncError }>();
-async function imapOperation<T>(client: ImapFlow, work: () => Promise<T>): Promise<T> {
+export async function imapOperation<T>(client: ImapFlow, work: () => Promise<T>): Promise<T> {
   const state = imapFailures.get(client)!;
   if (state.error) throw state.error;
   const result = await Promise.race([work(), state.failed]);
@@ -142,7 +142,7 @@ export async function updateGmailLabels(a: StoredAccount, m: Mail, labelIds: str
   if (result.data.id !== m.remoteId) throw new Error("Gmail did not confirm the labels. Sync and try again.");
   return result.data.labelIds || [];
 }
-function imap(a: StoredAccount) {
+export function imap(a: StoredAccount, watch = false) {
   const client = new ImapFlow({
     host: a.credentials.imapHost!,
     port: a.credentials.imapPort || 993,
@@ -154,7 +154,8 @@ function imap(a: StoredAccount) {
     logger: false,
     connectionTimeout: 15000,
     greetingTimeout: 15000,
-    socketTimeout: 30000,
+    socketTimeout: watch ? 30 * 60000 : 30000,
+    ...(watch ? { maxIdleTime: 5 * 60000 } : {}),
   });
   let reject!: (error: SyncError) => void;
   const failed = new Promise<never>((_resolve, fail) => { reject = fail; });

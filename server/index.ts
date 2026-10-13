@@ -10,6 +10,7 @@ import { google } from "googleapis";
 import { z } from "zod";
 import { all, put, putBatch, remove, account, type StoredAccount } from "./store.js";
 import { oauth, providers, presets, validateImap, listGmailLabels, syncError } from "./providers.js";
+import { ImapWatch, sameImapAccount, type ImapWatchFactory } from "./imap-watch.js";
 import {
   sendMail,
   updateMessage,
@@ -39,6 +40,7 @@ const csrf = randomBytes(32).toString("hex");
 let syncing = false;
 let syncRun: Promise<string[]> | undefined;
 let wakeSync: (() => void) | undefined;
+let imapWatch: ImapWatch | undefined;
 const pendingAccounts = new Set<string>();
 const scheduledAccounts = new Set<string>();
 const activeAccounts = new Set<string>();
@@ -325,7 +327,9 @@ app.post("/api/accounts/imap", async (req, res) => {
   // Validation awaits the network; another connection can finish meanwhile.
   const current = existingAccount(input.email, input.provider);
   a.id = current?.id || id;
+  a.hasSynced = current?.hasSynced;
   put("account", a.id, a);
+  imapWatch?.reconcile(all("account"));
   void requestSync([a.id], true);
   res.json({ ok: true });
 });
@@ -342,6 +346,7 @@ app.post("/api/accounts/:id/reconnect", (req, res) => {
 app.delete("/api/accounts/:id", (req, res) => {
   account(req.params.id);
   remove("account", req.params.id);
+  imapWatch?.reconcile(all("account"));
   for (const m of all("mail").filter((m) => m.accountId === req.params.id))
     remove("mail", m.id);
   for (const label of all("label").filter((label) => label.accountId === req.params.id))
@@ -354,6 +359,7 @@ app.post("/api/sync", async (_req, res) => {
 // The desktop process starts its own run while the window is hidden, so a
 // background sync reports the same errors a request would.
 export async function syncMail(): Promise<{ errors: string[] }> {
+  imapWatch?.reconcile(all("account"));
   return { errors: await requestSync(all("account").map((a) => a.id)) };
 }
 
@@ -415,10 +421,11 @@ async function syncAccount(
   errors: string[],
   onNewUnread: (count: number) => void,
 ) {
-  const currentAccount = () => all("account").find((current) => current.id === a.id);
+  const currentAccount = () => all("account").find((current) => sameImapAccount(current, a));
   const existing = new Map(
     all("mail").filter((m) => m.accountId === a.id).map((m) => [m.id, m]),
   );
+  const hasSynced = a.hasSynced ?? existing.size > 0;
   const rules = all("rule");
   const fresh = new Map<string, Mail>();
   const received = new Set<string>();
@@ -492,16 +499,16 @@ async function syncAccount(
     }));
   }
   // A first import fills an empty cache, so only a later sync reports arrivals.
-  if (!error) {
+  if (!error && currentAccount()) {
     const arrived = [...fresh.values()].filter((m) => m.unread).length;
-    if (arrived && (a.hasSynced || existing.size)) onNewUnread(arrived);
+    if (arrived && hasSynced) onNewUnread(arrived);
   }
   const current = currentAccount();
   // A reconnect owns its new credentials and status, even if the old run finishes later.
   if (current && isDeepStrictEqual(current.credentials, a.credentials))
     put("account", a.id, {
       ...current,
-      hasSynced: error ? current.hasSynced : true,
+      hasSynced: error ? current.hasSynced ?? hasSynced : true,
       error,
       syncFailure,
       syncWarning,
@@ -608,16 +615,26 @@ export function startServer(
   onAccountConnected?: (error: string | null) => void,
   onMailChanged?: () => void,
   onNewMail?: (count: number) => void,
+  watchClient?: ImapWatchFactory,
 ): Promise<Server> {
   if (onAccountConnected) desktopEvents.on("oauth", onAccountConnected);
   if (onMailChanged) desktopEvents.on("mail-changed", onMailChanged);
   if (onNewMail) desktopEvents.on("new-mail", onNewMail);
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, "127.0.0.1", () => resolve(server));
+    const server = app.listen(port, "127.0.0.1", () => {
+      imapWatch = new ImapWatch((a) => {
+        if (all("account").some((current) => sameImapAccount(current, a)))
+          void requestSync([a.id], true);
+      }, watchClient);
+      imapWatch.reconcile(all("account"));
+      resolve(server);
+    });
     server.once("error", reject);
     // A restarted server, such as the macOS keychain relaunch, must not leave
     // the previous window's listeners subscribed.
     server.once("close", () => {
+      imapWatch?.close();
+      imapWatch = undefined;
       if (onAccountConnected) desktopEvents.off("oauth", onAccountConnected);
       if (onMailChanged) desktopEvents.off("mail-changed", onMailChanged);
       if (onNewMail) desktopEvents.off("new-mail", onNewMail);

@@ -52,6 +52,14 @@ a sync that failed for an account report no arrivals. `StoredAccount.hasSynced`
 records the first successful sync for that decision. See
 [ADR 0016](adr/0016-background-running-and-notifications.md).
 
+### IMAP inbox events
+
+`server/imap-watch.ts` opens one read-only INBOX watch per IMAP account, including Gmail IMAP. It reuses the protected provider connection setup and ImapFlow's idle handling. Exists, flags and expunge events coalesce over 100 ms before requesting an account-specific sync. A watcher never fetches mail, so sync fetch responses cannot trigger its own events. Opening or reconnecting also requests sync to recover changes missed while disconnected. Gmail API accounts continue polling.
+
+The existing scheduler keeps at most two account syncs active and serializes mail actions. Events during an active account sync request one pending follow-up. Watch identity includes account, provider, email and credentials; replacement/removal stops the old connection and prevents stale sync batches from overwriting current data. Disconnects allow five automatic reconnect attempts with exponential delays; manual or periodic sync can start a new recovery window. Server close removes watcher listeners and timers and closes its clients.
+
+The first complete import enables later arrival notifications. A partial first import saves fetched mail but keeps that notification boundary closed. Existing caches without a stored boundary retain migration compatibility. See [ADR 0018](adr/0018-imap-inbox-events.md). Synthetic service tests cover events through cache refresh and the existing new-mail callback, account isolation, bursts, read serialization, partial failures, credential replacement/removal and shutdown. They do not prove live-provider event behavior or native notification delivery.
+
 ### Protected mail keys on macOS
 
 Electron selects its macOS Keychain item from the application name before
