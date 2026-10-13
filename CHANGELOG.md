@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep reader keyboard navigation in the chosen sort order when read-on-open removes the current message from Unread results.
+
 - Add a visible account setup button and a compact picker for multiple accounts. Combine unread, relevance, account, label and search filters; sort by newest, oldest or relevance and restore controls with Back/Forward. Keep account names and addresses hidden in privacy mode.
 
 - Use a 16-pixel template image for the macOS tray and a 22-pixel tray image on Linux. Keep the Windows tray image unchanged.

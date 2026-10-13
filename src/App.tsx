@@ -938,8 +938,10 @@ export function App() {
       else if (inbox && (action === "important" || action === "other")) switchView(action);
       else if (inbox && (action === "next" || action === "previous")) {
         event.preventDefault();
-        const index = filtered.findIndex((mail) => mail.id === selected?.id);
-        const next = filtered[Math.max(0, Math.min(filtered.length - 1, index + (action === "next" ? 1 : -1)))];
+        const neighbours = opened && selected
+          ? filterMail(state.messages, navigation.location, activeLabel, now, selected.id) : filtered;
+        const index = neighbours.findIndex((mail) => mail.id === selected?.id);
+        const next = neighbours[Math.max(0, Math.min(neighbours.length - 1, index + (action === "next" ? 1 : -1)))];
         if (next) { if (opened) openMail(next); else setSelectedId(next.id); }
       } else if (inbox && action === "open" && selected &&
         (!(target instanceof HTMLElement) || !target.closest("button, a, [role=button]") || target.closest(".row"))) {

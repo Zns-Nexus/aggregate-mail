@@ -34,9 +34,11 @@ export async function markMailRead(mail: Mail, pending: Set<string>, update: () 
 
 export function filterMail(messages: Mail[], location: Pick<MailLocation,
   "view" | "accountFilter" | "query" | "readFilter" | "relevanceFilter" | "sort">,
-  label?: GmailLabel, now = Date.now()) {
+  label?: GmailLabel, now = Date.now(), readerId?: string) {
   const query = location.query.toLowerCase();
   return messages.filter((mail) => {
+    // The open reader stays an ordering anchor after read-on-open removes it from the list.
+    if (mail.id === readerId) return true;
     if (location.accountFilter !== "all" && mail.accountId !== location.accountFilter) return false;
     if (!matchesLabel(mail, label)) return false;
     if (location.readFilter === "unread" && !mail.unread) return false;

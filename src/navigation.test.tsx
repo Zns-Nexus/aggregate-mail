@@ -592,3 +592,31 @@ test("mounted Oldest and Relevance controls reorder cached rows and history rest
     assert.deepEqual(rows(), ["mail-a:2", "mail-b:1", "mail-a:1"]);
   } finally { await app.close(); }
 });
+
+test("Unread reader navigation keeps the opened message as an ordering anchor", async () => {
+  const scenarios = [
+    { sort: "Newest", opened: "a:2", key: "j", expected: "Gamma" },
+    { sort: "Newest", opened: "b:1", key: "k", expected: "Beta" },
+    { sort: "Oldest", opened: "a:2", key: "j", expected: "Alpha" },
+    { sort: "Relevance", opened: "a:2", key: "j", expected: "Gamma" },
+    { sort: "Newest", opened: "b:1", key: "j", expected: "Gamma" },
+    { sort: "Newest", opened: "a:1", key: "k", expected: "Alpha" },
+  ];
+  for (const scenario of scenarios) {
+    const app = await mount(false, (state) => {
+      state.messages[0] = { ...state.messages[0], date: 30, relevance: 3 };
+      state.messages[1] = { ...state.messages[1], date: 20, relevance: 2 };
+      state.messages[2] = { ...state.messages[2], date: 10, relevance: 1 };
+    });
+    try {
+      await app.choose("Read status", "Unread");
+      await app.choose("Sort mail", scenario.sort);
+      await app.open(scenario.opened);
+      assert.equal(app.state.messages.find(mail => mail.id === scenario.opened)?.unread, false);
+      await app.key(scenario.key);
+      assert.equal(app.title(), scenario.expected, JSON.stringify(scenario));
+      await app.key("Escape");
+      assert.ok(!app.container.querySelector(`[id="mail-${scenario.opened}"]`), "read anchor stays out of the Unread list");
+    } finally { await app.close(); }
+  }
+});
