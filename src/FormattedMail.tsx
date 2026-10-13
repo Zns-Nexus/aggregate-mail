@@ -47,7 +47,7 @@ export function FormattedMail({ html, showImages, renderText, redactText, privac
       const src = imageSource(a.src || "");
       if (privacy && (privateMailLink(a.src || "", redactText) || (src && privateMailLink(src, redactText))))
         return <span key={key} className="formatted-mail-image-status">Image unavailable while personal information is hidden.</span>;
-      return src ? <FormattedImage key={`${key}:${src}`} src={src} alt={redactText((a.alt || "").slice(0, 500))} style={style} /> :
+      return src ? <FormattedImage key={`${key}:${src}`} src={src} alt={redactText(a.alt || "").slice(0, 500)} style={style} /> :
         <span key={key} className="formatted-mail-image-status">Unsupported image.</span>;
     }
     const props: Record<string, unknown> = { key, style };

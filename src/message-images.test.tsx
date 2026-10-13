@@ -210,3 +210,88 @@ test("formatted reader recovery keeps text on failure, ignores late content and 
     }
   }
 });
+
+test("fallback image metadata keeps truncated private tokens out of alt and loaded captions", async (t) => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>");
+  const descriptors = new Map(["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const toggled: string[] = [];
+  const render = async (id: string, alt: string, privacy: boolean, revealed = new Set<string>()) => {
+    await act(async () => root.render(
+      <PrivacyContext.Provider value={{ on: privacy, names: ["Nora Lane"], revealed, toggle: (key) => { toggled.push(key); } }}>
+        <MessageImages mail={{ id, html: null, images: [{ ...image, alt }] }}
+          loadImages={async () => { throw new Error("cached metadata must not fetch"); }} />
+      </PrivacyContext.Provider>));
+  };
+  const button = () => container.querySelector("button")!;
+  const click = async () => { await act(async () => button().click()); };
+  const load = async () => { await act(async () => container.querySelector("img")!.dispatchEvent(new dom.window.Event("load"))); };
+  try {
+    const descriptions = [
+      ["address", ("x".repeat(490) + " reader@example.com").slice(0, 500)],
+      ["name", ("x".repeat(497) + " Nora Lane").slice(0, 500)],
+      ["UTF-16 name", ("😀".repeat(248) + " Nora Lane").slice(0, 500)],
+      ["public at boundary", "p".repeat(500)],
+      ["over boundary", "x".repeat(497) + " Nora Lane"],
+    ];
+    for (const [label, description] of descriptions) {
+      for (const target of ["alt", "loaded caption"]) {
+        await t.test(`${label}: ${target}`, async () => {
+          const id = `${label}:${target}`;
+          await render(id, description, false);
+          assert.equal(container.querySelector("img"), null);
+          assert.equal(button().type, "button");
+          assert.equal(button().getAttribute("aria-expanded"), "false");
+          button().focus();
+          await click();
+          assert.equal(dom.window.document.activeElement, button(), "activation retains focus");
+          assert.equal(container.querySelector("img")?.alt, description, "privacy off preserves metadata");
+          await load();
+          assert.equal(container.querySelector("figcaption")?.textContent, description);
+          await render(id, description, true);
+          assert.equal(container.querySelector("img"), null, "privacy activation revokes consent");
+          await click();
+          if (target === "loaded caption") await load();
+          assert.equal(target === "alt" ? container.querySelector("img")?.alt : container.querySelector("figcaption")?.textContent,
+            "Image 1", "uncertain metadata uses a safe description");
+          assert.ok(!container.innerHTML.includes(description), "raw metadata is absent from DOM");
+          await click();
+          assert.equal(container.querySelector("img"), null, "Hide revokes consent");
+        });
+      }
+    }
+    await t.test("short private descriptions remain masked and explicitly revealable", async () => {
+      const description = "Photo for Nora Lane and reader@example.com";
+      await render("short-private", description, true);
+      await click();
+      assert.equal(container.querySelector("img")?.alt, "Photo for •••••••• and ••••••••");
+      await load();
+      const caption = container.querySelector("figcaption")!;
+      assert.equal(caption.textContent, "Photo for  and ");
+      const reveal = caption.querySelector<HTMLElement>('[aria-label="Reveal hidden name"]')!;
+      assert.equal(reveal.tabIndex, 0);
+      await act(async () => reveal.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+      assert.deepEqual(toggled, ["nora lane"]);
+      await render("short-private", description, true, new Set(toggled));
+      assert.equal(caption.textContent, "Photo for Nora Lane and ");
+      assert.equal(container.querySelector("img")?.alt, "Photo for •••••••• and ••••••••", "caption reveal does not reveal alt");
+    });
+    await t.test("short public descriptions remain readable", async () => {
+      await render("short-public", "Public landscape", true);
+      assert.equal(container.querySelector("img"), null);
+      await click();
+      assert.equal(container.querySelector("img")?.alt, "Public landscape");
+      await load();
+      assert.equal(container.querySelector("figcaption")?.textContent, "Public landscape");
+    });
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

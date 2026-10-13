@@ -410,7 +410,7 @@ while retaining the existing script, connection and sandbox restrictions.
 Loading remote images can expose the reader's IP address and send cookies to
 the image host. URL filtering does not verify DNS resolution or redirect
 chains. Consent therefore applies only to the current reader opening and is
-never saved as a preference. Show images works while personal text is hidden. Enabling privacy clears earlier consent; a new click can show supported images while known private text, alt descriptions and captions stay masked. Sources containing detected private information remain blocked in privacy mode. Image pixels may contain personal information and are not redacted. See [ADR 0020](adr/0020-explicit-images-with-hidden-text.md). Embedded CID images remain
+never saved as a preference. Show images works while personal text is hidden. Enabling privacy clears earlier consent; a new click can show supported images while known private text, alt descriptions and captions stay masked. Formatted image descriptions are redacted before the 500 UTF-16-unit display limit. Gallery metadata may already be truncated by the provider; descriptions of 500 or more units use a generic Image N label while privacy is enabled, in both alt text and loaded captions. Short descriptions keep their existing masking and explicit caption reveal. Sources containing detected private information remain blocked in privacy mode. Image pixels may contain personal information and are not redacted. See [ADR 0020](adr/0020-explicit-images-with-hidden-text.md). Embedded CID images remain
 unsupported; showing them would require a separate bounded attachment path.
 
 Older cached mail lacks image metadata. The authenticated, CSRF-protected

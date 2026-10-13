@@ -336,11 +336,13 @@ export function MessageText({ text }: { text: string }) {
 function ReaderImage({ image, index }: { image: MailImage; index: number }) {
   const { on, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("loading");
+  // Provider metadata may end mid-token at its 500-unit limit.
+  const description = on && image.alt.length >= 500 ? `Image ${index + 1}` : image.alt;
   const privateSource = on && privateMailLink(image.src, (value) => redactPrivateText(value, names));
   return <figure>
     {!privateSource && status !== "error" && <img
       src={image.src}
-      alt={on ? redactPrivateText(image.alt, names) : image.alt}
+      alt={on ? redactPrivateText(description, names) : description}
       referrerPolicy="no-referrer"
       decoding="async"
       onLoad={() => setStatus("loaded")}
@@ -350,7 +352,7 @@ function ReaderImage({ image, index }: { image: MailImage; index: number }) {
       {privateSource ? "Image unavailable while personal information is hidden." :
         status === "loading" ? `Loading image ${index + 1}…` :
         status === "error" ? `Image ${index + 1} could not be loaded.` :
-        <Redact text={image.alt || `Image ${index + 1}`} />}
+        <Redact text={description || `Image ${index + 1}`} />}
     </figcaption>
   </figure>;
 }

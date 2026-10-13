@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import { FormattedMail } from "./FormattedMail";
 import { MAIL_HTML_LIMIT, MAIL_NODE_LIMIT, MAIL_DEPTH_LIMIT } from "../shared/mail-content";
+import { redactPrivateText } from "./privacy";
 
 const redact = (text: string) => text.replace(/reader@example\.com|Morgan Example/gi, "[hidden]");
 const render = (html: string | null | undefined, privacy = false, showImages = false, fallbackText = "Plain fallback") => renderToStaticMarkup(
@@ -119,6 +120,25 @@ test("inline images require consent and suppress private sources and metadata in
   assert.equal(image.parentElement?.previousElementSibling?.textContent, "Before");
   assert.equal(image.parentElement?.nextElementSibling?.textContent, "After");
 });
+
+for (const [description, expected] of [
+  ["x".repeat(490) + " reader@example.com", "x".repeat(490) + " ••••••••"],
+  ["x".repeat(497) + " Nora Lane", "x".repeat(497) + " ••"],
+  ["😀".repeat(248) + " Nora Lane", "😀".repeat(248) + " •••"],
+  ["Photo for Nora Lane and reader@example.com", "Photo for •••••••• and ••••••••"],
+  ["Public landscape", "Public landscape"],
+] as const) {
+  test(`formatted image alt redacts complete metadata before the display limit: ${description.length} units, ${description.includes("@") ? "address" : "description"}`, () => {
+    const html = `<img src="https://images.example.com/photo.png" alt="${description}">`;
+    const renderImage = (privacy: boolean, showImages = true) => documentOf(renderToStaticMarkup(
+      <FormattedMail html={html} showImages={showImages} privacy={privacy}
+        renderText={(text) => text} redactText={(text) => privacy ? redactPrivateText(text, ["Nora Lane"]) : text} />,
+    ));
+    assert.equal(renderImage(true, false).querySelector("img"), null, "metadata correction cannot grant consent");
+    assert.equal(renderImage(false).querySelector("img")?.alt, description.slice(0, 500));
+    assert.equal(renderImage(true).querySelector("img")?.alt, expected.slice(0, 500));
+  });
+}
 
 for (const acrossImage of [false, true]) {
   test(`privacy preserves interleaved captions with private tokens split across ${acrossImage ? "images" : "tags"}`, () => {

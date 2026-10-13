@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Hide scrollbar indicators without disabling scrolling. Allow Show images while personal text is hidden, with per-opening consent and masked text, captions and image descriptions. Image URLs containing detected private information remain blocked. Keep captions and inline images in order when private text spans sender markup or image boundaries.
+- Hide scrollbar indicators without disabling scrolling. Allow Show images while personal text is hidden, with per-opening consent and masked text, captions and image descriptions. Image URLs containing detected private information remain blocked. Keep captions and inline images in order when private text spans sender markup or image boundaries. Redact image descriptions before truncating them; use a generic description when privacy-mode gallery metadata may already be cut mid-token.
 
 - Check cached updater files before reading them, limit hashing to the expected size, and stop hashing on cancellation or timeout. Ignore cached metadata paths and recheck cache contents before reuse.
 
