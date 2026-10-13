@@ -262,8 +262,13 @@ notification after AI starts and asserts one provider run. It does not issue
 another sync as a wait, which could arrive late and clear the expected warning.
 The [provider tests](../server/providers.test.ts) check cached work,
 pagination, progressive batches, IMAP command order and actual transport abort
-against a synthetic loopback endpoint. They shorten the timeout clock while
-asserting the configured 30-second bound. The
+against a synthetic loopback endpoint. They assert the configured 30-second
+timeout and trigger it only after the request arrives, avoiding a race with
+connection setup. Each phase must make one request, report the expected safe
+timeout error and close the connection within one second. A negative control
+keeps the transport open after the caller times out and must fail that closure
+check. These tests do not establish live-provider behavior or the cause of a
+historical CI failure. The
 [recovery tests](../server/sync-recovery.test.ts) exercise the actual loopback
 service with synthetic OAuth transport and ImapFlow command/emitter fixtures.
 They cover safe failures, guarded saved-credential reconnect, duplicate clicks,
