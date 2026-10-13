@@ -324,12 +324,12 @@ test("privacy removes connected recipient names and addresses from list, headers
     state.messages[0] = { ...state.messages[0], to: '"Nora Lane" <first@example.com>',
       cc: "Kai Rivers <second@example.com>", subject: "For Nora Lane", preview: "Hello Nora and Kai",
       body: "Hello Nora Lane", reason: "Priority for Nora Lane",
-      html: '<table style="background-color:#fff;color:#222"><tbody><tr><td>Hello <b>Nora</b> Lane and Kai</td></tr><tr><td><a href="https://example.com/?name=Nora%2520Lane" title="Nora Lane">Private destination</a><img src="https://images.example.com/photo.png" alt="Nora Lane"></td></tr></tbody></table>' };
+      html: '<table style="background-color:#fff;color:#222"><tbody><tr><td>Hello <b>Nora</b> Lane and Kai first<span>@example.com<img src="https://images.example.com/photo.png" alt="Nora Lane first@example.com" title="Nora Lane" aria-label="Nora Lane"></span></td></tr><tr><td><a href="https://example.com/?name=Nora%2520Lane" title="Nora Lane">Private destination</a><img src="https://images.example.com/?to=first%40example.com" alt="Nora Lane"></td></tr></tbody></table>' };
   });
   try {
     const assertHidden = () => {
       const markup = app.container.innerHTML;
-      for (const value of ["Nora", "Lane", "Kai", "first@example.com", "second@example.com", "%2520"])
+      for (const value of ["Nora", "Lane", "Kai", "first@example.com", "second@example.com", "%2520", "%40"])
         assert.ok(!markup.includes(value), `hidden ${value} must not be in markup`);
     };
     assertHidden();
@@ -338,7 +338,13 @@ test("privacy removes connected recipient names and addresses from list, headers
     await app.key("s"); assert.ok(app.container.querySelector('[role="dialog"]'));
     assertHidden(); await app.click(app.button("Close dialog"));
     assert.equal(app.container.querySelector(".message-body img"), null);
-    assert.equal(app.button("Show images").disabled, true);
+    assert.equal(app.button("Show images").disabled, false);
+    await app.click(app.button("Show images"));
+    assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
+    assertHidden();
+    assert.ok(app.container.textContent?.includes("Image unavailable while personal information is hidden"));
+    await app.click(app.button("Hide images"));
+    assert.equal(app.container.querySelector(".message-body img"), null);
     assert.ok(app.container.querySelector(".formatted-mail table"));
     const control = app.container.querySelector(".image-controls")!;
     const body = app.container.querySelector(".message-body")!;
@@ -346,10 +352,16 @@ test("privacy removes connected recipient names and addresses from list, headers
     await app.click(app.button("Show personal information"));
     assert.ok(app.container.textContent?.includes("Nora"));
     await app.click(app.button("Show images"));
-    assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
+    assert.equal(app.container.querySelectorAll(".message-body img").length, 2);
     assert.equal(app.container.querySelectorAll(".message-images figure").length, 0, "formatted images are not duplicated");
     await app.key("p");
     assertHidden(); assert.equal(app.container.querySelector(".message-body img"), null);
+    await app.click(app.button("Show images"));
+    assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
+    assertHidden();
+    await app.click(app.back()); await app.click(app.forward());
+    assert.equal(app.container.querySelector(".message-body img"), null, "history return requires new consent in privacy mode");
+    assert.equal(app.button("Show images").disabled, false);
   } finally { await app.close(); }
 });
 
@@ -433,7 +445,8 @@ test("empty and rejected formatting retain readable text and consent-controlled 
   for (const html of [null, "", "<script>discard</script>", "<br>".repeat(4001),
     "<html><head><style>p { color: red }</style></head><body><form><p>Discarded form</p></form></body></html>",
     "<div><span>   </span></div>", '<div><img src="javascript:invalid"></div>']) {
-    const app = await mount(false, (state) => {
+    const app = await mount(false, (state, storage) => {
+      storage.setItem("privacy", "on");
       state.messages[0] = { ...state.messages[0], html, body: "First paragraph\n\nSecond paragraph" };
     });
     try {

@@ -336,8 +336,9 @@ export function MessageText({ text }: { text: string }) {
 function ReaderImage({ image, index }: { image: MailImage; index: number }) {
   const { on, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("loading");
+  const privateSource = on && privateMailLink(image.src, (value) => redactPrivateText(value, names));
   return <figure>
-    {!on && status !== "error" && <img
+    {!privateSource && status !== "error" && <img
       src={image.src}
       alt={on ? redactPrivateText(image.alt, names) : image.alt}
       referrerPolicy="no-referrer"
@@ -346,7 +347,8 @@ function ReaderImage({ image, index }: { image: MailImage; index: number }) {
       onError={() => setStatus("error")}
     />}
     <figcaption>
-      {status === "loading" ? `Loading image ${index + 1}…` :
+      {privateSource ? "Image unavailable while personal information is hidden." :
+        status === "loading" ? `Loading image ${index + 1}…` :
         status === "error" ? `Image ${index + 1} could not be loaded.` :
         <Redact text={image.alt || `Image ${index + 1}`} />}
     </figcaption>
@@ -368,6 +370,7 @@ export function ReaderContent(props: ImageProps & { loadContent: (id: string) =>
 function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
   const { on: privacy, names } = useContext(PrivacyContext);
   const [status, setStatus] = useState("blocked");
+  const [consentInPrivacy, setConsentInPrivacy] = useState(false);
   const [images, setImages] = useState<MailImage[]>([]);
   const [content, setContent] = useState<ContentResult>({ html: mail.html ?? null, images: mail.images });
   const [contentStatus, setContentStatus] = useState(mail.html === undefined && loadContent ? "loading" : "ready");
@@ -379,6 +382,7 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     return () => { active.current = false; imageRequest.current++; };
   }, []);
   useEffect(() => {
+    setConsentInPrivacy(false);
     if (privacy) { imageRequest.current++; setStatus("blocked"); setImages([]); }
   }, [privacy]);
   const recoverContent = async () => {
@@ -395,8 +399,8 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     if (mail.html === undefined && loadContent) void recoverContent();
   }, []);
   const show = async () => {
-    if (privacy) return;
     const request = ++imageRequest.current;
+    setConsentInPrivacy(privacy);
     setStatus("loading");
     try {
       const result = mail.images ?? content.images ?? (await loadImages(mail.id)).images;
@@ -410,7 +414,7 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
       if (active.current && request === imageRequest.current) setStatus("error");
     }
   };
-  const shown = status === "shown" && !privacy;
+  const shown = status === "shown" && (!privacy || consentInPrivacy);
   const gallery = shown && (images.length ? images.map((image, index) =>
     <ReaderImage key={image.src} image={image} index={index} />) :
     <p role="status">No supported remote images in this email. Embedded images are not shown.</p>);
@@ -419,7 +423,7 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
     <div className="image-controls">
       <button className="button" type="button"
         aria-expanded={shown} aria-controls={region}
-        disabled={status === "loading" || privacy}
+        disabled={status === "loading"}
         onClick={() => {
           if (shown) { imageRequest.current++; setStatus("blocked"); }
           else void show();
@@ -427,8 +431,8 @@ function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
         {status === "loading" ? "Loading images…" : shown ? "Hide images" :
           status === "error" ? "Try images again" : "Show images"}
       </button>
-      <span>{privacy ? "Images are hidden while personal information is hidden." :
-        "Remote images can tell the sender you opened this email."}</span>
+      <span>Remote images can tell the sender you opened this email.
+        {privacy && " Image pixels may contain personal information."}</span>
     </div>
     {body && contentStatus === "loading" && <p role="status">Loading formatted email…</p>}
     {body && contentStatus === "error" && <p role="status">Formatted email is unavailable. The text is shown below. <button type="button" className="link" onClick={() => void recoverContent()}>Try again</button></p>}

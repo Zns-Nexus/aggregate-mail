@@ -65,13 +65,17 @@ test("links reject unsafe destinations and suppress hidden tokens including perc
 });
 
 test("nested formatted text uses the same parent redactor and cannot split hidden tokens across tags", () => {
-  const html = '<p>Contact Morgan <strong>Example</strong>: reader<span>@example.com</span></p><img src="https://images.example.com/pixels.png" alt="Morgan Example">';
+  const html = '<p>Contact Morgan <strong>Example<img src="https://images.example.com/pixels.png" alt="Morgan Example"></strong>: reader<span>@example.com<img src="https://images.example.com/second.png" alt="reader@example.com"></span></p>';
   const hidden = render(html, true, true);
   assert.ok(hidden.includes("[hidden]"));
-  for (const token of ["Morgan", "Example", "reader", "@example.com", "https://images.example.com/pixels.png"])
+  for (const token of ["Morgan", "Example", "reader", "@example.com"])
     assert.ok(!hidden.includes(token), token);
-  assert.equal(documentOf(hidden).querySelector("img"), null);
-  assert.ok(hidden.includes("Images hidden in privacy mode"));
+  assert.deepEqual([...documentOf(hidden).querySelectorAll("img")].map((image) => [image.src, image.alt]), [
+    ["https://images.example.com/pixels.png", "[hidden]"], ["https://images.example.com/second.png", "[hidden]"],
+  ]);
+  const blocked = render(html, true, false);
+  assert.equal(documentOf(blocked).querySelector("img,[src]"), null);
+  assert.ok(!blocked.includes("images.example.com"));
   assert.equal(documentOf(hidden).querySelectorAll("p").length, 1);
   const entityText = documentOf(render('<table><tbody><tr><td><strong>Morgan&#32;Example</strong></td></tr></tbody></table>', true));
   assert.equal(entityText.querySelector("strong")?.textContent, "[hidden]");
@@ -83,7 +87,7 @@ test("nested formatted text uses the same parent redactor and cannot split hidde
   assert.equal(documentOf(markup).querySelectorAll("mark").length, 2);
 });
 
-test("inline images have no fetch attributes until consent and remain hidden in privacy mode", () => {
+test("inline images require consent and suppress private sources and metadata in privacy mode", () => {
   const html = '<p>Before</p><img src="https://images.example.com/photo.png" srcset="https://example.com/tracker 2x" onerror="bad()" alt="Photo" width="9000"><p>After</p>' +
     '<img src="cid:embedded"><img src="data:image/png;base64,eA=="><img src="https://localhost/private"><img src="http://example.com/insecure">';
   for (const privacy of [false, true]) {
@@ -91,9 +95,15 @@ test("inline images have no fetch attributes until consent and remain hidden in 
     assert.equal(documentOf(blocked).querySelector("img,[src],[srcset]"), null);
     assert.ok(!blocked.includes("images.example.com"));
   }
-  const hidden = render(html, true, true);
-  assert.equal(documentOf(hidden).querySelector("img,[src],[srcset]"), null);
-  assert.ok(hidden.includes("Images hidden in privacy mode"));
+  const privateImages = '<img src="https://images.example.com/?to=reader%2540example.com" alt="reader@example.com">' +
+    '<img src="https://images.example.com/Morgan+Example.png" alt="Morgan Example">' +
+    '<img src="https://images.example.com/?name=Morgan%20Example" alt="Morgan Example">';
+  const hidden = render(html + privateImages, true, true);
+  assert.equal(documentOf(hidden).querySelectorAll("img").length, 1);
+  assert.equal((hidden.match(/Image unavailable while personal information is hidden/g) || []).length, 3);
+  assert.ok(hidden.includes("Image unavailable while personal information is hidden"));
+  for (const token of ["reader", "Morgan", "%2540", "Example"]) assert.ok(!hidden.includes(token), token);
+  assert.equal(documentOf(render(privateImages, false, true)).querySelectorAll("img").length, 3);
   const document = documentOf(render(html, false, true));
   assert.equal(document.querySelectorAll("img").length, 1);
   const image = document.querySelector("img")!;
@@ -110,11 +120,11 @@ test("inline images have no fetch attributes until consent and remain hidden in 
 
 test("supported image-only mail keeps its formatted image without replacing it with fallback text", () => {
   const html = '<div><img src="https://images.example.com/photo.png"></div>';
-  const blocked = documentOf(render(html));
+  const blocked = documentOf(render(html, true));
   assert.equal(blocked.querySelector(".formatted-mail-fallback"), null);
   assert.equal(blocked.querySelector("img"), null);
   assert.ok(blocked.body.textContent?.includes("Use Show images"));
-  const shown = documentOf(render(html, false, true));
+  const shown = documentOf(render(html, true, true));
   assert.equal(shown.querySelectorAll("img").length, 1);
   assert.ok(!shown.body.textContent?.includes("Plain fallback"));
 });
@@ -133,7 +143,7 @@ test("unsupported, missing and over-budget content falls back through the parent
   assert.equal(documentOf(render("<unknown-wrapper>Supported text</unknown-wrapper>")).body.textContent, "Supported text");
 });
 
-test("mounted inline images report load/error and leave DOM when consent or privacy changes", async () => {
+test("mounted inline images report load/error and leave DOM when consent is revoked", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>");
   const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const oldDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -161,9 +171,10 @@ test("mounted inline images report load/error and leave DOM when consent or priv
     await update(false);
     await update(true);
     assert.ok(container.querySelector("img"));
-    await update(true, true);
+    await update(false, true);
     assert.equal(container.querySelector("img"), null);
-    assert.ok(container.textContent?.includes("Images hidden in privacy mode"));
+    await update(true, true);
+    assert.ok(container.querySelector("img"));
     await update(false, false);
     assert.equal(container.querySelector("img"), null);
   } finally {

@@ -36,10 +36,12 @@ export function FormattedMail({ html, showImages, renderText, redactText, privac
       if (style[property]) style[property] = String(style[property]).replace(/^(\d+(?:\.\d+)?px (?:solid|dashed|dotted) ).+$/, "$1var(--line)");
     }
     if (tag === "img") {
-      if (privacy || !showImages) return <span key={key} className="formatted-mail-image-status">
-        {privacy ? "Images hidden in privacy mode." : "Image blocked. Use Show images to load it."}
+      if (!showImages) return <span key={key} className="formatted-mail-image-status">
+        Image blocked. Use Show images to load it.
       </span>;
       const src = imageSource(a.src || "");
+      if (privacy && (privateMailLink(a.src || "", redactText) || (src && privateMailLink(src, redactText))))
+        return <span key={key} className="formatted-mail-image-status">Image unavailable while personal information is hidden.</span>;
       return src ? <FormattedImage key={`${key}:${src}`} src={src} alt={redactText((a.alt || "").slice(0, 500))} style={style} /> :
         <span key={key} className="formatted-mail-image-status">Unsupported image.</span>;
     }
@@ -76,7 +78,7 @@ export function FormattedMail({ html, showImages, renderText, redactText, privac
       // A hidden token split by sender tags must still reach the parent's redactor whole.
       if (redactText(text) !== redactedParts(children, redactText)) return <>
         {renderText(text)}
-        {hasImage(children) && <span className="formatted-mail-image-status">Images hidden in privacy mode.</span>}
+        {imageNodes(children).map(render)}
       </>;
     }
     return children.map(render);
@@ -112,4 +114,9 @@ function redactedParts(nodes: MailContentNode[], redactText: (text: string) => s
 
 function hasImage(nodes: MailContentNode[]): boolean {
   return nodes.some((node) => typeof node !== "string" && ((node.tag === "img" && !!imageSource(node.attributes.src || "")) || hasImage(node.children)));
+}
+
+function imageNodes(nodes: MailContentNode[]): MailContentNode[] {
+  return nodes.flatMap((node) => typeof node === "string" ? [] :
+    node.tag === "img" ? [node] : imageNodes(node.children));
 }

@@ -52,9 +52,9 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     calls.push(id);
     return new Promise<{ images: MailImage[] }>((yes, no) => { resolve = yes; reject = no; });
   };
-  const render = async (id: string, images?: MailImage[]) => {
+  const render = async (id: string, images?: MailImage[], privacy = true) => {
     await act(async () => root.render(
-      <PrivacyContext.Provider value={{ on: false, revealed: new Set(), toggle() {} }}>
+      <PrivacyContext.Provider value={{ on: privacy, names: ["Alice Example"], revealed: new Set(), toggle() {} }}>
         <MessageImages mail={{ id, images }} loadImages={loadImages} />
       </PrivacyContext.Provider>));
   };
@@ -64,6 +64,7 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     await render("a:1");
     assert.equal(button().textContent, "Show images");
     assert.equal(button().type, "button"); // Native keyboard activation and focus semantics.
+    assert.equal(button().disabled, false);
     assert.equal(button().getAttribute("aria-expanded"), "false");
     assert.equal(container.querySelector("img"), null);
     assert.deepEqual(calls, []);
@@ -76,7 +77,7 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     assert.equal(container.querySelectorAll("img").length, 1);
     assert.equal(img.getAttribute("src"), image.src);
     assert.equal(img.getAttribute("referrerpolicy"), "no-referrer");
-    assert.equal(img.alt, image.alt);
+    assert.ok(!img.alt.includes("alice@example.com"));
     assert.equal(button().getAttribute("aria-expanded"), "true");
     await act(async () => img.dispatchEvent(new dom.window.Event("load")));
     assert.ok(!container.textContent?.includes("Loading image 1"));
@@ -103,12 +104,41 @@ test("mounted reader blocks images until activation, reports loading/failure, an
     assert.ok(container.textContent?.includes("No supported remote images"));
     assert.equal(container.querySelector("img"), null);
 
+    await render("privacy-pending", undefined, false);
+    await click();
+    const beforePrivacy = resolve;
+    await render("privacy-pending", undefined, true);
+    assert.equal(button().textContent, "Show images");
+    await click();
+    const afterPrivacy = resolve;
+    await act(async () => beforePrivacy({ images: [image] }));
+    assert.equal(button().textContent, "Loading images…", "old request cannot satisfy fresh privacy consent");
+    assert.equal(container.querySelector("img"), null);
+    await act(async () => afterPrivacy({ images: [image] }));
+    assert.equal(container.querySelectorAll("img").length, 1);
+
     calls = [];
-    await render("cached", [image]);
+    const privateImages = [image, { src: "https://images.example.com/?to=alice%2540example.com", alt: "Alice Example" },
+      { src: "https://images.example.com/Alice+Example.png", alt: "alice@example.com" }];
+    await render("cached", privateImages);
     assert.equal(container.querySelector("img"), null);
     await click();
-    assert.ok(container.querySelector("img"));
+    assert.equal(container.querySelectorAll("img").length, 1);
+    assert.ok(container.textContent?.includes("Image unavailable while personal information is hidden"));
+    for (const token of ["alice", "Alice", "Example", "%2540"])
+      assert.ok(!container.innerHTML.includes(token), token);
+    await act(async () => container.querySelector("img")!.dispatchEvent(new dom.window.Event("load")));
+    assert.ok(!container.innerHTML.includes("alice@example.com"), "loaded captions stay masked");
     assert.deepEqual(calls, []);
+    await click();
+    await render("cached", privateImages, false);
+    await click();
+    assert.equal(container.querySelectorAll("img").length, 3);
+    await render("cached", privateImages, true);
+    assert.equal(container.querySelector("img"), null, "privacy activation revokes existing consent");
+    assert.equal(button().disabled, false);
+    await click();
+    assert.equal(container.querySelectorAll("img").length, 1);
     await render("empty", []);
     await click();
     assert.ok(container.textContent?.includes("Embedded images are not shown"));
@@ -167,7 +197,10 @@ test("formatted reader recovery keeps text on failure, ignores late content and 
     await act(async () => button("Show images").click());
     assert.equal(container.querySelectorAll("img").length, 1); assert.equal(metadataCalls, 0);
     await render("formatted", true);
-    assert.equal(container.querySelector("img"), null); assert.equal(button("Show images").disabled, true);
+    assert.equal(container.querySelector("img"), null); assert.equal(button("Show images").disabled, false);
+    await act(async () => button("Show images").click());
+    assert.equal(container.querySelectorAll("img").length, 1);
+    await act(async () => button("Hide images").click());
     await render("formatted", false);
     assert.equal(container.querySelector("img"), null, "disabling privacy does not grant consent again");
   } finally {
