@@ -82,18 +82,65 @@ The first complete import enables later arrival notifications. A partial first i
 
 Electron selects its macOS Keychain item from the application name before
 startup. Moving `Local State` preserves Windows protection but does not carry
-the old macOS `Aggregate Mail` identity into `Emc²`. The desktop startup path
-keeps the Emc² profile location, tries its current identity and permits one
-legacy-identity relaunch for an unconfirmed existing key. It validates the
-decrypted 32-byte key before opening the mail service. Successful decryption
-records the identity with the protected-file digest for later starts. An
-unreadable or missing key stops startup without replacing encrypted data.
+the old macOS `Aggregate Mail` identity into `Emc²`. [Desktop startup](../desktop/main.ts)
+pins the Emc² profile path, acquires its singleton, recovers a default legacy
+profile when needed, then selects identity before readiness. A second instance
+cannot inspect or migrate keys. Unconfirmed original wrappers retain the one
+legacy-identity relaunch from [ADR 0015](adr/0015-macos-keychain-identity.md).
+
+After recovering a legacy key, [the migration](../desktop/keychain.ts) launches
+the same application in an early helper mode with a fresh private temporary
+profile. [The dispatcher](../desktop/entry.ts) keeps ordinary startup out of
+that helper. It selects Emc² before readiness, wraps the same canonical 32-byte
+key and verifies decryption equality. One bounded request and authenticated
+response travel over private pipes; the parent requires complete frames,
+normal EOF and a successful child exit before committing. The parent holds
+the profile lock throughout and applies a five-minute deadline. Handled quit
+and fatal paths terminate the owned child and observe its exit before cleanup.
+A hard parent termination cannot guarantee cleanup during a native prompt.
+
+Only the parent writes `mail/key.current.json`, using a private temporary file,
+file flush, rename, directory flush and readback. This versioned record binds
+the current wrapper to the retained `key.protected` digest. Later macOS starts
+prefer that record and select Emc² even if a legacy retry argument remains.
+Malformed records, a missing or changed original wrapper, invalid keys and
+migration failures stop before mail startup. They never trigger a replacement
+key or a fallback from a committed current record. The database is not
+reencrypted, and the original wrapper and identity metadata remain unchanged.
+Fresh/current profiles keep their existing key path; Windows does not use
+this macOS migration.
+
+An older application can still use the retained original wrapper and metadata.
+Do not delete Keychain items or reset a profile to recover from an error. Moving
+aside a corrupt current record requires explicit recovery authority with all
+copies stopped; retain the record as evidence. See
+[ADR 0021](adr/0021-macos-keychain-name-migration.md).
 
 Use `--user-data-dir=<nonempty path>` before `--` for isolated checks. Explicit
 profiles skip both saved-profile migration and development `.data` imports;
 invalid profile switches stop before the default profile is accessed. The
 startup regression tests use synthetic profiles and do not establish access
-to a user's saved Keychain item. See [ADR 0015](adr/0015-macos-keychain-identity.md).
+to a user's saved Keychain item. Run
+`node --import tsx --test desktop/main.test.ts desktop/migrate.test.ts desktop/keychain.test.ts`
+for the connected bootstrap, restart, protocol, preservation and failure cases.
+Then run `npm test` and `npm run build` for the application change.
+Fixtures that require POSIX permissions, ownership or directory flushing report
+explicit skips on Windows. Portable record/parser/framing checks, child-protocol
+failure checks, synthetic Windows startup and `Local State` recovery stay
+enabled. The skip selection itself does not prove Windows execution.
+
+A temporary application profile does not isolate named macOS Keychain services.
+Native migration verification needs an explicitly authorized disposable macOS
+account/Keychain and reviewed synthetic fixture setup. Use the existing Mac
+packaging and isolated-startup recipes below only within that authority. Bind
+the candidate's bundle metadata and signature, observe both prompt labels,
+verify the same key and synthetic mail across migration/restart/reinstall,
+exercise denial and concurrent launch, and confirm all owned processes exit.
+Record results separately for each tested architecture and Windows startup.
+`productName` already says Emc²; source checks alone do not prove the requesting
+app label, native item label, saved-account continuity or downloaded-app trust.
+The first migration can still request legacy access, and local ad-hoc signing
+does not promise prompt suppression after reinstall.
 
 Emc² shares its React renderer, Electron main process and bundled mail service across Windows and macOS. `npm run package` builds Windows NSIS; `npm run package:mac` builds macOS DMG and ZIP files on a Mac. Package names include the macOS architecture. See [installation and storage](../README.md), [product scope](../PRODUCT.md) and [ADR 0001](adr/0001-unsigned-macos-packaging.md).
 

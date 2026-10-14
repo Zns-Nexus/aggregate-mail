@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 await build({
-  entryPoints: ["desktop/main.ts"],
+  entryPoints: ["desktop/entry.ts"],
   outfile: ".desktop/main.cjs",
   bundle: true,
   platform: "node",

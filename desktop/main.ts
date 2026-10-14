@@ -27,6 +27,7 @@ import { editingMenu } from "./context-menu.js";
 import { isExternalLink, isLocalNavigation } from "./navigation.js";
 import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
 import type { Updates } from "./updates.js";
+import { canonicalKey, readCurrentRecord, migrateLegacyKey, MIGRATION_ERROR, type CurrentRecord } from "./keychain.js";
 
 app.setName("Emc²");
 app.setAppUserModelId("dev.screen.aggregate-mail");
@@ -52,26 +53,8 @@ const retryFlag = "--emc2-legacy-keychain-retry";
 const retried = process.argv.includes(retryFlag);
 let keychainName = "Emc²";
 let confirmedIdentity = false;
-if (isMac && existsSync(protectedKey)) {
-  try {
-    const saved = JSON.parse(readFileSync(identityPath, "utf8"));
-    if (
-      (saved.name === "Emc²" || saved.name === LEGACY_APP_NAME) &&
-      saved.protectedKeySha256 === createHash("sha256").update(readFileSync(protectedKey)).digest("hex")
-    ) {
-      keychainName = saved.name;
-      confirmedIdentity = true;
-    }
-  } catch {
-    // Missing or stale metadata cannot establish the protected key's identity.
-  }
-  if (retried) keychainName = LEGACY_APP_NAME;
-}
-if (isMac && keychainName === LEGACY_APP_NAME) {
-  // Electron captures this name before ready; keep storage at the Emc² path.
-  app.setName(keychainName);
-  app.setPath("userData", dataPath);
-}
+let currentRecord: CurrentRecord | undefined;
+let selectionError: Error | undefined;
 let window: BrowserWindow | null = null;
 let server: Server | undefined;
 let tray: Tray | undefined;
@@ -91,10 +74,30 @@ const showWindow = () => {
   window?.focus();
 };
 
+mkdirSync(dataPath, { recursive: true });
+app.setPath("userData", dataPath);
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   if (!explicitProfile)
     migrateLegacyUserData({ appData: app.getPath("appData"), target: dataPath });
+  try {
+    if (isMac) {
+      currentRecord = readCurrentRecord(mailPath);
+      if (currentRecord) confirmedIdentity = true;
+      else if (existsSync(protectedKey)) {
+        try {
+          const saved = JSON.parse(readFileSync(identityPath, "utf8"));
+          if ((saved.name === "Emc²" || saved.name === LEGACY_APP_NAME) &&
+              saved.protectedKeySha256 === createHash("sha256").update(readFileSync(protectedKey)).digest("hex")) {
+            keychainName = saved.name;
+            confirmedIdentity = true;
+          }
+        } catch { /* Missing or stale metadata cannot establish an identity. */ }
+        if (retried) keychainName = LEGACY_APP_NAME;
+      }
+      if (keychainName === LEGACY_APP_NAME) app.setName(keychainName);
+    }
+  } catch { selectionError = new Error(MIGRATION_ERROR); }
   app.on("second-instance", showWindow);
   app.on("activate", showWindow);
   // The window is frameless outside macOS, so the renderer's traffic lights ask
@@ -109,6 +112,7 @@ else {
   app
     .whenReady()
     .then(async () => {
+      if (selectionError) throw selectionError;
       app.setName("Emc²");
       Menu.setApplicationMenu(
         isMac
@@ -156,14 +160,13 @@ else {
       }
       let key: string;
       if (existsSync(protectedKey)) {
-        const bytes = readFileSync(protectedKey);
+        const bytes = currentRecord ? Buffer.from(currentRecord.wrappedKey, "base64") : readFileSync(protectedKey);
         try {
           key = safeStorage.decryptString(bytes);
-          const decoded = Buffer.from(key, "base64");
-          if (decoded.length !== 32 || decoded.toString("base64") !== key)
-            throw new Error("The protected mail key is invalid. Your mail store was not opened.");
+          canonicalKey(key).fill(0);
         } catch (error) {
-          if (!isMac || retried || confirmedIdentity || keychainName !== "Emc²") throw error;
+          if (!isMac || retried || confirmedIdentity || keychainName !== "Emc²")
+            throw isMac ? new Error(MIGRATION_ERROR) : error;
           const args = process.argv.slice(1);
           const separator = args.indexOf("--");
           args.splice(separator < 0 ? args.length : separator, 0, `--user-data-dir=${dataPath}`, retryFlag);
@@ -187,7 +190,11 @@ else {
       }
       if (!existsSync(protectedKey))
         writeFileSync(protectedKey, safeStorage.encryptString(key));
-      if (isMac && !confirmedIdentity) {
+      if (isMac && keychainName === LEGACY_APP_NAME && !currentRecord) {
+        await migrateLegacyKey({ mailPath, key, app });
+        currentRecord = readCurrentRecord(mailPath);
+      }
+      if (isMac && !confirmedIdentity && !currentRecord) {
         const metadata = JSON.stringify({
           name: keychainName,
           protectedKeySha256: createHash("sha256").update(readFileSync(protectedKey)).digest("hex"),
