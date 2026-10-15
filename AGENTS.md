@@ -44,7 +44,7 @@ encrypted SQLite. The installed app needs no separate browser, terminal or Node.
 - Trace callers before changing a contract. Update shared types, callers and tests together.
 - Keep desktop, renderer and server code in their existing layers.
 - Preserve Inbox categories, Snoozed, Archive, Done and Teach semantics
-  ([ADR 0023](docs/adr/0023-inbox-category-tabs.md)). Done archives, never deletes.
+  ([ADR 0024](docs/adr/0024-inbox-category-tabs.md)). Done archives, never deletes.
   Snooze is local to this client.
 - Follow DESIGN.md for the compact interface, keyboard navigation, focus styles,
   address hiding and reduced motion.

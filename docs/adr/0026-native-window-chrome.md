@@ -1,4 +1,4 @@
-# ADR 0025: Choice of window controls and native context menus
+# ADR 0026: Choice of window controls and native context menus
 
 Date: 2026-10-14
 Status: Accepted by the owner, who asked for a toggle between macOS-style and

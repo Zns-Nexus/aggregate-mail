@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Rebase the sidebar redesign onto current main, preserving macOS key migration and test timeouts. Reconcile contributor guidance, component links and ADR numbering.
+
 - Add a macOS migration path that wraps the existing mail key under Emc² and preserves the original protected key, identity metadata and encrypted mail for rollback. Later starts prefer a validated current record; migration errors stop before opening mail. Native Keychain labels and reinstall behavior still require separate verification.
 
 - Limit macOS filesystem test fixtures to supported hosts while retaining portable protocol checks and Windows startup coverage.

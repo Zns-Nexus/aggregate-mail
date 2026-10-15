@@ -1,4 +1,4 @@
-# ADR 0024: Light mode and a reading pane beside the list
+# ADR 0025: Light mode and a reading pane beside the list
 
 Date: 2026-10-14
 Status: Accepted by the owner, who asked for light mode, side-by-side reading
@@ -45,7 +45,7 @@ body. Image consent, privacy and formatting rules are unchanged
 ## Consequences
 
 - The dark-only brand commitment and the forced dark native theme in
-  [ADR 0021](0021-window-materials-and-themes.md) are superseded. Light glass
+  [ADR 0022](0022-window-materials-and-themes.md) are superseded. Light glass
   depends on the operating system's light material; it needs a manual look on
   Windows 11 and macOS.
 - Sender formatting is still mapped to app colors, so formatted mail follows

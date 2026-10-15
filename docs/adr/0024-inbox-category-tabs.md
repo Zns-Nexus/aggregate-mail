@@ -1,4 +1,4 @@
-# ADR 0023: Inbox category tabs replace Important and Other
+# ADR 0024: Inbox category tabs replace Important and Other
 
 Date: 2026-10-14
 Status: Accepted by the owner, who asked for Gmail-style inbox categories

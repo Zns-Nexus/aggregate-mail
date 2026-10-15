@@ -1,12 +1,12 @@
-# ADR 0021: Window materials and dark themes
+# ADR 0022: Window materials and dark themes
 
 Date: 2026-10-13
 Status: Accepted by the owner, who requested custom themes and macOS-style
 transparency.
 
 The Windows Acrylic choice is superseded by
-[ADR 0022](0022-mail-freshness-and-render-cost.md), and the dark-only themes and forced dark
-native theme by [ADR 0024](0024-light-mode-and-reading-pane.md); this record retains the original decision.
+[ADR 0023](0023-mail-freshness-and-render-cost.md), and the dark-only themes and forced dark
+native theme by [ADR 0025](0025-light-mode-and-reading-pane.md); this record retains the original decision.
 
 ## Context
 

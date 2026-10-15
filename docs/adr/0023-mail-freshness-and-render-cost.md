@@ -1,4 +1,4 @@
-# ADR 0022: Mail freshness and transparency rendering cost
+# ADR 0023: Mail freshness and transparency rendering cost
 
 Date: 2026-10-14
 Status: Implemented for the owner-requested sync and transparency improvements.
@@ -36,7 +36,7 @@ renderer polling timers. Hidden/minimized windows catch up when shown/restored.
 Browser-target timers remain as a fallback.
 
 Use Windows Mica instead of Acrylic. This supersedes only the Windows material
-choice in [ADR 0021](0021-window-materials-and-themes.md). Mica samples the
+choice in [ADR 0022](0022-window-materials-and-themes.md). Mica samples the
 wallpaper rather than continuously blurring other windows. Keep macOS vibrancy,
 opaque reading panes, the existing material support gate and appearance switch.
 Reduce floating-layer CSS blur to 12px for menus/notices and 16px for dialogs.
