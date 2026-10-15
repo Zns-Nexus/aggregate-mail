@@ -104,6 +104,15 @@ The existing scheduler keeps at most two account syncs active and serializes mai
 
 The first complete import enables later arrival notifications. A partial first import saves fetched mail but keeps that notification boundary closed. Existing caches without a stored boundary retain migration compatibility. See [ADR 0018](adr/0018-imap-inbox-events.md). Synthetic service tests cover events through cache refresh and the existing new-mail callback, account isolation, bursts, read serialization, partial failures, credential replacement/removal and shutdown. They do not prove live-provider event behavior or native notification delivery.
 
+### Linux local-key fallback
+
+When `safeStorage` encryption is unavailable on Linux, a fresh profile stores its
+database key in `mail/key.local` (0600) and the renderer shows a persistent
+warning (`MAIL_CREDENTIAL_FALLBACK=linux-local`). Fallback profiles keep the
+local key even if a keyring appears later. Profiles with `key.protected` never
+fall back; they stop with a keyring/reset message. macOS and Windows still stop.
+See [ADR 0027](adr/0027-linux-local-key-fallback.md).
+
 ### Protected mail keys on macOS
 
 Electron selects its macOS Keychain item from the application name before

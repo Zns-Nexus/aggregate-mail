@@ -374,3 +374,4 @@
 .update-notice p { margin: 4px 0 0; max-width: 65ch; color: var(--text-2); }
 .update-notice progress { display: block; margin-top: 8px; width: 100%; max-width: 280px; accent-color: var(--accent); }
 .settings .update-notice { margin: 20px 0 0; padding: 16px 0 0; border-top: 1px solid var(--line); border-bottom: 0; }
+.credential-fallback-notice { border-left: 3px solid var(--danger, #c0392b); }

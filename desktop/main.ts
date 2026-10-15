@@ -20,6 +20,7 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  chmodSync,
 } from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
 import path from "node:path";
@@ -34,6 +35,15 @@ import { canonicalKey, readCurrentRecord, migrateLegacyKey, MIGRATION_ERROR, typ
 app.setName("Emc²");
 app.setAppUserModelId("dev.screen.aggregate-mail");
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
+// Linux-only weaker key storage, see ADR 0027.
+const FALLBACK_MODE = "linux-local";
+const UNAVAILABLE_ERROR =
+  "System credential encryption is unavailable, so Emc² cannot protect its mail key. Your mail store was not opened.";
+const KEYRING_ERROR =
+  "Emc² cannot decrypt its local data. This profile's mail key was protected by the system keyring, which is now unavailable, locked or changed. Your mail store was not opened. Unlock GNOME Keyring or KWallet and start Emc² again, or reset the local profile by moving the Emc² app data folder (for example ~/.config/Emc²) aside.";
+const DECRYPT_ERROR =
+  "Emc² cannot decrypt its local data because the system credential store no longer accepts this profile's mail key. Your mail store was not opened. Reset the local profile by moving the Emc² app data folder aside to start fresh.";
 const explicitProfile = process.argv.some(
   (arg) => arg === "--user-data-dir" || arg.startsWith("--user-data-dir="),
 );
@@ -50,6 +60,8 @@ if (
 const dataPath = app.getPath("userData");
 const mailPath = path.join(dataPath, "mail");
 const protectedKey = path.join(mailPath, "key.protected");
+const localKey = path.join(mailPath, "key.local");
+let credentialFallback = false;
 const identityPath = path.join(mailPath, "keychain-identity.json");
 const retryFlag = "--emc2-legacy-keychain-retry";
 const retried = process.argv.includes(retryFlag);
@@ -177,16 +189,28 @@ else {
           : null,
       );
       mkdirSync(mailPath, { recursive: true });
-      if (!safeStorage.isEncryptionAvailable())
-        throw new Error(
-          "System credential encryption is unavailable. Your mail store was not opened.",
-        );
+      const encryptionAvailable = safeStorage.isEncryptionAvailable();
+      if (isLinux && existsSync(localKey) && !existsSync(protectedKey)) {
+        // A profile created in fallback mode keeps its local key, even if the
+        // keyring appears later; migration is not automatic (ADR 0027).
+        credentialFallback = true;
+      } else if (!encryptionAvailable) {
+        if (!isLinux) throw new Error(UNAVAILABLE_ERROR);
+        if (existsSync(protectedKey)) throw new Error(KEYRING_ERROR);
+        if (existsSync(path.join(mailPath, "mail.sqlite")))
+          throw new Error("The protected mail key is missing. Your mail store was not opened.");
+        credentialFallback = true;
+      }
+      if (credentialFallback)
+        console.warn(JSON.stringify({ credentialFallback: FALLBACK_MODE,
+          warning: "Mail key protected only by file permissions; install or unlock GNOME Keyring or KWallet for system encryption." }));
       if (isMac && retried && !existsSync(protectedKey))
         throw new Error("The protected mail key is missing. Your mail store was not opened.");
       // Preserve the earlier client's data without moving or deleting its source files.
       let legacyKey: Buffer | undefined;
       if (
         !app.isPackaged &&
+        !credentialFallback &&
         !explicitProfile &&
         !existsSync(path.join(mailPath, "mail.sqlite")) &&
         existsSync(path.resolve(".data/key"))
@@ -211,14 +235,26 @@ else {
         }
       }
       let key: string;
-      if (existsSync(protectedKey)) {
+      if (credentialFallback) {
+        if (existsSync(localKey)) {
+          key = readFileSync(localKey, "utf8").trim();
+          try { canonicalKey(key).fill(0); } catch {
+            throw new Error("The local mail key is damaged. Your mail store was not opened.");
+          }
+          chmodSync(localKey, 0o600);
+        } else {
+          key = randomBytes(32).toString("base64");
+          writeFileSync(`${localKey}.tmp`, key, { mode: 0o600 });
+          renameSync(`${localKey}.tmp`, localKey);
+        }
+      } else if (existsSync(protectedKey)) {
         const bytes = currentRecord ? Buffer.from(currentRecord.wrappedKey, "base64") : readFileSync(protectedKey);
         try {
           key = safeStorage.decryptString(bytes);
           canonicalKey(key).fill(0);
         } catch (error) {
           if (!isMac || retried || confirmedIdentity || keychainName !== "Emc²")
-            throw isMac ? new Error(MIGRATION_ERROR) : error;
+            throw new Error(isMac ? MIGRATION_ERROR : isLinux ? KEYRING_ERROR : DECRYPT_ERROR, { cause: error });
           const args = process.argv.slice(1);
           const separator = args.indexOf("--");
           args.splice(separator < 0 ? args.length : separator, 0, `--user-data-dir=${dataPath}`, retryFlag);
@@ -240,7 +276,7 @@ else {
           throw new Error("The protected mail key is missing. Your mail store was not opened.");
         key = (legacyKey || randomBytes(32)).toString("base64");
       }
-      if (!existsSync(protectedKey))
+      if (!credentialFallback && !existsSync(protectedKey))
         writeFileSync(protectedKey, safeStorage.encryptString(key));
       if (isMac && keychainName === LEGACY_APP_NAME && !currentRecord) {
         await migrateLegacyKey({ mailPath, key, app });
@@ -254,6 +290,8 @@ else {
         writeFileSync(`${identityPath}.tmp`, metadata, { mode: 0o600 });
         renameSync(`${identityPath}.tmp`, identityPath);
       }
+      if (credentialFallback) process.env.MAIL_CREDENTIAL_FALLBACK = FALLBACK_MODE;
+      else delete process.env.MAIL_CREDENTIAL_FALLBACK;
       process.env.MAIL_DATA_DIR = mailPath;
       process.env.MAIL_DATA_KEY = key;
       process.env.MAIL_CONFIG_PATH = path.join(dataPath, "settings.env");
@@ -335,6 +373,7 @@ else {
             additionalArguments: [
               ...(checking ? ["--emc2-disable-updates"] : []),
               ...(nativeControls ? ["--emc2-window-controls=windows"] : []),
+              ...(credentialFallback ? [`--emc2-credential-fallback=${FALLBACK_MODE}`] : []),
             ],
             session: localSession,
           },
@@ -538,6 +577,7 @@ else {
             packaged: app.isPackaged,
             electron: process.versions.electron,
             database: "opened",
+            credentialFallback: credentialFallback ? FALLBACK_MODE : null,
             renderer: "loaded",
             hotReload: developing,
             isolatedApi: true,

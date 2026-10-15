@@ -43,6 +43,7 @@ import { MailPrivacy, PrivacyContext, Redact } from "./ui/Privacy";
 import { drawsWindowControls, systemCaption } from "./ui/TrafficLights";
 import { useMedia } from "./ui/useMedia";
 import { Close, Eye, EyeOff, PanelRight, Search, SidebarIcon } from "./ui/icons";
+import { CredentialFallbackNotice } from "./shell/CredentialFallbackNotice";
 
 // Direction the list pane enters from: tabs slide sideways, mail opens upward.
 type Motion = "forward" | "back" | "open" | "close";
@@ -768,6 +769,7 @@ export function App() {
               <div className="pane-tools">{privacyButton}</div>
             </PaneHeader>
             <UpdateNotice banner bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+            <CredentialFallbackNotice mode={window.desktop?.credentialFallback} />
             <SettingsPage
               state={state}
               busy={busy}
@@ -855,6 +857,7 @@ export function App() {
                 <InboxTabs tab={tab} unread={tabUnread} onTab={switchTab} />
               )}
               <UpdateNotice banner bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+              <CredentialFallbackNotice mode={window.desktop?.credentialFallback} />
               {!(split && opened) && actions}
               <div
                 ref={listRef}

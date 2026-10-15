@@ -81,7 +81,10 @@ encrypted SQLite. The installed app needs no separate browser, terminal or Node.
 - Treat `MAIL_DATA_KEY` and `MAIL_DESKTOP_TOKEN` as secrets. `settings.env` in
   app data is unencrypted; never commit or log it.
 - Keep encrypted storage and safeStorage key protection. If encryption or
-  Keychain is unavailable, stop; never fall back to weaker storage.
+  Keychain is unavailable, stop; never fall back to weaker storage. Sole
+  exception: a fresh or already-fallback Linux profile may use the 0600
+  `key.local` with a visible warning; never replace or bypass an existing
+  `key.protected` ([ADR 0027](docs/adr/0027-linux-local-key-fallback.md)).
 - MCP stays off by default, with sending behind its own opt-in. MCP
   read/archive tools change mailbox state even with sending off.
 - A Sent-copy warning can follow successful delivery. Never retry a send

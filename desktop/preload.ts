@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("desktop", {
   setWindowControls: (controls: "mac" | "windows") => ipcRenderer.send("window-controls", controls),
   setOverlay: (colors: { color: string; symbolColor: string }) => ipcRenderer.send("window-overlay", colors),
   mailMenu: (items: unknown, position?: unknown) => ipcRenderer.invoke("mail-menu", items, position),
+  credentialFallback: process.argv?.includes("--emc2-credential-fallback=linux-local")
+    ? "linux-local" : undefined,
   updates: process.argv?.includes("--emc2-disable-updates") ? undefined : {
     state: () => ipcRenderer.invoke("update-state"),
     command: (command: UpdateCommand) => ipcRenderer.invoke("update-command", command),

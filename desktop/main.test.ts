@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync as requireSymlink, chmodSync as requireChmod } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, symlinkSync as requireSymlink, chmodSync as requireChmod } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -322,13 +322,74 @@ test("split, bare and empty profile arguments stop before accessing the saved de
 });
 
 test("unavailable encryption stops without retry, metadata or byte changes", () => {
-  for (const identity of ["Emc²", LEGACY_APP_NAME]) {
+  for (const platform of ["darwin", "win32", "linux"]) for (const identity of ["Emc²", LEGACY_APP_NAME]) {
     const saved = fixture(identity);
-    const result = launch(saved.appData, { available: false });
+    const result = launch(saved.appData, { available: false, platform });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /System credential encryption is unavailable/);
+    assert.match(result.stderr, platform === "linux" ? /cannot decrypt its local data[^\n]*system keyring[^\n]*moving the Emc² app data folder/ : /System credential encryption is unavailable/);
+    assert.doesNotMatch(result.stderr, /decryptString/);
     assert.doesNotMatch(result.stdout, /retrying|backend: opened/);
     assert.equal(existsSync(path.join(saved.profile, "mail/keychain-identity.json")), false);
+    assert.equal(existsSync(path.join(saved.profile, "mail/key.local")), false);
+    preserved(saved.profile, saved);
+  }
+});
+
+test("fresh profile without encryption fails on macOS and Windows without writing a key", () => {
+  for (const platform of ["darwin", "win32"]) {
+    const appData = mkdtempSync(path.join(root, "fresh-"));
+    const result = launch(appData, { available: false, platform });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /System credential encryption is unavailable/);
+    assert.equal(existsSync(path.join(appData, "Emc²/mail/key.local")), false);
+    assert.equal(existsSync(path.join(appData, "Emc²/mail/key.protected")), false);
+  }
+});
+
+test("fresh Linux profile without encryption uses a 0600 local key, warns, and reuses it", () => {
+  const appData = mkdtempSync(path.join(root, "fresh-"));
+  const mail = path.join(appData, "Emc²/mail");
+  const first = launch(appData, { available: false, platform: "linux" });
+  passed(first, 0);
+  assert.match(first.stdout, /"credentialFallback":"linux-local"/);
+  assert.match(first.stderr, /"credentialFallback":"linux-local"/);
+  assert.equal(existsSync(path.join(mail, "key.protected")), false);
+  const key = readFileSync(path.join(mail, "key.local"), "utf8");
+  assert.equal(Buffer.from(key, "base64").length, 32);
+  if (process.platform !== "win32") assert.equal(statSync(path.join(mail, "key.local")).mode & 0o777, 0o600);
+  // Simulate saved mail encrypted under the local key, then reopen.
+  writeFileSync(path.join(mail, "mail.sqlite"), encrypt(Buffer.from(key, "base64"), "synthetic cached mail"));
+  passed(launch(appData, { available: false, platform: "linux" }), 0);
+  // Keyring appearing later keeps the local key rather than silently migrating.
+  const later = launch(appData, { platform: "linux" });
+  passed(later, 0);
+  assert.match(later.stdout, /"credentialFallback":"linux-local"/);
+  assert.equal(existsSync(path.join(mail, "key.protected")), false);
+  assert.equal(readFileSync(path.join(mail, "key.local"), "utf8"), key);
+});
+
+test("Linux fallback never replaces a missing key for existing mail or accepts a damaged local key", () => {
+  const saved = fixture("Emc²");
+  rmSync(path.join(saved.profile, "mail/key.protected"));
+  const missing = launch(saved.appData, { available: false, platform: "linux" });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /protected mail key is missing/);
+  assert.equal(existsSync(path.join(saved.profile, "mail/key.local")), false);
+  writeFileSync(path.join(saved.profile, "mail/key.local"), "short");
+  const damaged = launch(saved.appData, { available: false, platform: "linux" });
+  assert.equal(damaged.status, 1);
+  assert.match(damaged.stderr, /local mail key is damaged/);
+  assert.doesNotMatch(damaged.stdout, /backend: opened/);
+});
+
+test("Linux and Windows decrypt failures name the problem instead of a safeStorage error", () => {
+  for (const [platform, pattern] of [["linux", /cannot decrypt its local data[^\n]*Unlock GNOME Keyring or KWallet/], ["win32", /cannot decrypt its local data[^\n]*Reset the local profile/]] as const) {
+    const saved = fixture("unrecognized identity");
+    const result = launch(saved.appData, { platform }, [], false);
+    assert.equal(result.status, 0);
+    assert.match(result.stderr, pattern);
+    assert.doesNotMatch(result.stdout, /retrying|backend: opened/);
+    assert.equal(existsSync(path.join(saved.profile, "mail/key.local")), false);
     preserved(saved.profile, saved);
   }
 });

@@ -13,6 +13,7 @@ declare global {
         items: { id: string; label: string; enabled: boolean; accelerator?: string; separator?: boolean }[],
         position?: { x: number; y: number },
       ) => Promise<string | null>;
+      credentialFallback?: "linux-local";
       updates?: UpdateBridge;
       onNavigation: (callback: (direction: "back" | "forward") => void) => () => void;
       onMailChanged: (callback: () => void) => () => void;
