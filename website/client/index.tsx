@@ -94,7 +94,13 @@ export function App() {
     font.rel = "stylesheet";
     font.href = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap";
     document.head.appendChild(font);
-    return () => font.remove();
+    document.documentElement.style.overscrollBehavior = "none";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      font.remove();
+      document.documentElement.style.overscrollBehavior = "";
+      document.body.style.overscrollBehavior = "";
+    };
   }, []);
 
   return (

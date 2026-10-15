@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ContextMenu, mailMenuRequest } from "./ContextMenu";
+import { ContextMenu, mailMenuRequest } from "./ui/ContextMenu";
 
 test("right-click requests a menu for the target mail and suppresses the default menu", () => {
   let prevented = 0;
@@ -20,13 +20,13 @@ test("right-click requests a menu for the target mail and suppresses the default
 test("message actions render as accessible menu items and preserve disabled actions", () => {
   let ran = false;
   const html = renderToStaticMarkup(<ContextMenu x={20} y={35} anchor={{ focus() {} }} onClose={() => {}} actions={[
-    { label: "Open", key: "Enter", run() { ran = true; } },
-    { label: "Mark as read", run() { ran = true; } },
-    { label: "Done", disabled: true, run() { ran = true; } },
+    { id: "open", label: "Open", key: "Enter", run() { ran = true; } },
+    { id: "read", label: "Mark as read", run() { ran = true; } },
+    { id: "archive", label: "Archive", disabled: true, run() { ran = true; } },
   ]} />);
   assert.match(html, /role="menu" aria-label="Message actions"/);
   assert.match(html, /role="menuitem">Open<kbd>Enter<\/kbd>/);
   assert.match(html, /role="menuitem">Mark as read<\/button>/);
-  assert.match(html, /role="menuitem" disabled="">Done/);
+  assert.match(html, /role="menuitem" disabled="">Archive/);
   assert.equal(ran, false);
 });

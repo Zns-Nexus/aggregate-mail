@@ -1,5 +1,6 @@
 import type { MailLocation } from "./navigation";
 import type { GmailLabel, Mail } from "../shared/types";
+import { inboxTab, type InboxTab } from "../shared/inbox-tabs";
 
 export function densityShortcut(event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "altKey" | "metaKey">) {
   if (!event.ctrlKey || event.altKey || event.metaKey) return null;
@@ -32,9 +33,10 @@ export async function markMailRead(mail: Mail, pending: Set<string>, update: () 
   }
 }
 
+// Search spans every Inbox tab; otherwise Inbox shows the chosen tab only.
 export function filterMail(messages: Mail[], location: Pick<MailLocation,
-  "view" | "accountFilter" | "query" | "readFilter" | "relevanceFilter" | "sort">,
-  label?: GmailLabel, now = Date.now(), readerId?: string) {
+  "view" | "tab" | "accountFilter" | "query" | "readFilter" | "relevanceFilter" | "sort">,
+  label?: GmailLabel, now = Date.now(), readerId?: string, tabOf: (mail: Mail) => InboxTab = (mail) => inboxTab(mail)) {
   const query = location.query.toLowerCase();
   return messages.filter((mail) => {
     // The open reader stays an ordering anchor after read-on-open removes it from the list.
@@ -45,11 +47,23 @@ export function filterMail(messages: Mail[], location: Pick<MailLocation,
     if (location.relevanceFilter !== "all" && mail.relevance !== Number(location.relevanceFilter)) return false;
     const snoozed = mail.snoozedUntil !== null && mail.snoozedUntil > now;
     if (location.view === "archive" ? !mail.archived : location.view === "snoozed"
-      ? mail.archived || !snoozed : mail.archived || snoozed || mail.category !== location.view) return false;
+      ? mail.archived || !snoozed : mail.archived || snoozed || (!query && tabOf(mail) !== location.tab)) return false;
     return `${mail.sender} ${mail.address} ${mail.subject} ${mail.body}`.toLowerCase().includes(query);
   }).sort((a, b) => {
     const relevance = location.sort === "relevance" ? b.relevance - a.relevance : 0;
     const date = location.sort === "oldest" ? a.date - b.date : b.date - a.date;
     return relevance || date || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   });
+}
+
+// The email the list or reader shows: the opened one, or the selection within the list.
+export function selectMail(
+  messages: Mail[],
+  filtered: Mail[],
+  selectedId: string | null,
+  opened: boolean,
+) {
+  return opened
+    ? messages.find((m) => m.id === selectedId)
+    : filtered.find((m) => m.id === selectedId) || filtered[0];
 }

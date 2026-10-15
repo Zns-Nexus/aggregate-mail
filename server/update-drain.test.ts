@@ -1,3 +1,4 @@
+import { quietGmailRevision } from "./imap-watch-fixture.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,7 +46,7 @@ test("update quiesce drains real renderer/MCP sends and queued sync/mutations, r
   t.mock.method(providers.gmail, "list", async () => { lists++; await syncGate.promise; return [mail]; });
   t.mock.method(providers.gmail, "update", async () => { mutations++; });
   t.mock.method(google, "gmail", () => ({ users: { labels: { list: async () => ({ data: { labels: [] } }) } } }), {});
-  const server = await backend.startServer(0);
+  const server = await backend.startServer(0, undefined, undefined, undefined, undefined, quietGmailRevision);
   const address = server.address(); assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}`;
   const headers = { "X-Desktop-Token": "synthetic-update-desktop-token", "X-CSRF-Token": "", "Content-Type": "application/json" };

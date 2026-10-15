@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { UpdateBridge, UpdateCommand, UpdateReason, UpdateState } from "../shared/updates";
+import type { UpdateBridge, UpdateCommand, UpdateReason, UpdateState } from "../../shared/updates";
 
 const explanations: Record<UpdateReason, string> = {
   development: "Updates are available only in an installed release build.",
@@ -16,7 +16,12 @@ const explanations: Record<UpdateReason, string> = {
   installer: "The update installer could not start. Check for updates to try again.",
 };
 
-export function UpdateNotice({ bridge, onInstalling }: { bridge?: UpdateBridge; onInstalling?: (installing: boolean) => void }) {
+// The banner above the mail pane appears only for an update the user can act on, or a failure of that action.
+// Settings, About shows every state, including unsupported builds and the manual check.
+const bannerPhases: UpdateState["phase"][] = ["available", "downloading", "ready", "installing"];
+const shownAsBanner = (state: UpdateState) => bannerPhases.includes(state.phase) || (state.phase === "error" && state.reason !== "network");
+
+export function UpdateNotice({ bridge, onInstalling, banner = false }: { bridge?: UpdateBridge; onInstalling?: (installing: boolean) => void; banner?: boolean }) {
   const [state, setState] = useState<UpdateState>({ phase: "idle" });
   const [pending, setPending] = useState(false);
   const locked = useRef(false);
@@ -32,7 +37,7 @@ export function UpdateNotice({ bridge, onInstalling }: { bridge?: UpdateBridge; 
     return () => { active.current = false; unsubscribe(); };
   }, [bridge]);
   useEffect(() => { onInstalling?.(state.phase === "installing"); }, [state.phase, onInstalling]);
-  if (!bridge) return null;
+  if (!bridge || (banner && !shownAsBanner(state))) return null;
   const command = async (action: UpdateCommand) => {
     if (locked.current) return;
     locked.current = true; setPending(true);

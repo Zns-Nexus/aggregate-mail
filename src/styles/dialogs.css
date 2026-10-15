@@ -1,0 +1,124 @@
+/* Dialogs, compose and their option lists. */
+.label-options {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.label-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.label-options input { flex-shrink: 0; }
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--backdrop);
+  animation: fade-in 200ms var(--ease-out);
+}
+.dialog {
+  width: 540px;
+  max-width: 100%;
+  max-height: 90dvh;
+  overflow: auto;
+  padding: 24px 28px 28px;
+  border: 1px solid var(--line-2);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--edge), var(--shadow-dialog);
+  animation: dialog-in 420ms var(--spring);
+}
+.dialog-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.dialog-title h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.dialog-copy {
+  margin-bottom: 8px;
+  line-height: 1.6;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.dialog-copy strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.compose-form {
+  display: flex;
+  flex-direction: column;
+}
+.compose-form label {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text-3);
+  transition: border-color 160ms var(--ease-out);
+}
+.compose-form label:focus-within {
+  border-bottom-color: var(--text-3);
+}
+.compose-form :is(input, select) {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  padding: 14px 0;
+  color: var(--text);
+}
+.compose-form :is(input, select):focus-visible {
+  outline: none;
+}
+.compose-form textarea {
+  min-height: 280px;
+  margin: 6px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  resize: vertical;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.compose-form textarea:focus-visible {
+  outline: none;
+}
+.option {
+  width: 100%;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  transition: color 140ms var(--ease-out);
+}
+.option:hover {
+  color: var(--text);
+}
+.option span {
+  font-size: 12px;
+  color: var(--text-4);
+}
+.shortcut-list > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+}
+.shortcut-list kbd {
+  color: var(--text);
+}

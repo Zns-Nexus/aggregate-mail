@@ -1,6 +1,6 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { quietImapWatch } from "./imap-watch-fixture.js";
+import { quietImapWatch, quietGmailRevision } from "./imap-watch-fixture.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,7 +61,7 @@ if (!process.env.EMC2_RECOVERY_TEST_CHILD) {
     const { startServer } = await import("./index.js");
     let events = 0;
     let onEvent: (() => void) | undefined;
-    const server = await startServer(0, undefined, () => { events++; onEvent?.(); }, undefined, quietImapWatch);
+    const server = await startServer(0, undefined, () => { events++; onEvent?.(); }, undefined, quietImapWatch, quietGmailRevision);
     const address = server.address(); assert.ok(address && typeof address === "object");
     const origin = `http://127.0.0.1:${address.port}`;
     const headers = { "X-Desktop-Token": "synthetic-session", "X-CSRF-Token": "", "Content-Type": "application/json", Connection: "close" };

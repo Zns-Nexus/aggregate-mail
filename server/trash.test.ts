@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { quietImapWatch } from "./imap-watch-fixture.js";
+import { quietImapWatch, quietGmailRevision } from "./imap-watch-fixture.js";
 import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -107,7 +107,7 @@ test("Trash actions use synthetic providers, safe targets and confirmed cache re
   const gmailDelete = t.mock.method(api.users.messages, "delete", async () => { throw new Error("Gmail hard delete forbidden"); });
   const gmailBatchDelete = t.mock.method(api.users.messages, "batchDelete", async () => { throw new Error("Gmail hard delete forbidden"); });
   const gmailModify = t.mock.method(api.users.messages, "modify", async () => { throw new Error("Trash must use messages.trash"); });
-  const server = await startServer(0, undefined, undefined, undefined, quietImapWatch);
+  const server = await startServer(0, undefined, undefined, undefined, quietImapWatch, quietGmailRevision);
   try {
     const address = server.address();
     assert.ok(address && typeof address === "object");

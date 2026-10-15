@@ -2,6 +2,17 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { UpdateCommand, UpdateState } from "../shared/updates.js";
 contextBridge.exposeInMainWorld("desktop", {
   platform: process.platform,
+  // The window has an OS material behind it: macOS vibrancy, or Mica and
+  // Acrylic on Windows 11 22H2 (build 22621) and later.
+  materials: process.platform === "darwin" ||
+    (process.platform === "win32" && Number(process.getSystemVersion().split(".")[2]) >= 22621),
+  setMaterial: (material: "none" | "mica" | "acrylic") => ipcRenderer.send("window-material", material),
+  setScheme: (mode: "system" | "light" | "dark") => ipcRenderer.send("window-scheme", mode),
+  // Outside macOS: the app's drawn traffic lights or the system caption buttons.
+  windowControls: process.platform !== "darwin" && process.argv?.includes("--emc2-window-controls=windows") ? "windows" : "mac",
+  setWindowControls: (controls: "mac" | "windows") => ipcRenderer.send("window-controls", controls),
+  setOverlay: (colors: { color: string; symbolColor: string }) => ipcRenderer.send("window-overlay", colors),
+  mailMenu: (items: unknown, position?: unknown) => ipcRenderer.invoke("mail-menu", items, position),
   updates: process.argv?.includes("--emc2-disable-updates") ? undefined : {
     state: () => ipcRenderer.invoke("update-state"),
     command: (command: UpdateCommand) => ipcRenderer.invoke("update-command", command),

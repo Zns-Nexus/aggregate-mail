@@ -31,7 +31,8 @@ export function sortMail(
     )
   )
     return {
-      category: "other" as const,
+      // Codes and security notices are time-sensitive, so they count as important.
+      category: "important" as const,
       relevance: 3 as const,
       reason: "Account or security alert",
     };

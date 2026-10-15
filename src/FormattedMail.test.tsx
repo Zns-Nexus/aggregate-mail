@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import { FormattedMail } from "./FormattedMail";
+import { FormattedMail } from "./mail/FormattedMail";
 import { MAIL_HTML_LIMIT, MAIL_NODE_LIMIT, MAIL_DEPTH_LIMIT } from "../shared/mail-content";
 import { redactPrivateText } from "./privacy";
 
@@ -176,7 +176,7 @@ test("supported image-only mail keeps its formatted image without replacing it w
   const blocked = documentOf(render(html, true));
   assert.equal(blocked.querySelector(".formatted-mail-fallback"), null);
   assert.equal(blocked.querySelector("img"), null);
-  assert.ok(blocked.body.textContent?.includes("Use Show images"));
+  assert.match(blocked.querySelector(".formatted-mail-image-placeholder")?.getAttribute("aria-label") ?? "", /Use Show images/);
   const shown = documentOf(render(html, true, true));
   assert.equal(shown.querySelectorAll("img").length, 1);
   assert.ok(!shown.body.textContent?.includes("Plain fallback"));
@@ -237,4 +237,50 @@ test("mounted inline images report load/error and leave DOM when consent is revo
     if (oldDocument) Object.defineProperty(globalThis, "document", oldDocument); else Reflect.deleteProperty(globalThis, "document");
     delete actGlobal.IS_REACT_ACT_ENVIRONMENT;
   }
+});
+
+test("links keep the sender's text decoration and underline only when the sender sets no decoration", () => {
+  const document = documentOf(render('<a href="https://example.com/a" style="text-decoration:none">Card</a><a href="https://example.com/b">Plain</a>'));
+  const [card, plain] = document.querySelectorAll("a");
+  assert.equal(card.style.textDecoration, "none");
+  assert.equal(plain.style.textDecoration, "underline");
+});
+
+test("loaded images sit in the sender's line instead of an inline-block box", () => {
+  const document = documentOf(render('<p><img src="https://images.example.com/pin.png" width="12" style="vertical-align:middle"> Remote</p>', false, true));
+  const image = document.querySelector("img")!;
+  assert.equal(image.style.verticalAlign, "middle");
+  assert.equal(image.style.width, "12px");
+  assert.equal((image.parentElement as HTMLElement).style.display, "contents");
+});
+
+test("images sized only by height keep that height instead of their natural size", () => {
+  const document = documentOf(render('<img src="https://images.example.com/icon.png" height="25" style="height:25px"><img src="https://images.example.com/logo.png" width="120" height="40">', false, true));
+  const [icon, logo] = document.querySelectorAll("img");
+  assert.equal(icon.style.height, "25px");
+  assert.equal(logo.style.width, "120px");
+  assert.equal(logo.style.height, "auto"); // Width wins so a narrowed image keeps its shape.
+});
+
+test("blocked images keep their size as an empty box and carry the reason as a label", () => {
+  const document = documentOf(render('<img src="https://images.example.com/icon.png" width="24" height="24" alt="Icon">'));
+  const box = document.querySelector<HTMLElement>(".formatted-mail-image-placeholder")!;
+  assert.equal(box.style.width, "24px");
+  assert.equal(box.style.height, "24px");
+  assert.equal(box.textContent, "");
+  assert.equal(box.getAttribute("aria-label"), "Image blocked. Use Show images to load it.");
+});
+
+test("legacy alignment centers tables, center wraps blocks and quotes take the app inset", () => {
+  const document = documentOf(render('<center><table align="center" width="600"><tbody><tr><td>Column</td></tr></tbody></table></center>' +
+    '<img src="https://images.example.com/a.png" align="right"><blockquote style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex;font-size:13px">Quoted</blockquote>'));
+  const table = document.querySelector("table")!;
+  assert.equal(table.style.marginLeft, "auto");
+  assert.equal(table.style.marginRight, "auto");
+  assert.equal(table.parentElement!.tagName, "DIV", "center renders as a block");
+  const quote = document.querySelector("blockquote")!;
+  assert.equal(quote.style.margin, "");
+  assert.equal(quote.style.borderLeft, "");
+  assert.equal(quote.style.paddingLeft, "");
+  assert.equal(quote.style.fontSize, "13px", "other sender styles stay");
 });

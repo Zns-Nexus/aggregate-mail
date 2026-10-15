@@ -1,0 +1,376 @@
+/* The window: pane headers, window controls, search, notices and the working panes. */
+.app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Each pane carries its own 52px header; together they form the window's caption. */
+.pane-head,
+.sidebar-head {
+  height: 52px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pane-head {
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--line);
+  transition: padding 460ms var(--spring);
+}
+.pane-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 600;
+  animation: fade-in 220ms var(--ease-out);
+}
+.pane-head > .icon:first-child {
+  margin-left: -8px;
+}
+/* The mail header centers its search field across the pane. */
+.list-pane .pane-head {
+  position: relative;
+}
+.head-search {
+  position: absolute;
+  left: 50%;
+  width: min(420px, 42%);
+  transform: translateX(-50%);
+}
+.search {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  padding: 0 8px 0 10px;
+  color: var(--text-3);
+  animation: search-in 180ms var(--ease-out);
+}
+.search:focus-within {
+  border-color: var(--text-3);
+}
+.search input {
+  flex: 1;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: var(--text);
+}
+.search input:focus-visible {
+  outline: none;
+}
+.search button {
+  color: var(--text-3);
+}
+.search button:hover {
+  color: var(--text);
+}
+/* Closed, the search is a quiet field that opens in place. */
+.search-closed {
+  justify-content: flex-start;
+  cursor: text;
+  border-color: transparent;
+  background: var(--hover);
+  font-size: 13px;
+  color: var(--text-4);
+  animation: none;
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.search-closed:hover {
+  background: var(--selected);
+  color: var(--text-3);
+}
+.search-closed span {
+  flex: 1;
+}
+.search-closed kbd {
+  font-size: 12px;
+  color: var(--text-4);
+}
+.pane-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.desktop :is(.pane-head, .sidebar-head) {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.desktop :is(.pane-head, .sidebar-head) :is(button, input, a, label, .search) {
+  -webkit-app-region: no-drag;
+}
+/* macOS draws its own lights at (20, 20); the header in that corner reserves room. */
+.pane-head.reserve-lights,
+.sidebar-head.reserve-lights {
+  padding-left: 84px;
+}
+/* The system caption buttons (Windows style) cover the top-right corner: three 46px buttons. */
+.pane-head.reserve-caption {
+  padding-right: 150px;
+}
+/* Drawn window controls sit inside the header in each window corner, so they
+   stay clickable inside the drag region. */
+.traffic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+.sidebar-head .traffic,
+.pane-head .traffic:not(.right) {
+  margin-right: 10px;
+}
+.pane-head .traffic.right {
+  margin-left: 12px;
+}
+.traffic button {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: default;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  transition: background 140ms var(--ease-out);
+}
+.traffic .close {
+  background: #ff5f57;
+}
+.traffic .minimize {
+  background: #febc2e;
+}
+.traffic .zoom {
+  background: #28c840;
+}
+/* macOS greys the lights while the window is in the background. */
+.traffic.inactive button {
+  background: var(--lights-off);
+}
+/* On the right, the close light takes the corner. */
+.traffic.right {
+  flex-direction: row-reverse;
+}
+/* Provider marks: Gmail, iCloud, Fastmail, Yahoo, custom IMAP. */
+.provider-icon {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text);
+  background: #555;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.provider-icon b {
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+.provider-icon svg {
+  width: 68%;
+  height: 68%;
+}
+.provider-icon.gmail,
+.provider-icon.imap {
+  background: transparent;
+}
+.provider-icon.gmail svg,
+.provider-icon.imap svg {
+  width: 100%;
+  height: 100%;
+}
+.provider-icon:is(.icloud, .fastmail, .yahoo) {
+  color: #fff;
+}
+.provider-icon.icloud {
+  background: #3e9cf5;
+}
+.provider-icon.fastmail {
+  background: #3b6fc4;
+}
+.provider-icon.yahoo {
+  background: #7024de;
+}
+
+/* The sidebar and working panes sit flush, divided by hairlines. */
+.frame {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+/* Notices float quietly at the bottom. */
+.notice {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  z-index: 20;
+  width: max-content;
+  max-width: min(520px, calc(100vw - 32px));
+  max-height: 160px;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--raised) 78%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2);
+  box-shadow: var(--edge), var(--shadow);
+  color: var(--text);
+  white-space: pre-line;
+  transform: translateX(-50%);
+  animation: notice-in 260ms var(--ease-out);
+}
+.notice button {
+  padding: 2px;
+  color: var(--text-3);
+}
+.notice button:hover {
+  color: var(--text);
+}
+
+.workspace {
+  animation: fade-in 220ms var(--ease-out);
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.list-pane,
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+/* Side by side: the list keeps a column and the opened email reads beside it. */
+.workspace.split .list-pane {
+  flex: 0 0 var(--list-width);
+}
+.workspace.split .head-search {
+  position: static;
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  margin: 0 6px 0 10px;
+  transform: none;
+}
+.workspace.split .head-search + .pane-tools {
+  margin-left: 0;
+}
+.reader-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+.reader-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+.reader-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-4);
+}
+.reader-empty > svg {
+  margin-bottom: 6px;
+  opacity: 0.7;
+}
+.reader-empty .empty-title {
+  color: var(--text-2);
+}
+.reader-empty kbd {
+  color: var(--text-2);
+}
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.list,
+.context,
+.settings,
+.dialog,
+.dropdown-menu,
+.label-options {
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+}
+/* One pane per view or open message; it animates in when its key changes. */
+.pane {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 12px;
+}
+.pane > * {
+  flex-shrink: 0;
+}
+.pane.forward {
+  animation: pane-forward 220ms var(--ease-out);
+}
+.pane.back {
+  animation: pane-back 220ms var(--ease-out);
+}
+.pane.open {
+  animation: pane-open 220ms var(--ease-out);
+}
+.pane.close {
+  animation: fade-in 200ms var(--ease-out);
+}
+.group {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 18px 4px;
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-4);
+}
+.update-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.update-notice p { margin: 4px 0 0; max-width: 65ch; color: var(--text-2); }
+.update-notice progress { display: block; margin-top: 8px; width: 100%; max-width: 280px; accent-color: var(--accent); }
+.settings .update-notice { margin: 20px 0 0; padding: 16px 0 0; border-top: 1px solid var(--line); border-bottom: 0; }

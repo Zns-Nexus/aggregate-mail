@@ -8,3 +8,6 @@ export const quietImapWatch: ImapWatchFactory = (account) => {
   client.close = () => {};
   return client;
 };
+
+// Provider/API fixtures own their sync requests, so revision IO must stay inert.
+export const quietGmailRevision = () => new Promise<string>(() => {});

@@ -1,3 +1,4 @@
+import { quietGmailRevision } from "./imap-watch-fixture.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync } from "node:fs";
@@ -73,7 +74,7 @@ test("Gmail labels and ordered read-on-open requests use synthetic provider data
     remote.set(params.id!, labels);
     return { data: { id: params.id, ...(labels.length ? { labelIds: labels } : {}) } };
   });
-  const server = await startServer(0);
+  const server = await startServer(0, undefined, undefined, undefined, undefined, quietGmailRevision);
   try {
     const address = server.address();
     assert.ok(address && typeof address === "object");

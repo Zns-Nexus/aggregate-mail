@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MessageText } from "./App";
-import { FormattedMail } from "./FormattedMail";
+import { MessageText } from "./mail/MessageContent";
+import { FormattedMail } from "./mail/FormattedMail";
+
+// The stylesheet entry imports one file per area; jsdom does not follow @import.
+const stylesheet = () => readFileSync(new URL("./style.css", import.meta.url), "utf8")
+  .match(/@import "[^"]+";/g)!
+  .map((line) => readFileSync(new URL(line.slice(9, -2), import.meta.url), "utf8")).join("\n");
 
 test("image status styles preserve body paragraph size, spacing and sender presentation", () => {
   const markup = renderToStaticMarkup(<section className="message-images">
@@ -16,7 +21,7 @@ test("image status styles preserve body paragraph size, spacing and sender prese
   const dom = new JSDOM(`<style></style>${markup}`);
   try {
     const document = dom.window.document;
-    document.querySelector("style")!.textContent = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+    document.querySelector("style")!.textContent = stylesheet();
     // jsdom does not resolve inherited font sizes, so read the first specified ancestor.
     const fontSize = (element: Element): string => {
       for (let current: Element | null = element; current; current = current.parentElement) {
@@ -40,7 +45,7 @@ test("sender colors, backgrounds, borders and links use the app theme", () => {
   const dom = new JSDOM(markup);
   try {
     const document = dom.window.document;
-    const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+    const css = stylesheet();
     document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
     const table = document.querySelector("table")!;
     const cell = document.querySelector("td")!;

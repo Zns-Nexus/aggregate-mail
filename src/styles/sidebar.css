@@ -1,0 +1,234 @@
+/* The sidebar source list and the sliding markers shared with tabs and Settings. */
+/* A source list in the macOS sense: plain rows, one quiet wash for the current item. */
+.sidebar {
+  width: var(--sidebar);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  transition:
+    width 460ms var(--spring),
+    opacity 220ms var(--ease-out);
+}
+.sidebar.closed {
+  width: 0;
+  opacity: 0;
+}
+/* Same left inset as the main header, so the window controls and the
+   sidebar toggle stay in place when the sidebar opens or closes. */
+.sidebar-head {
+  width: var(--sidebar);
+  padding: 0 10px 0 20px;
+}
+/* Fixed width, so collapsing clips the content instead of reflowing it. */
+.sidebar-content {
+  width: var(--sidebar);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 10px 10px;
+  animation: sidebar-swap 280ms var(--ease-out);
+}
+.sliding-nav {
+  position: relative;
+}
+.sliding-wash {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-radius: var(--radius-control);
+  background: var(--selected);
+  pointer-events: none;
+}
+.sliding-wash.animate {
+  transition:
+    transform 440ms var(--spring),
+    width 440ms var(--spring),
+    height 440ms var(--spring);
+}
+/* The hover wash glides between items under the pointer and fades when it leaves. */
+.sliding-hover {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-radius: var(--radius-control);
+  background: var(--hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease-out);
+}
+.sliding-nav.horizontal :is(.sliding-hover, .sliding-wash) {
+  top: 7px;
+  bottom: 7px;
+  right: auto;
+}
+.sliding-hover.visible {
+  opacity: 1;
+}
+.sliding-hover.animate {
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 320ms var(--spring),
+    width 320ms var(--spring),
+    height 320ms var(--spring);
+}
+/* Inbox categories: a segmented row in the manner of Apple Mail. The current
+   category sits on a sliding wash; beside the reader, the others show only
+   their icon and count. */
+.inbox-tabs {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-tabs button {
+  position: relative;
+  height: 30px;
+  flex-shrink: 0;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  font-size: 13px;
+  color: var(--text-3);
+  transition: color 160ms var(--ease-out);
+}
+.inbox-tabs button:hover,
+.inbox-tabs button.active {
+  color: var(--text);
+}
+.inbox-tabs button.active {
+  font-weight: 500;
+}
+.tab-count {
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+}
+.workspace.split .list-pane {
+  container-type: inline-size;
+}
+.workspace.split .inbox-tabs {
+  gap: 0;
+  padding: 0 8px;
+}
+.workspace.split .inbox-tabs button {
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 5px;
+  padding: 0 6px;
+}
+.workspace.split .inbox-tabs button.active {
+  flex: 2.2 1 auto;
+}
+.workspace.split .inbox-tabs button:not(.active) .tab-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* In a tight column the other categories keep only their icon. */
+@container (max-width: 400px) {
+  .inbox-tabs button:not(.active) .tab-count {
+    display: none;
+  }
+}
+.sidebar-group button {
+  position: relative;
+  width: 100%;
+  min-height: 30px;
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  font-size: 13px;
+  color: var(--text);
+  transition: background-color 140ms var(--ease-out);
+}
+/* Sidebar symbols take the accent color, as in Finder and Mail. */
+.sidebar-group button > svg {
+  color: var(--accent);
+}
+/* Sliding lists draw a gliding hover wash instead of a per-row background. */
+.sidebar-group:not(.sliding-nav) button:hover:not(.active, :disabled) {
+  background: var(--hover);
+}
+
+.sidebar-group button:focus-visible {
+  outline-offset: -1px;
+  border-radius: var(--radius-control);
+}
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sidebar-group + .sidebar-group {
+  margin-top: 20px;
+}
+/* Section headings: small bold secondary text that folds its section. */
+.sidebar-group h2,
+.sidebar-heading button {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.sidebar-heading button {
+  width: 100%;
+  min-height: 0;
+  justify-content: space-between;
+  border-radius: 0;
+}
+.sidebar-heading button > svg {
+  color: var(--text-4);
+  opacity: 0;
+  transition: opacity 140ms var(--ease-out), transform 200ms var(--ease-out);
+}
+.sidebar-heading button:hover > svg,
+.sidebar-heading button:focus-visible > svg,
+.sidebar-heading button > svg.folded {
+  opacity: 1;
+}
+.sidebar-heading button > svg.folded {
+  transform: rotate(-90deg);
+}
+.sidebar-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+}
+.sidebar-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Account digits stay in the accessible name; the help dialog lists them. */
+.sidebar kbd {
+  display: none;
+}
+.sidebar-footer {
+  margin-top: auto;
+  padding: 18px 10px 0;
+}
+.sync {
+  font-size: 12px;
+  color: var(--text-4);
+}
+.sync:hover:not(:disabled) {
+  color: var(--text-2);
+}

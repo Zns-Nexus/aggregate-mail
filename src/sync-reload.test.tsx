@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { coalesceReload } from "./App";
+import { coalesceReload } from "./api";
 
 const deferred = () => {
   let resolve!: (value: number) => void;

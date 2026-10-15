@@ -1,3 +1,4 @@
+import { quietGmailRevision } from "./imap-watch-fixture.js";
 import { request as httpRequest } from "node:http";
 import type { StoredAccount } from "./store.js";
 import { test } from "node:test";
@@ -83,7 +84,7 @@ test("MCP HTTP authentication, tools and shared mail operations", async (t) => {
     threadId: "different",
   });
   let changes = 0;
-  const server = await startServer(0, undefined, () => changes++);
+  const server = await startServer(0, undefined, () => changes++, undefined, undefined, quietGmailRevision);
   try {
     const address = server.address();
     assert.ok(address && typeof address === "object");

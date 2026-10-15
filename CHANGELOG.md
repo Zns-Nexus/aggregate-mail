@@ -6,6 +6,33 @@
 
 - Limit macOS filesystem test fixtures to supported hosts while retaining portable protocol checks and Windows startup coverage.
 
+- Let Windows and Linux choose between the drawn macOS-style window controls and the system's own caption buttons, switched from Settings, Appearance by reopening the window in place. Use native context menus for mail rows on the desktop. Make the email toolbar icon-only in Mail-style groups and add Move to Trash to it. Mark unread mail with an accent dot, divide rows with hairlines and fill the selected row with the accent while the list has focus. Tint sidebar icons with the accent and let its sections fold. Arrange Settings in System Settings-style groups.
+
+- Render quoted replies with one inset and bar per level instead of the browser's 40px margins on both sides, so deep threads no longer shrink to a narrow column. Center newsletter layouts that use `align="center"`, `<center>` or `margin: 0 auto`, read `ex` and `ch` lengths and borders in any word order. Move the filter controls into a popover under the Filters button, which stays lit while the list is filtered. Draw the Inbox categories as a larger segmented row that fills the list column beside the reader.
+
+- Add light mode with System, Light and Dark choices; every theme now has a light palette, and the window material and native menus follow the mode. Keep the mail list, reader and sender panel near neutral so themes tint only the window frame and sidebar. Open mail beside the list by default, with the email actions in the reader's header and the list as two- or three-line cards; Full width keeps the earlier in-place reader. Redesign the opened email around one sender line, a short date and a quieter image-consent strip, and let the sender panel be hidden. Remove Search from the sidebar now that the mail header has a search field. Split the renderer into components by area and the stylesheet into token and area files.
+
+- Replace Important and Other with one Inbox split into Primary, Social, Promotions, Newsletters, Transactions and Updates tabs, using Gmail's own categories where available. Keep codes, security notices, support threads and replies in Primary, and mark security mail important in the local sorter. Add a hover wash that follows the pointer in the sidebar, Settings and tabs, and let more of the window material show through the sidebar.
+
+- Replace the top bar and rail with a full-height sidebar and per-pane headers, closer to a native macOS mail layout. Fold the mail filter row behind a Filters button. Offer Transparency as Off, Subtle (Mica) or Glass (Acrylic) on Windows, switched live; Glass restores the see-through blur. Window controls sit inside the pane headers so they stay clickable, in close, minimize, maximize order, with the sidebar toggle fixed beside them. Search is a field centered in the mail header.
+
+- Check Gmail API mailbox revisions every 15 seconds and sync changed accounts through the existing queue, with backoff, account replacement guards and updater/shutdown cleanup. Keep IMAP inbox events and the five-minute recovery sync.
+- Reduce mail-interface redraw work by reusing unchanged snapshot records and memoizing privacy text and avatars. Remove duplicate desktop polling and defer cache notifications to hidden windows until they are shown. Use Windows Mica instead of live Acrylic, and reduce floating-layer CSS blur. Add a synthetic 1,800-message benchmark.
+
+- Fix Today/Yesterday headings retaining the removed history toolbar's sticky offset. Tighten date-heading padding, mail rows, sender-to-subject spacing, filter/action spacing, pane gutters and sender-panel padding while preserving both density modes.
+
+- Rename Done to Archive throughout the mail interface and shortcut labels. Move Trash out of the action toolbar into an outline icon revealed on each mail row by hover or keyboard focus, retaining confirmation and provider safeguards. Remove Back/Forward buttons from the mail pane while preserving history shortcuts and mouse side buttons.
+
+- Move the app-update notice off the top of the window. It now lives in Settings, About, and appears above the mail pane only when an update can be downloaded or installed, or that action fails. Development and unsupported builds no longer show a permanent "Automatic update unavailable" bar.
+
+- Turn off scroll bouncing (overscroll rubber-banding) on the showcase website.
+
+- Show the Settings sections in the sidebar instead of mail, one section at a time. Add Settings, Appearance with four dark themes, six accent colors and a Transparency switch that uses macOS vibrancy or Windows 11 acrylic behind the window chrome and sidebar. Make menus, dropdowns, notices and dialogs glass, and move the sidebar selection and collapse on a spring.
+
+- Replace the top-bar tabs and account filters with a navigation rail and a collapsible sidebar in the macOS source-list style. The sidebar holds New message, the mail views, the account list with Add account (replacing the top-bar account picker) and sync status, and remembers whether it is open. Refresh the dark design tokens for a more native macOS look.
+
+- Render newsletter layouts closer to the sender's design: accept sender styles marked `!important`, keep block, inline-block and table display modes and floats, stop underlining links the sender marks as undecorated, align small icons with their text, keep the height of images sized only by height, parse newsletters nested up to 96 levels deep instead of falling back to plain text, show hidden preview text as one line, and draw blocked images as empty boxes at their size instead of squeezed text.
+
 - Trigger synthetic Gmail timeout tests after the loopback request arrives, preserving real connection-close and no-retry checks. Add a negative control for lost transport cancellation.
 
 - Hide scrollbar indicators without disabling scrolling. Allow Show images while personal text is hidden, with per-opening consent and masked text, captions and image descriptions. Image URLs containing detected private information remain blocked. Keep captions and inline images in order when private text spans sender markup or image boundaries. Redact image descriptions before truncating them; use a generic description when privacy-mode gallery metadata may already be cut mid-token.

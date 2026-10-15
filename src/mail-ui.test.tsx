@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { GmailLabel, Mail } from "../shared/types";
-import { LabelForm, PrivacyContext } from "./App";
+import { LabelForm } from "./dialogs/LabelForm";
+import { PrivacyContext } from "./ui/Privacy";
 import { customLabels, densityShortcut, filterMail, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
 
 const mail: Mail = {
@@ -82,7 +83,7 @@ test("opened mail stays visible after marking read removes it from the Unread la
 });
 
 const location = {
-  view: "important", accountFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest",
+  view: "inbox", tab: "primary", accountFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest",
 } as const;
 
 test("local cache combines account, label, query, read and relevance without mutating mail", () => {
@@ -102,18 +103,19 @@ test("local cache combines account, label, query, read and relevance without mut
   assert.equal(filterMail(messages, { ...location, query: "body" }).length, 6);
 });
 
-test("local cache preserves category, archive and active snooze boundaries", () => {
+test("local cache preserves Inbox tab, archive and active snooze boundaries; search spans tabs", () => {
   const messages: Mail[] = [
     { ...mail, id: "inbox", archived: false },
     { ...mail, id: "expired", archived: false, snoozedUntil: 99 },
     { ...mail, id: "snoozed", archived: false, snoozedUntil: 101 },
     { ...mail, id: "archive", archived: true, snoozedUntil: 101 },
-    { ...mail, id: "other", archived: false, category: "other" },
+    { ...mail, id: "promo", archived: false, category: "other", labelIds: ["CATEGORY_PROMOTIONS"] },
   ];
-  const ids = (view: "important" | "other" | "snoozed" | "archive") =>
-    filterMail(messages, { ...location, view }, undefined, 100).map(mail => mail.id);
-  assert.deepEqual(ids("important"), ["expired", "inbox"]);
-  assert.deepEqual(ids("other"), ["other"]);
+  const ids = (view: "inbox" | "snoozed" | "archive", tab: "primary" | "promotions" = "primary", query = "") =>
+    filterMail(messages, { ...location, view, tab, query }, undefined, 100).map(mail => mail.id);
+  assert.deepEqual(ids("inbox"), ["expired", "inbox"]);
+  assert.deepEqual(ids("inbox", "promotions"), ["promo"]);
+  assert.deepEqual(ids("inbox", "primary", "sender@example.com").sort(), ["expired", "inbox", "promo"]);
   assert.deepEqual(ids("snoozed"), ["snoozed"]);
   assert.deepEqual(ids("archive"), ["archive"]);
 });

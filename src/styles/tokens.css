@@ -1,0 +1,139 @@
+/* Design tokens. Every color in the interface comes from here, so each theme
+   has a dark and a light palette. Themes tint the window frame and sidebar
+   (--bg); working panes (--surface) stay close to neutral so mail reads calmly. */
+:root {
+  --radius-control: 8px;
+  --radius-pane: 14px;
+  --sidebar: 228px;
+  --list-width: clamp(340px, 30vw, 480px);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* A lightly damped spring: settles with a small overshoot, never loops. */
+  --spring: linear(0, 0.06 2.4%, 0.23 5.3%, 0.48 9.3%, 0.71 13.8%, 0.87 18.6%, 0.96 23.8%, 1.005 29.7%, 1.02 36%, 1.012 45%, 1.002 60%, 1);
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    Inter,
+    system-ui,
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+
+  /* Dark is the default scheme. */
+  color-scheme: dark;
+  --bg: #000;
+  --surface: #0e0e10;
+  --raised: #1c1c1f;
+  --hover: rgba(255, 255, 255, 0.04);
+  --selected: rgba(255, 255, 255, 0.07);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.12);
+  --line-3: rgba(255, 255, 255, 0.18);
+  --text: #fff;
+  --text-body: #dedede;
+  --text-2: #a0a0a6;
+  --text-3: #88888f;
+  --text-4: #82828a;
+  --accent: #6b9cff;
+  --link: color-mix(in srgb, var(--accent) 72%, #fff);
+  --reason: #e3a08b;
+  --quote: color-mix(in srgb, var(--accent) 40%, var(--line-2));
+  --danger: #f07c7c;
+  --veil: #1d1d1d;
+  --veil-hover: #262626;
+  --avatar: #1c1c1c;
+  --avatar-text: #a8a8a8;
+  --lights-off: #3a3a3a;
+  --backdrop: rgba(0, 0, 0, 0.5);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+:root[data-scheme="dark"][data-theme="graphite"] {
+  --bg: #141416;
+  --surface: #1a1a1d;
+  --raised: #29292d;
+  --veil: #2a2a2e;
+  --veil-hover: #333338;
+}
+:root[data-scheme="dark"][data-theme="midnight"] {
+  --bg: #050813;
+  --surface: #0e0f13;
+  --raised: #1b1d24;
+  --veil: #1b1e27;
+  --veil-hover: #232733;
+}
+:root[data-scheme="dark"][data-theme="forest"] {
+  --bg: #040906;
+  --surface: #0e0f0e;
+  --raised: #1b1e1c;
+  --veil: #1b201d;
+  --veil-hover: #232a25;
+}
+
+:root[data-scheme="light"] {
+  color-scheme: light;
+  --bg: #f2f2f4;
+  --surface: #fff;
+  --raised: #fff;
+  --hover: rgba(0, 0, 0, 0.04);
+  --selected: rgba(0, 0, 0, 0.06);
+  --line: rgba(0, 0, 0, 0.08);
+  --line-2: rgba(0, 0, 0, 0.13);
+  --line-3: rgba(0, 0, 0, 0.22);
+  --text: #1d1d1f;
+  --text-body: #2c2c2e;
+  --text-2: #48484d;
+  --text-3: #636368;
+  --text-4: #737379;
+  --link: color-mix(in srgb, var(--accent) 88%, #000);
+  --reason: #a4512f;
+  --danger: #c93434;
+  --veil: #d4d4d9;
+  --veil-hover: #c9c9cf;
+  --avatar: #e8e8ec;
+  --avatar-text: #636368;
+  --lights-off: #d1d1d6;
+  --backdrop: rgba(0, 0, 0, 0.22);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.18);
+}
+:root[data-scheme="light"][data-theme="graphite"] {
+  --bg: #e4e4e8;
+  --surface: #fbfbfc;
+}
+:root[data-scheme="light"][data-theme="midnight"] {
+  --bg: #e1e7f3;
+  --surface: #fdfdff;
+}
+:root[data-scheme="light"][data-theme="forest"] {
+  --bg: #dfeae3;
+  --surface: #fdfefd;
+}
+
+/* Transparency: the OS material shows through the window frame and sidebar,
+   tinted by the theme. Working panes stay opaque, as in macOS Mail. */
+:root[data-glass],
+:root[data-glass] body {
+  background: transparent;
+}
+:root[data-glass] .app {
+  background: color-mix(in srgb, var(--bg) 22%, transparent);
+}
+:root[data-glass] .sidebar {
+  background: color-mix(in srgb, var(--bg) 20%, transparent);
+}
+:root[data-glass][data-scheme="light"] .app {
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+:root[data-glass][data-scheme="light"] .sidebar {
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+}
