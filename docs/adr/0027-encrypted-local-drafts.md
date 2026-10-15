@@ -1,4 +1,4 @@
-# ADR 0026: Encrypted local drafts with revision-checked recovery
+# ADR 0027: Encrypted local drafts with revision-checked recovery
 
 Date: 2026-10-15
 Status: Implementation decision for the authorized backend slice; verification and independent review are recorded in its PR.

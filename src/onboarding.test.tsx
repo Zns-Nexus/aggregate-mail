@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, type ReactNode } from "react";
 import { Window as DOMWindow } from "happy-dom";
-import { App, ConnectDialog, SettingsPage } from "./App";
+import { App } from "./App";
+import { ConnectDialog } from "./dialogs/ConnectDialog";
+import { SettingsPage } from "./settings/SettingsPage";
 import { defaults } from "./interaction";
+import { defaultAppearance } from "./appearance";
 import type { Provider, State } from "../shared/types";
 
 const state: State = {
@@ -18,12 +21,14 @@ const settings = (googleConfigured: boolean) => {
   globalThis.window = { desktop: undefined } as unknown as Window & typeof globalThis;
   globalThis.location = { origin: "http://127.0.0.1:3001" } as Location;
   try {
-    return renderToStaticMarkup(<SettingsPage
+    // Settings shows one section at a time; onboarding spans Accounts and Connection.
+    return (["accounts", "connection"] as const).map((section) => renderToStaticMarkup(<SettingsPage
     state={{ ...state, googleConfigured }} busy={false} api={async <T,>() => ({} as T)}
     perform={async () => {}} onConnectAccount={() => {}} onNotice={() => {}}
     windowSide="left" onWindowSide={() => {}}
     interaction={defaults} onInteraction={() => {}}
-    />);
+    section={section} appearance={defaultAppearance} scheme="dark" onAppearance={() => {}}
+    />)).join("");
   } finally {
     for (const [key, descriptor] of [["window", previousWindow], ["location", previousLocation]] as const) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -168,7 +173,7 @@ function mockApp(connection = Promise.resolve(new Response("{}"))) {
   let connected: ((error: string | null) => void) | undefined;
   const calls: string[] = [];
   window.desktop = {
-    platform: "darwin", oauthUrl: "/api/oauth/google", windowCommand: () => {},
+    platform: "darwin", materials: false, oauthUrl: "/api/oauth/google", windowCommand: () => {},
     onWindowState: () => () => {}, onMailChanged: () => () => {},
     onNavigation: () => () => {},
     onAccountConnected: (callback) => { connected = callback; return () => { connected = undefined; }; },

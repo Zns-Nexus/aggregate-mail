@@ -14,8 +14,10 @@ export function mailMenuRequest(
   };
 }
 
-type MenuAction = {
+export type MenuAction = {
+  id: string;
   label: string;
+  separator?: boolean;
   key?: string;
   disabled?: boolean;
   run: () => void;

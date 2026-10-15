@@ -101,7 +101,7 @@ await build({
             return Buffer.concat([iv, cipher.getAuthTag(), bytes]);
           }
         };
-        export const dialog = { showErrorBox(_title, message) { console.error('dialog:' + message); } }, ipcMain = { on() {} }, shell = {};
+        export const dialog = { showErrorBox(_title, message) { console.error('dialog:' + message); } }, ipcMain = { on() {}, handle() {} }, shell = {}, nativeTheme = { themeSource: "system" };
         export const nativeImage = {
           createFromPath(imagePath) {
             const image = { path: imagePath, width: 256, height: 256, template: false };

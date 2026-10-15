@@ -1,0 +1,388 @@
+/* Mail rows, avatars, date headings and the filter row. */
+/* Comfortable rows breathe; compact density remains a separate keyboard choice. */
+.mail-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.row {
+  position: relative;
+  width: calc(100% - 12px);
+  margin: 1px 6px;
+  border-radius: var(--radius-control);
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 14px;
+  transition: background-color 140ms var(--ease-out);
+}
+.mail-row:hover .row:not(.selected) {
+  background: var(--hover);
+}
+.row-trash {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  opacity: 0;
+  pointer-events: none;
+}
+.mail-row:hover .row-trash,
+.mail-row:focus-within .row-trash {
+  opacity: 1;
+  pointer-events: auto;
+}
+.mail-row:hover .row-trash:disabled,
+.mail-row:focus-within .row-trash:disabled {
+  opacity: 0.4;
+}
+.mail-row:hover .row time,
+.mail-row:focus-within .row time {
+  opacity: 0;
+}
+.compact .row-trash {
+  width: 24px;
+  height: 24px;
+}
+@media (hover: none) {
+  .row-trash {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .row time {
+    margin-right: 36px;
+  }
+  .mail-row:hover .row time,
+  .mail-row:focus-within .row time {
+    opacity: 1;
+  }
+}
+/* Selection: an accent tint while the list has focus, a gray wash otherwise.
+   Text keeps its own colors, so it reads with every accent and mode. */
+.row.selected {
+  background: var(--selected);
+}
+.list:focus-within .row.selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* Unread mail carries a small accent dot in the row's left gutter. */
+.unread-dot {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.card .unread-dot {
+  top: 17px;
+  margin-top: 0;
+}
+/* Hairlines between rows, inset to the text; they give way around the selection and hover. */
+.row::after {
+  content: "";
+  position: absolute;
+  left: 46px;
+  right: 12px;
+  bottom: -1px;
+  height: 1px;
+  background: var(--line);
+  pointer-events: none;
+}
+.row.card::after {
+  left: 52px;
+}
+.row.selected::after,
+.mail-row:hover .row::after,
+.mail-row:has(+ .mail-row .row.selected) .row::after,
+.mail-row:has(+ .mail-row:hover) .row::after,
+.mail-row:has(+ .group) .row::after,
+.mail-row:last-child .row::after {
+  opacity: 0;
+}
+.row:focus-visible {
+  outline-offset: -1px;
+  border-radius: var(--radius-control);
+}
+.avatar {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+}
+.avatar-letter {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--avatar);
+  color: var(--avatar-text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.avatar .provider-icon {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  font-size: 6.5px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.avatar .provider-icon:is(.gmail, .imap) {
+  background: var(--raised);
+}
+.row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.row-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.row-line strong {
+  flex-shrink: 0;
+  width: 150px;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 500;
+}
+.row-subject {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.row-line .row-preview {
+  flex: 1 1 0;
+}
+.stacked .row-preview {
+  padding-left: 158px;
+}
+.row-label {
+  flex-shrink: 0;
+  max-width: 120px;
+  margin-left: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--text-4);
+}
+.row time {
+  flex-shrink: 0;
+  min-width: 30px;
+  margin-left: 10px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+/* Sender is context, the subject is the message: muted above bright. */
+.r2 strong,
+.r3 strong {
+  color: var(--text-2);
+}
+.r1 strong,
+.row.unread.r1 strong {
+  color: var(--text-3);
+}
+.r2 .row-subject,
+.r3 .row-subject,
+.row.unread .row-subject {
+  color: var(--text);
+}
+.r1 .row-subject {
+  color: var(--text-2);
+}
+.r3 .row-preview {
+  color: var(--text-3);
+}
+.r1 .row-preview,
+.r2 .row-preview {
+  color: var(--text-4);
+}
+.row.unread .row-subject {
+  font-weight: 600;
+}
+.row.unread time {
+  color: var(--text);
+}
+.stacked {
+  height: 48px;
+}
+.stacked .row-text {
+  gap: 2px;
+}
+.brief {
+  height: 28px;
+}
+.compact .row {
+  height: 24px;
+  margin-top: 1px;
+  margin-bottom: 1px;
+  font-size: 13px;
+}
+.brief .avatar,
+.compact .row .avatar {
+  width: 18px;
+  height: 18px;
+  margin: 0 10px 0 4px;
+}
+.brief .avatar-letter,
+.compact .row .avatar-letter {
+  font-size: 9px;
+}
+.brief .avatar .provider-icon,
+.compact .row .avatar .provider-icon {
+  width: 10px;
+  height: 10px;
+  right: -2px;
+  bottom: -2px;
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+.compact .stacked .row-preview {
+  padding-left: 0;
+}
+/* Cached-mail controls reuse the app dropdown and wrap within the list pane. */
+/* Beside the reader the list is narrow, so each row is a card: sender and
+   time, the subject, then a preview for medium and high relevance. */
+.row.card {
+  height: auto;
+  align-items: flex-start;
+  padding: 9px 12px 10px;
+  font-size: 13px;
+}
+.card .avatar {
+  width: 28px;
+  height: 28px;
+  margin: 1px 12px 0 0;
+}
+.card .avatar-letter {
+  font-size: 12px;
+}
+.card .row-text {
+  gap: 1px;
+}
+.card .row-line strong {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+}
+.card .row-label,
+.card time {
+  margin-left: 0;
+}
+.card .row-subject {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.row.card.unread strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.compact .row.card {
+  padding: 6px 12px;
+}
+.compact .row.card .avatar {
+  width: 22px;
+  height: 22px;
+  margin: 1px 10px 0 0;
+}
+.mail-row:has(.card) .row-trash {
+  top: 6px;
+  right: 12px;
+  transform: none;
+}
+.filter-menu {
+  position: relative;
+}
+.filter-menu > .icon {
+  position: relative;
+}
+/* A dot on the Filters button says the list is filtered or re-sorted. */
+.filter-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+/* Filters open as a popover under the button: a label column and a control column. */
+.popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  padding: 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--raised) 86%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2);
+  box-shadow: var(--edge), var(--shadow);
+  -webkit-app-region: no-drag;
+  animation: menu-in 180ms var(--ease-out);
+}
+.filter-popover {
+  width: 300px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 14px;
+  cursor: default;
+}
+.filter-popover > span {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.filter-popover .dropdown-trigger {
+  height: 30px;
+}
+.filter-popover .dropdown-menu li.active {
+  background: var(--selected);
+  text-decoration: none;
+}
+.filter-reset {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+.label-filter .dropdown-menu {
+  max-height: 260px;
+  overflow: auto;
+}
+.label-filter .dropdown-menu li {
+  overflow-wrap: anywhere;
+}

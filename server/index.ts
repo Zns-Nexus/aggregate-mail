@@ -12,6 +12,7 @@ import { all, put, putBatch, remove, account, transaction, type StoredAccount } 
 import { mountDrafts } from "./drafts.js";
 import { oauth, providers, presets, validateImap, listGmailLabels, syncError } from "./providers.js";
 import { ImapWatch, sameImapAccount, type ImapWatchFactory } from "./imap-watch.js";
+import { GmailWatch } from "./gmail-watch.js";
 import {
   sendMail,
   updateMessage,
@@ -47,6 +48,7 @@ let syncing = false;
 let syncRun: Promise<string[]> | undefined;
 let wakeSync: (() => void) | undefined;
 let imapWatch: ImapWatch | undefined;
+let gmailWatch: GmailWatch | undefined;
 const pendingAccounts = new Set<string>();
 const scheduledAccounts = new Set<string>();
 const activeAccounts = new Set<string>();
@@ -276,6 +278,7 @@ app.get("/api/oauth/google/callback", mailRequest(async (req, res) => {
       provider: "gmail",
       credentials: { refreshToken },
     });
+    if (!mailIsQuiesced()) gmailWatch?.reconcile(all("account"));
     void requestSync([id], true);
     if (process.env.MAIL_DESKTOP_TOKEN) {
       desktopEvents.emit("oauth", null);
@@ -373,6 +376,7 @@ app.delete("/api/accounts/:id", (req, res) => {
       remove("label", `${label.accountId}:${label.id}`);
   });
   imapWatch?.reconcile(all("account"));
+  gmailWatch?.reconcile(all("account"));
   res.json({ ok: true });
 });
 app.post("/api/sync", async (_req, res) => {
@@ -383,6 +387,7 @@ app.post("/api/sync", async (_req, res) => {
 export async function syncMail(): Promise<{ errors: string[] }> {
   assertMailAvailable();
   imapWatch?.reconcile(all("account"));
+  gmailWatch?.reconcile(all("account"));
   return { errors: await requestSync(all("account").map((a) => a.id)) };
 }
 
@@ -640,6 +645,7 @@ export function startServer(
   onMailChanged?: () => void,
   onNewMail?: (count: number) => void,
   watchClient?: ImapWatchFactory,
+  gmailRevision?: (account: StoredAccount) => Promise<string>,
 ): Promise<Server> {
   if (onAccountConnected) desktopEvents.on("oauth", onAccountConnected);
   if (onMailChanged) desktopEvents.on("mail-changed", onMailChanged);
@@ -651,6 +657,13 @@ export function startServer(
           void requestSync([a.id], true);
       }, watchClient);
       imapWatch.reconcile(all("account"));
+      gmailWatch = new GmailWatch(async (a) => {
+        if (mailIsQuiesced() || !all("account").some((current) => sameImapAccount(current, a))) return false;
+        await requestSync([a.id], true);
+        const current = all("account").find((current) => sameImapAccount(current, a));
+        return !!current && !current.error;
+      }, gmailRevision);
+      gmailWatch.reconcile(all("account"));
       resolve(server);
     });
     server.once("error", reject);
@@ -659,6 +672,8 @@ export function startServer(
     server.once("close", () => {
       imapWatch?.close();
       imapWatch = undefined;
+      gmailWatch?.close();
+      gmailWatch = undefined;
       if (onAccountConnected) desktopEvents.off("oauth", onAccountConnected);
       if (onMailChanged) desktopEvents.off("mail-changed", onMailChanged);
       if (onNewMail) desktopEvents.off("new-mail", onNewMail);
@@ -669,11 +684,13 @@ export async function quiesceMail(timeout: number) {
   // Block admission before closing watchers, including already queued sync and MCP sends.
   const drained = quiesceMailWork(timeout);
   imapWatch?.close();
+  gmailWatch?.close();
   await drained;
 }
 export function resumeMail() {
   resumeMailWork();
   imapWatch?.reconcile(all("account"));
+  gmailWatch?.reconcile(all("account"));
 }
 if (!process.env.MAIL_DESKTOP_TOKEN)
   void startServer(3001)

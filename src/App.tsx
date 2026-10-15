@@ -1,135 +1,52 @@
 import {
-  Fragment,
-  createContext,
   useCallback,
-  useContext,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type Dispatch,
-  type ReactNode,
   type MouseEvent as ReactMouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type SetStateAction,
 } from "react";
-import { ContextMenu, mailMenuRequest } from "./ContextMenu";
-import {
-  ChevronDown,
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  Close,
-  Cloud,
-  Gmail,
-  Eye,
-  EyeOff,
-  Search,
-  Settings,
-  Mail as MailIcon,
-} from "./icons";
+import { inboxTab, inboxTabs, type InboxTab } from "../shared/inbox-tabs";
+import type { Mail, State } from "../shared/types";
+import { coalesceReload } from "./api";
+import { applyAppearance, hexColor, readAppearance, resolveScheme, saveAppearance } from "./appearance";
+import { ComposePanel, sendCompose, type Compose } from "./compose/ComposePanel";
+import { ConnectDialog, ProviderChoices, type ImapProvider } from "./dialogs/ConnectDialog";
+import { LabelForm } from "./dialogs/LabelForm";
+import { ShortcutsDialog } from "./dialogs/ShortcutsDialog";
+import { SnoozeDialog } from "./dialogs/SnoozeDialog";
+import { TeachDialog } from "./dialogs/TeachDialog";
+import { TrashDialog } from "./dialogs/TrashDialog";
+import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel } from "./interaction";
+import { InboxTabs } from "./mail/InboxTabs";
+import { ListEmpty } from "./mail/ListEmpty";
+import { MailActions } from "./mail/MailActions";
+import { MailFilters } from "./mail/MailFilters";
+import { MailList } from "./mail/MailList";
+import { Reader, ReaderEmpty } from "./mail/Reader";
+import { SenderPanel } from "./mail/SenderPanel";
+import { tabName, viewNames, viewOrder, type View } from "./mail/format";
 import { customLabels, densityShortcut, filterMail, matchesLabel, markMailRead } from "./mail-ui";
-import { appPasswordHelp, imageSource, jevProviders, logoDomain, providerNames } from "../shared/types";
+import { reuseMailState } from "./mail-state";
 import { useMailNavigation, type MailLocation } from "./navigation";
-import { FormattedMail } from "./FormattedMail";
-import { privateMailLink } from "../shared/mail-content";
-import { collectPrivateNames, redactPrivateText, segmentPrivateText, type PrivacySegment } from "./privacy";
-import { InteractionSettings } from "./InteractionSettings";
-import { UpdateNotice } from "./UpdateNotice";
-import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel, type InteractionPreferences } from "./interaction";
-import type {
-  Account,
-  Category,
-  GmailLabel,
-  JevProvider,
-  LogoSummary,
-  Mail,
-  MailImage,
-  Provider,
-  State,
-  McpSettings,
-} from "../shared/types";
+import { collectPrivateNames, redactPrivateText } from "./privacy";
+import { SettingsPage } from "./settings/SettingsPage";
+import type { SettingsSection } from "./settings/sections";
+import { PaneHeader, type Corner } from "./shell/PaneHeader";
+import { Sidebar } from "./shell/Sidebar";
+import { UpdateNotice } from "./shell/UpdateNotice";
+import { ContextMenu, mailMenuRequest, type MenuAction } from "./ui/ContextMenu";
+import { Dialog } from "./ui/Dialog";
+import { MailPrivacy, PrivacyContext, Redact } from "./ui/Privacy";
+import { drawsWindowControls, systemCaption } from "./ui/TrafficLights";
+import { useMedia } from "./ui/useMedia";
+import { Close, Eye, EyeOff, PanelRight, Search, SidebarIcon } from "./ui/icons";
 
-export function coalesceReload<T>(load: () => Promise<T>): () => Promise<T> {
-  let running: Promise<T> | undefined;
-  let pending = false;
-  return () => {
-    if (running) { pending = true; return running; }
-    running = Promise.resolve().then(async () => {
-      while (true) {
-        pending = false;
-        try {
-          const data = await load();
-          if (!pending) return data;
-        } catch (error) {
-          if (!pending) throw error;
-        }
-      }
-    }).finally(() => { running = undefined; });
-    return running;
-  };
-}
-
-type View = Category | "snoozed" | "archive";
-const viewOrder: View[] = ["important", "other", "snoozed", "archive"];
 // Direction the list pane enters from: tabs slide sideways, mail opens upward.
 type Motion = "forward" | "back" | "open" | "close";
-export type Compose = {
-  accountId: string;
-  to: string;
-  subject: string;
-  body: string;
-  inReplyTo?: string;
-  threadId?: string;
-  references?: string[];
-  sendUnknown?: boolean;
-};
-const unknownSendNotice =
-  "Send status unknown. This message may already have been sent. Sending again may send a duplicate.";
 
-export async function sendCompose(
-  draft: Compose,
-  { lock, send, reload, setDraft, setBusy, setNotice, confirm }: {
-    lock: { current: boolean };
-    send: (draft: Compose) => Promise<{ warning?: string }>;
-    reload: () => Promise<unknown>;
-    setDraft: Dispatch<SetStateAction<Compose | null>>;
-    setBusy: (busy: boolean) => void;
-    setNotice: (notice: string) => void;
-    confirm: (message: string) => boolean;
-  },
-) {
-  if (lock.current) return;
-  if (
-    draft.sendUnknown &&
-    !confirm("This message may already have been sent. Sending again may send a duplicate. Send again?")
-  )
-    return;
-  lock.current = true;
-  setBusy(true);
-  try {
-    const result = await send(draft);
-    setDraft(null);
-    const sentNotice = result.warning || "Email sent.";
-    setNotice(sentNotice);
-    try {
-      await reload();
-    } catch {
-      setNotice(`${sentNotice}\nInbox refresh failed. Refresh the inbox separately.`);
-    }
-  } catch {
-    setDraft((current) =>
-      current ? { ...current, sendUnknown: true } : current,
-    );
-    setNotice(unknownSendNotice);
-  } finally {
-    lock.current = false;
-    setBusy(false);
-  }
-}
 const empty: State = {
   accounts: [],
   messages: [],
@@ -143,378 +60,11 @@ const empty: State = {
   lastSync: null,
   syncing: false,
 };
-type ImapProvider = Exclude<Provider, "gmail">;
-const viewNames: Record<View, string> = {
-  important: "Important",
-  other: "Other",
-  snoozed: "Snoozed",
-  archive: "Archive",
-};
-const relevanceNames = ["", "Low", "Medium", "High"];
-const relative = (date: number) => {
-  const minutes = Math.max(0, Math.floor((Date.now() - date) / 60000));
-  return minutes < 1
-    ? "now"
-    : minutes < 60
-      ? `${minutes}m`
-      : minutes < 1440
-        ? `${Math.floor(minutes / 60)}h`
-        : `${Math.floor(minutes / 1440)}d`;
-};
-const trailingWords = new Set([
-  "a",
-  "an",
-  "and",
-  "or",
-  "the",
-  "to",
-  "of",
-  "for",
-  "your",
-  "with",
-]);
-const shortLabel = (reason: string) => {
-  const words = reason.split(/\s+/).filter(Boolean);
-  const kept: string[] = [];
-  for (const word of words) {
-    if ([...kept, word].join(" ").length > 14) break;
-    kept.push(word);
-  }
-  while (
-    kept.length > 1 &&
-    trailingWords.has(kept[kept.length - 1].toLowerCase())
-  )
-    kept.pop();
-  return kept.length ? kept.join(" ") : (words[0] ?? "");
-};
-
-const dayGroup = (date: number) => {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const day = 86400000;
-  if (date >= start.getTime()) return "Today";
-  if (date >= start.getTime() - day) return "Yesterday";
-  if (date >= start.getTime() - 6 * day) return "This week";
-  if (date >= start.getTime() - 30 * day) return "This month";
-  return "Earlier";
-};
-// Hidden tokens have no private text in the DOM until explicitly revealed.
-export const PrivacyContext = createContext<{
-  on: boolean;
-  revealed: Set<string>;
-  toggle: (value: string) => void;
-  accounts?: readonly Account[];
-  names?: readonly string[];
-}>({ on: false, revealed: new Set(), toggle() {} });
-function MailPrivacy({ mail, children }: { mail: Mail; children: ReactNode }) {
-  const context = useContext(PrivacyContext);
-  return <PrivacyContext.Provider value={{ ...context, names: collectPrivateNames(context.accounts || [], mail) }}>
-    {children}
-  </PrivacyContext.Provider>;
-}
-// Windows and Linux have no traffic lights, so the window runs frameless and
-// these drive it over IPC. macOS keeps its native lights.
-// Guarded so the module still loads under Node for the renderer tests.
-const drawsWindowControls =
-  typeof window !== "undefined" &&
-  !!window.desktop &&
-  window.desktop.platform !== "darwin";
-function TrafficLights({
-  right,
-  maximized,
-}: {
-  right?: boolean;
-  maximized: boolean;
-}) {
-  const desktop = window.desktop;
-  const [focused, setFocused] = useState(true);
-  useEffect(() => {
-    setFocused(document.hasFocus());
-    const onFocus = () => setFocused(true);
-    const onBlur = () => setFocused(false);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
-  if (!desktop || !drawsWindowControls) return null;
-  const controls = [
-    { command: "close", className: "close", label: "Close window" },
-    {
-      command: "maximize",
-      className: "zoom",
-      label: maximized ? "Restore window" : "Maximize window",
-    },
-    { command: "minimize", className: "minimize", label: "Minimize window" },
-  ] as const;
-  return (
-    <div
-      className={`traffic${right ? " right" : ""}${focused ? "" : " inactive"}`}
-    >
-      {controls.map((control) => (
-        <button
-          key={control.command}
-          className={control.className}
-          aria-label={control.label}
-          onClick={() => desktop.windowCommand(control.command)}
-        />
-      ))}
-    </div>
-  );
-}
-function Address({ value, children, kind = "address" }: { value: string; children?: ReactNode; kind?: "address" | "name" }) {
-  const { on, revealed, toggle } = useContext(PrivacyContext);
-  const key = value.toLowerCase();
-  if (!on) return <>{children ?? value}</>;
-  const shown = revealed.has(key);
-  const activate = () => toggle(key);
-  return <span className={shown ? "address" : "address veiled"}
-    style={shown ? undefined : { width: "8ch" }} role="button" tabIndex={0}
-    aria-label={shown ? `Hide ${kind}` : `Reveal hidden ${kind}`}
-    title={shown ? `Click to hide this ${kind}` : `Click to reveal ${kind}`}
-    onClick={(event) => { event.stopPropagation(); activate(); }}
-    onDoubleClick={(event) => event.stopPropagation()}
-    onKeyDown={(event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault(); event.stopPropagation(); activate();
-      }
-    }}>
-    {shown ? children ?? value : null}
-  </span>;
-}
-function Redact({ text, segments }: { text: string; segments?: readonly PrivacySegment[] }) {
-  const { on, names } = useContext(PrivacyContext);
-  if (!on || !text) return <>{text}</>;
-  return <>{(segments ?? segmentPrivateText(text, names)).map((part, index) => part.kind === "text" ?
-    <Fragment key={index}>{segments ? <Redact text={part.text} /> : part.text}</Fragment> :
-    <Address key={index} value={segments ? part.value ?? part.text : part.text} kind={part.kind}>{part.text}</Address>)}</>;
-}
-export function MessageBody({ text }: { text: string }) {
-  const { on, names } = useContext(PrivacyContext);
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(/\bhttps?:\/\/[^\s<>"'“”‘’]+/gi)) {
-    if (match.index > 0 && /[\w:/]/.test(text[match.index - 1])) continue;
-    let url = match[0];
-    // Keep balanced URL delimiters, but leave prose wrappers outside the link.
-    let parentheses = url.split(")").length - url.split("(").length;
-    let brackets = url.split("]").length - url.split("[").length;
-    while (
-      /[.,;:!?]$/.test(url) ||
-      (url.endsWith(")") && parentheses > 0) ||
-      (url.endsWith("]") && brackets > 0)
-    ) {
-      if (url.endsWith(")")) parentheses--;
-      else if (url.endsWith("]")) brackets--;
-      url = url.slice(0, -1);
-    }
-    try {
-      const parsed = new URL(url);
-      if (!parsed.hostname || /\\|%(?![\da-f]{2})/i.test(url)) continue;
-    } catch {
-      continue;
-    }
-    parts.push(<Redact key={`text-${match.index}`} text={text.slice(last, match.index)} />);
-    const privateLink = on && privateMailLink(url, (value) => redactPrivateText(value, names));
-    parts.push(privateLink ? (
-      <span key={match.index}>Private link hidden</span>
-    ) : (
-      <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{url}</a>
-    ));
-    last = match.index + url.length;
-  }
-  parts.push(<Redact key="tail" text={text.slice(last)} />);
-  return <>{parts}</>;
-}
-export function MessageText({ text }: { text: string }) {
-  return <>{text.replace(/\r\n?/g, "\n").split(/\n(?:[ \t\u00a0]*\n)+/)
-    .filter((paragraph) => paragraph.trim())
-    .map((paragraph, index) => <p key={index}><MessageBody text={paragraph} /></p>)}</>;
-}
-function ReaderImage({ image, index }: { image: MailImage; index: number }) {
-  const { on, names } = useContext(PrivacyContext);
-  const [status, setStatus] = useState("loading");
-  // Provider metadata may end mid-token at its 500-unit limit.
-  const description = on && image.alt.length >= 500 ? `Image ${index + 1}` : image.alt;
-  const privateSource = on && privateMailLink(image.src, (value) => redactPrivateText(value, names));
-  return <figure>
-    {!privateSource && status !== "error" && <img
-      src={image.src}
-      alt={on ? redactPrivateText(description, names) : description}
-      referrerPolicy="no-referrer"
-      decoding="async"
-      onLoad={() => setStatus("loaded")}
-      onError={() => setStatus("error")}
-    />}
-    <figcaption>
-      {privateSource ? "Image unavailable while personal information is hidden." :
-        status === "loading" ? `Loading image ${index + 1}…` :
-        status === "error" ? `Image ${index + 1} could not be loaded.` :
-        <Redact text={description || `Image ${index + 1}`} />}
-    </figcaption>
-  </figure>;
-}
-type ContentResult = { html: string | null; images?: MailImage[] };
-type ImageProps = {
-  mail: Pick<Mail, "id" | "images"> & Partial<Pick<Mail, "html" | "body">>;
-  loadImages: (id: string) => Promise<{ images: MailImage[] }>;
-  loadContent?: (id: string) => Promise<ContentResult>;
-  body?: boolean;
-};
-export function MessageImages(props: ImageProps) {
-  return <ImageConsent key={props.mail.id} {...props} />;
-}
-export function ReaderContent(props: ImageProps & { loadContent: (id: string) => Promise<ContentResult> }) {
-  return <ImageConsent key={props.mail.id} {...props} body />;
-}
-function ImageConsent({ mail, loadImages, loadContent, body }: ImageProps) {
-  const { on: privacy, names } = useContext(PrivacyContext);
-  const [status, setStatus] = useState("blocked");
-  const [consentInPrivacy, setConsentInPrivacy] = useState(false);
-  const [images, setImages] = useState<MailImage[]>([]);
-  const [content, setContent] = useState<ContentResult>({ html: mail.html ?? null, images: mail.images });
-  const [contentStatus, setContentStatus] = useState(mail.html === undefined && loadContent ? "loading" : "ready");
-  const active = useRef(true);
-  const imageRequest = useRef(0);
-  const region = useId();
-  useEffect(() => {
-    active.current = true;
-    return () => { active.current = false; imageRequest.current++; };
-  }, []);
-  useEffect(() => {
-    setConsentInPrivacy(false);
-    if (privacy) { imageRequest.current++; setStatus("blocked"); setImages([]); }
-  }, [privacy]);
-  const recoverContent = async () => {
-    if (!loadContent) return;
-    setContentStatus("loading");
-    try {
-      const result = await loadContent(mail.id);
-      if (active.current) { setContent(result); setContentStatus("ready"); }
-    } catch {
-      if (active.current) setContentStatus("error");
-    }
-  };
-  useEffect(() => {
-    if (mail.html === undefined && loadContent) void recoverContent();
-  }, []);
-  const show = async () => {
-    const request = ++imageRequest.current;
-    setConsentInPrivacy(privacy);
-    setStatus("loading");
-    try {
-      const result = mail.images ?? content.images ?? (await loadImages(mail.id)).images;
-      if (!active.current || request !== imageRequest.current) return;
-      setImages(result.flatMap((image) => {
-        const src = imageSource(image.src);
-        return src ? [{ src, alt: image.alt }] : [];
-      }));
-      setStatus("shown");
-    } catch {
-      if (active.current && request === imageRequest.current) setStatus("error");
-    }
-  };
-  const shown = status === "shown" && (!privacy || consentInPrivacy);
-  const gallery = shown && (images.length ? images.map((image, index) =>
-    <ReaderImage key={image.src} image={image} index={index} />) :
-    <p role="status">No supported remote images in this email. Embedded images are not shown.</p>);
-  const textBody = <MessageText text={mail.body || "This email has no plain-text body."} />;
-  return <section className="message-images" aria-label="Email content">
-    <div className="image-controls">
-      <button className="button" type="button"
-        aria-expanded={shown} aria-controls={region}
-        disabled={status === "loading"}
-        onClick={() => {
-          if (shown) { imageRequest.current++; setStatus("blocked"); }
-          else void show();
-        }}>
-        {status === "loading" ? "Loading images…" : shown ? "Hide images" :
-          status === "error" ? "Try images again" : "Show images"}
-      </button>
-      <span>Remote images can tell the sender you opened this email.
-        {privacy && " Image pixels may contain personal information."}</span>
-    </div>
-    {body && contentStatus === "loading" && <p role="status">Loading formatted email…</p>}
-    {body && contentStatus === "error" && <p role="status">Formatted email is unavailable. The text is shown below. <button type="button" className="link" onClick={() => void recoverContent()}>Try again</button></p>}
-    <div id={region}>
-      {status === "error" && <p role="status">Images could not be loaded. The email may be unavailable or archived.</p>}
-      {body && <div className="message-body">
-        {content.html ? <FormattedMail html={content.html} showImages={shown} privacy={privacy} privateNames={names}
-          renderText={(text, segments) => <Redact text={text} segments={segments} />} redactText={(text) => redactPrivateText(text, names)}
-          fallback={<>{textBody}{gallery}</>} /> : textBody}
-      </div>}
-      {(!body || !content.html) && gallery}
-    </div>
-  </section>;
-}
-function ProviderIcon({ provider }: { provider: Provider }) {
-  return (
-    <span className={`provider-icon ${provider === "gmail-imap" ? "gmail" : provider}`} aria-hidden="true">
-      {provider === "gmail" || provider === "gmail-imap" ? (
-        <Gmail />
-      ) : provider === "icloud" ? (
-        <Cloud />
-      ) : provider === "imap" ? (
-        <MailIcon color="currentColor" />
-      ) : (
-        <b>
-          {provider === "fastmail" ? "F" : "y!"}
-        </b>
-      )}
-    </span>
-  );
-}
-function Avatar({
-  mail,
-  provider,
-  large,
-}: {
-  mail: Mail;
-  provider?: Provider;
-  large?: boolean;
-}) {
-  const domain = logoDomain(mail.address);
-  const [broken, setBroken] = useState(false);
-  const { on, names } = useContext(PrivacyContext);
-  const initial = mail.sender.slice(0, 1).toUpperCase();
-  return (
-    <span className={large ? "avatar large" : "avatar"} aria-hidden="true">
-      {domain && !broken ? (
-        <img
-          className="avatar-logo"
-          src={`/api/logo/${domain}`}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          onError={() => setBroken(true)}
-        />
-      ) : (
-        <span className="avatar-letter">
-          {on && redactPrivateText(initial, names) !== initial ? "·" : initial}
-        </span>
-      )}
-      {provider && <ProviderIcon provider={provider} />}
-    </span>
-  );
-}
-
-export function selectMail(
-  messages: Mail[],
-  filtered: Mail[],
-  selectedId: string | null,
-  opened: boolean,
-) {
-  return opened
-    ? messages.find((m) => m.id === selectedId)
-    : filtered.find((m) => m.id === selectedId) || filtered[0];
-}
 
 export function App() {
   const [state, setState] = useState(empty);
   const navigation = useMailNavigation();
-  const { view, accountFilter, labelFilter, selectedId, query, opened, readFilter, relevanceFilter, sort } = navigation.location;
+  const { view, tab, accountFilter, labelFilter, selectedId, query, opened, readFilter, relevanceFilter, sort } = navigation.location;
   const setSelectedId = (selectedId: string | null) =>
     navigation.update((current) => ({ ...current, selectedId }));
   const setOpened = (opened: boolean) =>
@@ -582,12 +132,12 @@ export function App() {
   );
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
   // Clicking an address toggles just that one; the eye hides every revealed one.
-  const toggleAddress = (address: string) =>
+  const toggleAddress = useCallback((address: string) =>
     setRevealed((current) => {
       const next = new Set(current);
       if (!next.delete(address)) next.add(address);
       return next;
-    });
+    }), []);
   const togglePrivacy = () => {
     localStorage.setItem("privacy", privacy ? "off" : "on");
     if (!privacy) setRevealed(new Set());
@@ -602,31 +152,44 @@ export function App() {
     localStorage.setItem("window-controls", side);
     setWindowSide(side);
   };
-  const tabsRef = useRef<HTMLElement>(null);
-  const listRef = useRef<HTMLElement>(null);
-  const [indicator, setIndicator] = useState<{
-    x: number;
-    width: number;
-    animate: boolean;
-  } | null>(null);
-  // Slide one underline between tabs instead of redrawing it per tab.
-  const lastView = useRef(view);
+  const listRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
+  // The sidebar stays open or closed between launches.
+  const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("sidebar") !== "closed");
+  const toggleSidebar = () => {
+    localStorage.setItem("sidebar", sidebarOpen ? "closed" : "open");
+    setSidebarOpen(!sidebarOpen);
+  };
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("interaction");
+  // The Filters popover; its button stays lit while a filter or sort differs from its default.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [appearance, setAppearance] = useState(readAppearance);
+  const prefersLight = useMedia("(prefers-color-scheme: light)", false);
+  const scheme = resolveScheme(appearance.mode, prefersLight);
   useLayoutEffect(() => {
-    const active = tabsRef.current?.querySelector<HTMLElement>(
-      ":scope > button.active",
-    );
-    if (!active) return;
-    const x = active.offsetLeft;
-    const width = active.offsetWidth;
-    // Counts change the tab's width; only a tab change should animate.
-    const moved = lastView.current !== view;
-    lastView.current = view;
-    setIndicator((current) =>
-      current?.x === x && current.width === width
-        ? current
-        : { x, width, animate: moved },
-    );
-  }, [view]);
+    applyAppearance(appearance, scheme);
+    // System caption buttons take the pane surface and text color beneath them.
+    if (!systemCaption) return;
+    const tokens = window.getComputedStyle(document.documentElement);
+    const color = hexColor(tokens.getPropertyValue("--surface"));
+    const symbolColor = hexColor(tokens.getPropertyValue("--text"));
+    if (color && symbolColor) window.desktop?.setOverlay?.({ color, symbolColor });
+  }, [appearance, scheme]);
+  // Panes that need room drop out as the window narrows: the sender panel, then
+  // the reader beside the list (mail then opens in place), then the sidebar.
+  const roomy = useMedia("(min-width: 760px)");
+  const splitRoom = useMedia("(min-width: 980px)");
+  const wide = useMedia("(min-width: 1180px)");
+  const wider = useMedia("(min-width: 1440px)");
+  const split = appearance.reading === "split" && splitRoom;
+  const senderRoom = split ? wider : wide;
+  const sidebarShown = sidebarOpen && roomy;
+  const [senderPanel, setSenderPanel] = useState(() => localStorage.getItem("sender-panel") !== "closed");
+  const toggleSenderPanel = () => {
+    localStorage.setItem("sender-panel", senderPanel ? "closed" : "open");
+    setSenderPanel(!senderPanel);
+  };
+  const contextShown = !settings && senderPanel && senderRoom;
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
@@ -664,7 +227,7 @@ export function App() {
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
     if (revision !== loadRevision.current) return data;
-    setState(data);
+    setState((current) => reuseMailState(current, data));
     setSyncing(data.syncing || syncLock.current);
     setLoaded(true);
     return data;
@@ -688,7 +251,7 @@ export function App() {
     }
   }, [api, reload]);
   useEffect(() => {
-    if (!syncing) return;
+    if (!syncing || window.desktop?.onMailChanged) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -714,7 +277,7 @@ export function App() {
       .catch((error) => setNotice(error.message));
   }, [reload, sync]);
   useEffect(() => {
-    if (!state.accounts.length) return;
+    if (window.desktop || !state.accounts.length) return;
     const timer = setInterval(() => void sync(), 300000);
     return () => clearInterval(timer);
   }, [state.accounts.length, sync]);
@@ -759,6 +322,16 @@ export function App() {
       );
     navigate({ view: next, opened: false, selectedId: null });
   };
+  const switchTab = (next: InboxTab) => {
+    const order = inboxTabs.map(({ id }) => id);
+    if (view === "inbox" && next !== tab)
+      setMotion(order.indexOf(next) > order.indexOf(tab) ? "forward" : "back");
+    navigate({ view: "inbox", tab: next, opened: false, selectedId: null });
+  };
+  const nextTab = () => {
+    const index = inboxTabs.findIndex(({ id }) => id === tab);
+    switchTab(inboxTabs[(index + 1) % inboxTabs.length].id);
+  };
   const hasListControls = accountFilter !== "all" || labelFilter !== "all" || !!query ||
     readFilter !== "all" || relevanceFilter !== "all" || sort !== "newest";
   const resetListControls = () => {
@@ -774,7 +347,10 @@ export function App() {
   const now = Date.now();
   const isSnoozed = (m: Mail) =>
     m.snoozedUntil !== null && m.snoozedUntil > now;
-  const filtered = filterMail(state.messages, navigation.location, activeLabel, now);
+  const tabs = useMemo(() => new Map(state.messages.map((mail) => [mail.id, inboxTab(mail, state.rules)])),
+    [state.messages, state.rules]);
+  const tabOf = (mail: Mail) => tabs.get(mail.id) ?? inboxTab(mail, state.rules);
+  const filtered = filterMail(state.messages, navigation.location, activeLabel, now, undefined, tabOf);
   const selected = opened
     ? state.messages.find((m) => m.id === selectedId &&
         state.accounts.some((account) => account.id === m.accountId))
@@ -782,15 +358,11 @@ export function App() {
   const accountOf = (m: Mail) =>
     state.accounts.find((a) => a.id === m.accountId);
   const selectedAccount = selected && accountOf(selected);
-  const count = (category: Category) =>
-    state.messages.filter(
-      (m) =>
-        !m.archived &&
-        !isSnoozed(m) &&
-        m.category === category &&
-        matchesLabel(m, activeLabel) &&
-        (accountFilter === "all" || accountFilter === m.accountId),
-    ).length;
+  // Inbox total for the sidebar and unread counts for each category tab.
+  const inboxMail = state.messages.filter((m) => !m.archived && !isSnoozed(m) &&
+    matchesLabel(m, activeLabel) && (accountFilter === "all" || accountFilter === m.accountId));
+  const tabUnread = new Map<InboxTab, number>();
+  for (const m of inboxMail) if (m.unread) tabUnread.set(tabOf(m), (tabUnread.get(tabOf(m)) ?? 0) + 1);
   const snoozedCount = state.messages.filter(
     (m) => !m.archived && isSnoozed(m) && matchesLabel(m, activeLabel),
   ).length;
@@ -867,7 +439,7 @@ export function App() {
   };
   const jumpTo = (mail: Mail) => {
     openMail(mail, {
-      view: mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : mail.category,
+      view: mail.archived ? "archive" : isSnoozed(mail) ? "snoozed" : "inbox", tab: tabOf(mail),
       accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all",
     });
   };
@@ -904,9 +476,26 @@ export function App() {
     void changeMessage(mail, "archive");
     setOpened(false);
   };
+  // One list of actions feeds the native menu on the desktop and the drawn menu elsewhere.
+  const mailMenuActions = (mail: Mail): MenuAction[] => [
+    { id: "open", label: "Open", key: shortcut("open"), run: () => openMail(mail) },
+    { id: "read", label: reading.has(mail.id) ? "Marking as read…" : "Mark as read", disabled: !mail.unread || reading.has(mail.id), run: () => markRead(mail) },
+    { id: "reply", label: "Reply", key: shortcut("reply"), disabled: busy, separator: true, run: () => startCompose(mail) },
+    { id: "archive", label: "Archive", key: shortcut("done"), disabled: busy || syncing || mail.archived, separator: true, run: () => archive(mail) },
+    { id: "snooze", label: "Snooze", key: shortcut("snooze"), disabled: busy || syncing || mail.archived, run: () => setSnooze(mail) },
+    ...(isSnoozed(mail) ? [{ id: "unsnooze", label: "Return to inbox", disabled: busy || syncing, run: () => void changeMessage(mail, "unsnooze") }] : []),
+    { id: "trash", label: "Move to Trash", disabled: busy || syncing || !!trashUnavailable(mail), run: () => setTrashMail(mail) },
+    { id: "teach", label: "Teach sorting", key: shortcut("teach"), disabled: busy || syncing, separator: true, run: () => setTeach(mail) },
+  ];
   const showMailMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>, mail: Mail) => {
     setSelectedId(mail.id);
-    setContextMenu(mailMenuRequest(event, mail.id));
+    const request = mailMenuRequest(event, mail.id);
+    const native = window.desktop?.mailMenu;
+    if (!native) { setContextMenu(request); return; }
+    const actions = mailMenuActions(mail);
+    void native(actions.map(({ id, label, key, disabled, separator }) => ({ id, label, enabled: !disabled, accelerator: key, separator })),
+      { x: Math.round(request.x), y: Math.round(request.y) })
+      .then((chosen) => actions.find((action) => action.id === chosen)?.run());
   };
   const mailMenuKey = (event: ReactKeyboardEvent<HTMLElement>, mail: Mail) => {
     if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
@@ -949,11 +538,12 @@ export function App() {
       else if (action === "compose") startCompose();
       else if (action === "privacy") togglePrivacy();
       else if (inbox && action === "density") setDensity((value) => value === "comfortable" ? "compact" : "comfortable");
-      else if (inbox && (action === "important" || action === "other")) switchView(action);
+      else if (inbox && action === "important") switchView("inbox");
+      else if (inbox && action === "other") nextTab();
       else if (inbox && (action === "next" || action === "previous")) {
         event.preventDefault();
         const neighbours = opened && selected
-          ? filterMail(state.messages, navigation.location, activeLabel, now, selected.id) : filtered;
+          ? filterMail(state.messages, navigation.location, activeLabel, now, selected.id, tabOf) : filtered;
         const index = neighbours.findIndex((mail) => mail.id === selected?.id);
         const next = neighbours[Math.max(0, Math.min(neighbours.length - 1, index + (action === "next" ? 1 : -1)))];
         if (next) { if (opened) openMail(next); else setSelectedId(next.id); }
@@ -967,7 +557,7 @@ export function App() {
       else if (inbox && !event.ctrlKey && !event.metaKey && !event.altKey &&
         !(target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))) {
         if (event.key === "Tab" && target === document.body) {
-          event.preventDefault(); switchView(view === "important" ? "other" : "important");
+          event.preventDefault(); nextTab();
         } else if (!event.shiftKey && /^[0-9]$/.test(event.key)) {
           const account = state.accounts[Number(event.key) - 1];
           const nextAccount = event.key === "0" ? "all" : account?.id;
@@ -996,10 +586,10 @@ export function App() {
     .filter((m): m is Mail => !!m);
 
   // Pick the entrance once per pane so re-renders never restart its animation.
-  const paneKey =
-    opened && selected
-      ? `mail:${selected.id}`
-      : `list:${view}:${accountFilter}:${labelFilter}:${readFilter}:${relevanceFilter}:${sort}`;
+  // Beside the reader, the list keeps its pane while mail opens and closes.
+  const paneKey = opened && selected && !split
+    ? `mail:${selected.id}`
+    : `list:${view}:${tab}:${accountFilter}:${labelFilter}:${readFilter}:${relevanceFilter}:${sort}`;
   const pane = useRef({ key: paneKey, motion });
   if (pane.current.key !== paneKey)
     pane.current = {
@@ -1029,172 +619,103 @@ export function App() {
     else if (row.offsetHeight + offset > list.scrollTop + list.clientHeight)
       list.scrollTop = offset + row.offsetHeight - list.clientHeight;
   }, [selected?.id, paneKey]);
-  useEffect(closeContextMenu, [paneKey, settings, closeContextMenu]);
+  const readerKey = opened && selected ? selected.id : null;
+  useLayoutEffect(() => {
+    readerRef.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [readerKey]);
+  useEffect(closeContextMenu, [paneKey, readerKey, settings, closeContextMenu]);
   const menuMail = contextMenu && state.messages.find((mail) => mail.id === contextMenu.mailId);
+  const privacyContext = useMemo(() => ({ on: privacy, revealed, toggle: toggleAddress,
+    accounts: state.accounts, names: collectPrivateNames(state.accounts) }),
+  [privacy, revealed, toggleAddress, state.accounts]);
   useEffect(() => {
     if (contextMenu && !menuMail) closeContextMenu();
   }, [contextMenu, menuMail, closeContextMenu]);
+  const filtersActive = readFilter !== "all" || relevanceFilter !== "all" ||
+    sort !== "newest" || labelFilter !== "all";
+  // The header in each window corner carries the window controls. macOS draws its
+  // own lights over the top-left header, which only reserves room for them.
+  const corner = (pane: "sidebar" | "main" | "reader" | "context"): Corner => {
+    const left = sidebarShown ? "sidebar" : "main";
+    const right = settings ? "main" : contextShown ? "context" : split ? "reader" : "main";
+    if (window.desktop?.platform === "darwin") return pane === left ? "reserve" : null;
+    // The system caption buttons sit over the top-right corner.
+    if (systemCaption) return pane === right ? "caption" : null;
+    if (!drawsWindowControls) return null;
+    return windowSide === "left" ? (pane === left ? "left" : null) : (pane === right ? "right" : null);
+  };
+  const sidebarToggle = !sidebarOpen && roomy && (
+    <button
+      className="icon"
+      aria-label="Show sidebar"
+      aria-expanded={false}
+      aria-controls="sidebar"
+      onClick={toggleSidebar}
+    >
+      <SidebarIcon color="currentColor" size={16} />
+    </button>
+  );
+  const privacyButton = (
+    <button
+      className={privacy ? "icon on" : "icon"}
+      aria-label={privacy ? "Show personal information" : "Hide personal information"}
+      aria-pressed={privacy}
+      title={privacy ? `Personal information hidden (${shortcut("privacy")})` : `Hide personal information (${shortcut("privacy")})`}
+      onClick={togglePrivacy}
+    >
+      {privacy ? <EyeOff color="currentColor" size={15} /> : <Eye color="currentColor" size={15} />}
+    </button>
+  );
+  const senderToggle = senderRoom && (
+    <button
+      className={senderPanel ? "icon on" : "icon"}
+      aria-label="Sender details"
+      aria-pressed={senderPanel}
+      title={senderPanel ? "Hide sender details" : "Show sender details"}
+      onClick={toggleSenderPanel}
+    >
+      <PanelRight color="currentColor" size={15} />
+    </button>
+  );
+  const actions = selected && (
+    <MailActions
+      mail={selected}
+      opened={opened}
+      reading={reading.has(selected.id)}
+      busy={busy}
+      syncing={syncing}
+      snoozed={isSnoozed(selected)}
+      trashUnavailable={trashUnavailable(selected)}
+      shortcut={shortcut}
+      onTrash={() => setTrashMail(selected)}
+      onRead={() => markRead(selected)}
+      onReply={() => startCompose(selected)}
+      onArchive={() => archive(selected)}
+      onSnooze={() => setSnooze(selected)}
+      onUnsnooze={() => void changeMessage(selected, "unsnooze")}
+      onClose={() => setOpened(false)}
+    />
+  );
+  const reader = opened && selected && (
+    <Reader
+      mail={selected}
+      provider={selectedAccount?.provider}
+      labels={state.labels}
+      busy={busy || syncing}
+      api={api}
+      onLabels={() => setLabelMail(selected)}
+      onMenu={showMailMenu}
+      onMenuKey={mailMenuKey}
+    />
+  );
   return (
     <PrivacyContext.Provider
-      value={{ on: privacy, revealed, toggle: toggleAddress, accounts: state.accounts, names: collectPrivateNames(state.accounts) }}
+      value={privacyContext}
     >
       <div
         className={`app${window.desktop ? " desktop" : ""}${privacy ? " private" : ""}`}
         data-platform={window.desktop?.platform}
       >
-        <header
-          className="topbar"
-          inert={updateInstalling}
-          onDoubleClick={(event) => {
-            // A frameless window gets no automatic maximize on the caption
-            // area, so the header has to restore that convention itself.
-            if (!window.desktop || !drawsWindowControls) return;
-            if ((event.target as Element).closest("button, input, a, label"))
-              return;
-            window.desktop.windowCommand("maximize");
-          }}
-        >
-          {windowSide === "left" && <TrafficLights maximized={maximized} />}
-          {settings ? (
-            <nav className="crumbs" aria-label="Breadcrumb">
-              <button onClick={() => setSettings(false)}>
-                <kbd>esc</kbd>
-                {viewNames[view]}
-              </button>
-              <span aria-hidden="true">/</span>
-              <strong>Settings</strong>
-            </nav>
-          ) : (
-            <nav className="tabs" aria-label="Mail views" ref={tabsRef}>
-              {indicator && (
-                <span
-                  className={
-                    indicator.animate
-                      ? "tab-indicator animate"
-                      : "tab-indicator"
-                  }
-                  style={{
-                    width: indicator.width,
-                    transform: `translateX(${indicator.x}px)`,
-                  }}
-                  aria-hidden="true"
-                />
-              )}
-              {(["important", "other"] as const).map((v) => (
-                <button
-                  key={v}
-                  className={view === v ? "active" : undefined}
-                  aria-current={view === v ? "page" : undefined}
-                  onClick={() => switchView(v)}
-                >
-                  {viewNames[v]}
-                  <span className="tab-count">{count(v)}</span>
-                </button>
-              ))}
-              {(snoozedCount > 0 || view === "snoozed") && (
-                <button
-                  className={view === "snoozed" ? "active quiet" : "quiet"}
-                  aria-current={view === "snoozed" ? "page" : undefined}
-                  onClick={() => switchView("snoozed")}
-                >
-                  Snoozed
-                  <span className="tab-count">{snoozedCount}</span>
-                </button>
-              )}
-              <button
-                className={view === "archive" ? "active quiet" : "quiet"}
-                aria-current={view === "archive" ? "page" : undefined}
-                onClick={() => switchView("archive")}
-              >
-                Archive
-              </button>
-            </nav>
-          )}
-          <div className="topbar-end">
-            {!settings && (
-              <div className="account-picker">
-                <Dropdown label="Filter accounts" value={accountFilter} disabled={navigationBlocked}
-                  options={[
-                    { value: "all", label: "All accounts" },
-                    ...state.accounts.map((account, index) => ({ value: account.id,
-                      label: privacy ? `Account ${index + 1} · ${providerNames[account.provider]}${account.error ? " · Needs attention" : ""}`
-                        : `${account.email}${account.error ? " · Needs attention" : ""}`,
-                    })),
-                  ]}
-                  onChange={(accountFilter) => navigate({ accountFilter, labelFilter: "all", selectedId: null, opened: false })} />
-              </div>
-            )}
-            {!settings && <button type="button" className="action" disabled={navigationBlocked || busy}
-              onClick={() => setConnecting("choose")}>Add account</button>}
-            {!settings &&
-              (searching ? (
-                <div className="search" role="search">
-                  <Search color="currentColor" size={14} />
-                  <input
-                    ref={searchRef}
-                    aria-label="Search all synced mail"
-                    placeholder="Search mail"
-                    value={query}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") closeSearch();
-                    }}
-                    onChange={(e) => {
-                      navigate({ query: e.target.value, opened: false, selectedId: null }, true);
-                    }}
-                  />
-                  <button aria-label="Close search" onClick={closeSearch}>
-                    <Close color="currentColor" size={13} />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <button
-                    className="sync"
-                    disabled={syncing || !state.accounts.length}
-                    onClick={() => void sync()}
-                    title="Sync mail"
-                  >
-                    {syncing
-                      ? "Syncing"
-                      : state.lastSync
-                        ? `Synced ${relative(state.lastSync)}`
-                        : "Not synced"}
-                  </button>
-                  <button
-                    className="icon"
-                    aria-label="Search mail"
-                    title={`Search (${shortcut("search")})`}
-                    onClick={showSearch}
-                  >
-                    <Search color="currentColor" size={15} />
-                  </button>
-                </>
-              ))}
-            <button
-              className={privacy ? "icon on" : "icon"}
-              aria-label={
-                privacy ? "Show personal information" : "Hide personal information"
-              }
-              aria-pressed={privacy}
-              title={
-                privacy ? `Personal information hidden (${shortcut("privacy")})` : `Hide personal information (${shortcut("privacy")})`
-              }
-              onClick={togglePrivacy}
-            >
-              {privacy ? <EyeOff color="currentColor" size={15} /> : <Eye color="currentColor" size={15} />}
-            </button>
-            <button
-              className="icon"
-              aria-label={settings ? "Close settings" : "Settings"}
-              aria-pressed={settings}
-              onClick={() => setSettings((s) => !s)}
-            >
-              <Settings color="currentColor" size={15} />
-            </button>
-          </div>
-          {windowSide === "right" && <TrafficLights right maximized={maximized} />}
-        </header>
-        <UpdateNotice bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
         {notice && (
           <div className="notice" role="status">
             <span>
@@ -1208,321 +729,208 @@ export function App() {
             </button>
           </div>
         )}
-        {settings ? (
-          <SettingsPage
-            state={state}
-            busy={busy}
-            perform={perform}
-            api={api}
-            onConnectAccount={setConnecting}
-            onNotice={setNotice}
-            windowSide={windowSide}
-            onWindowSide={placeWindowControls}
-            interaction={interaction}
-            onInteraction={(value) => {
-              setInteraction(value);
-              if (!saveInteraction(value)) setNotice("Interaction settings could not be saved on this device.");
+        <div className="frame" inert={updateInstalling}>
+          <Sidebar
+            open={sidebarShown}
+            corner={corner("sidebar")}
+            maximized={maximized}
+            onToggle={toggleSidebar}
+            settings={settings}
+            mail={{
+              view,
+              onView: switchView,
+              inboxCount: inboxMail.length,
+              snoozedCount,
+              accounts: state.accounts,
+              accountFilter,
+              onAccount: (id) => navigate({ accountFilter: id, labelFilter: "all", selectedId: null, opened: false }),
+              privacy,
+              blocked: navigationBlocked,
+              busy,
+              onAddAccount: () => setConnecting("choose"),
+              onCompose: () => startCompose(),
+              onSettings: () => setSettings(true),
+              shortcut,
+              syncing,
+              lastSync: state.lastSync,
+              onSync: () => void sync(),
+            }}
+            sections={{
+              current: settingsSection,
+              onSection: setSettingsSection,
+              onClose: () => setSettings(false),
             }}
           />
+        {settings ? (
+          <div className="settings-pane">
+            <PaneHeader className="main-head" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
+              <h1 className="pane-title">Settings</h1>
+              <div className="pane-tools">{privacyButton}</div>
+            </PaneHeader>
+            <UpdateNotice banner bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+            <SettingsPage
+              state={state}
+              busy={busy}
+              perform={perform}
+              api={api}
+              onConnectAccount={setConnecting}
+              onNotice={setNotice}
+              windowSide={windowSide}
+              onWindowSide={placeWindowControls}
+              onWindowControls={(controls) => {
+                if (compose || sendLock.current) setNotice("Send or discard your draft before switching window controls.");
+                else window.desktop?.setWindowControls?.(controls);
+              }}
+              interaction={interaction}
+              onInteraction={(value) => {
+                setInteraction(value);
+                if (!saveInteraction(value)) setNotice("Interaction settings could not be saved on this device.");
+              }}
+              section={settingsSection}
+              appearance={appearance}
+              scheme={scheme}
+              onAppearance={(value) => {
+                setAppearance(value);
+                if (!saveAppearance(value)) setNotice("Appearance could not be saved on this device.");
+              }}
+            />
+          </div>
         ) : (
-          <main className="workspace" inert={updateInstalling}>
-            <section
-              ref={listRef}
-              className={`list ${density}`}
-              aria-label={`${viewNames[view]} mail`}
-            >
-              <nav className="mail-navigation" aria-label="Mail history">
-                <button type="button" disabled={navigationBlocked || !navigation.canBack}
-                  onClick={() => travel(-1)}>
-                  <ArrowLeft color="currentColor" size={16} aria-hidden="true" />Back
-                </button>
-                <button type="button" disabled={navigationBlocked || !navigation.canForward}
-                  onClick={() => travel(1)}>
-                  Forward<ArrowRight color="currentColor" size={16} aria-hidden="true" />
-                </button>
-                {opened && selected && <span><kbd>Esc</kbd> Close email</span>}
-              </nav>
-              <div className="mail-filters" role="group" aria-label="Mail filters and sort">
-                <Dropdown label="Read status" value={readFilter} disabled={navigationBlocked}
-                  options={[{ value: "all", label: "All mail" }, { value: "unread", label: "Unread" }]}
-                  onChange={(readFilter) => navigate({ readFilter, selectedId: null, opened: false })} />
-                <Dropdown label="Relevance filter" value={relevanceFilter} disabled={navigationBlocked}
-                  options={[{ value: "all", label: "All relevance" }, { value: "3", label: "High relevance" },
-                    { value: "2", label: "Medium relevance" }, { value: "1", label: "Low relevance" }]}
-                  onChange={(relevanceFilter) => navigate({ relevanceFilter, selectedId: null, opened: false })} />
-                <Dropdown label="Sort mail" value={sort} disabled={navigationBlocked}
-                  options={[{ value: "newest", label: "Newest" }, { value: "oldest", label: "Oldest" }, { value: "relevance", label: "Relevance" }]}
-                  onChange={(sort) => navigate({ sort, selectedId: null, opened: false })} />
-                {labels.length > 0 && (
-                  <div className="label-filter">
-                    <Dropdown
-                      label="Filter by Gmail label"
-                      disabled={navigationBlocked}
-                      value={labelFilter}
-                      options={[
-                        { value: "all", label: "All labels" },
-                        ...labels.map((label) => {
-                          const email = state.accounts.find((a) => a.id === label.accountId)?.email || "Gmail";
-                          const name = accountFilter === "all" ? `${label.name} (${email})` : label.name;
-                          return { value: `${label.accountId}:${label.id}`, label: privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name };
-                        }),
-                      ]}
-                      onChange={(value) => {
-                        navigate({ labelFilter: value, selectedId: null, opened: false });
-                      }}
-                    />
-                  </div>
-                )}
-                {hasListControls && <button type="button" className="link" disabled={navigationBlocked}
-                  onClick={resetListControls}>Reset filters and sort</button>}
-              </div>
-              {selected && (
-                <div className="mail-actions" role="group" aria-label={opened ? "Opened email actions" : "Selected email actions"}>
-                  <button type="button" className="button" disabled={!selected.unread || reading.has(selected.id)}
-                    aria-busy={reading.has(selected.id)} onClick={() => markRead(selected)}>
-                    {reading.has(selected.id) ? "Marking as read…" : selected.unread ? "Mark as read" : "Read"}
-                  </button>
-                  <button type="button" className="button" disabled={busy} onClick={() => startCompose(selected)}>Reply</button>
-                  <button type="button" className="button" disabled={busy || syncing || selected.archived}
-                    title="Archive in your provider" onClick={() => archive(selected)}>Done</button>
-                  {isSnoozed(selected) ? (
-                    <button type="button" className="button" disabled={busy || syncing}
-                      onClick={() => void changeMessage(selected, "unsnooze")}>Return to inbox</button>
-                  ) : (
-                    <button type="button" className="button" disabled={busy || syncing || selected.archived}
-                      onClick={() => setSnooze(selected)}>Snooze</button>
-                  )}
-                  <button type="button" className="button trash-action" disabled={busy || syncing || !!trashUnavailable(selected)}
-                    aria-describedby={trashUnavailable(selected) ? "trash-unavailable" : undefined}
-                    onClick={() => setTrashMail(selected)}>Move to Trash</button>
-                  <span role="status">{reading.has(selected.id) ? "Read update pending." : busy ? "Updating email…" : ""}</span>
-                  {trashUnavailable(selected) && <span id="trash-unavailable">{trashUnavailable(selected)}</span>}
-                </div>
-              )}
-              <div key={paneKey} className={`pane ${pane.current.motion}`}>
-                {opened && selected ? (
-                  <MailPrivacy mail={selected}><article className="message" tabIndex={-1} onContextMenu={(event) => showMailMenu(event, selected)} onKeyDown={(event) => mailMenuKey(event, selected)}>
-                    <h1>
-                      <Redact text={selected.subject || "(no subject)"} />
-                    </h1>
-                    <div className="message-from">
-                      <Avatar
-                        mail={selected}
-                        provider={selectedAccount?.provider}
+          <main className={split ? "workspace split" : "workspace"}>
+            <section className="list-pane">
+              <PaneHeader className="main-head" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
+                <h1 className="pane-title">{viewNames[view]}</h1>
+                <div className="head-search">
+                  {searching ? (
+                    <div className="search" role="search">
+                      <Search color="currentColor" size={14} />
+                      <input
+                        ref={searchRef}
+                        aria-label="Search all synced mail"
+                        placeholder="Search mail"
+                        value={query}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") closeSearch();
+                        }}
+                        onChange={(e) => {
+                          navigate({ query: e.target.value, opened: false, selectedId: null }, true);
+                        }}
                       />
-                      <div>
-                        <strong>
-                          <Redact text={selected.sender} />
-                        </strong>
-                        <span>
-                          <Address value={selected.address} />
-                        </span>
-                        <span>
-                          To <Redact text={selected.to} />
-                        </span>
-                      </div>
-                      <time>{new Date(selected.date).toLocaleString()}</time>
+                      <button aria-label="Close search" onClick={closeSearch}>
+                        <Close color="currentColor" size={13} />
+                      </button>
                     </div>
-                    {selectedAccount?.provider === "gmail" && (
-                      <div className="message-labels">
-                        <span>
-                          <Redact text={customLabels(selected, state.labels).filter((label) => selected.labelIds?.includes(label.id)).map((label) => label.name).join(", ") || "No labels"} />
-                        </span>
-                        <button className="link" disabled={busy || syncing} onClick={() => setLabelMail(selected)}>Edit labels</button>
-                      </div>
-                    )}
-                    <ReaderContent key={selected.id} mail={selected}
-                      loadContent={(id) => api(`/messages/${encodeURIComponent(id)}/content`, "POST")}
-                      loadImages={(id) => api(`/messages/${encodeURIComponent(id)}/images`, "POST")} />
-                  </article></MailPrivacy>
-                ) : filtered.length ? (
-                  filtered.map((m, i) => {
-                    const group = dayGroup(m.date);
-                    const showGroup = sort !== "relevance" && (
-                      i === 0 || dayGroup(filtered[i - 1].date) !== group);
-                    const layout =
-                      density === "compact" || m.relevance === 2
-                        ? "inline"
-                        : m.relevance === 3
-                          ? "stacked"
-                          : "brief";
-                    const current = m.id === selected?.id;
-                    return (
-                      <MailPrivacy key={m.id} mail={m}>
-                        {showGroup && <h3 className="group">{group}</h3>}
-                        <button
-                          id={`mail-${m.id}`}
-                          className={`row r${m.relevance} ${layout}${current ? " selected" : ""}${m.unread ? " unread" : ""}`}
-                          onClick={(event) => interaction.opening === "single" ?
-                            (event.detail <= 1 && openMail(m)) : setSelectedId(m.id)}
-                          onDoubleClick={() => { if (interaction.opening === "double") openMail(m); }}
-                          onContextMenu={(event) => showMailMenu(event, m)}
-                          onKeyDown={(event) => mailMenuKey(event, m)}
-                          aria-haspopup="menu"
-                          aria-label={privacy ? redactPrivateText(`${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`, collectPrivateNames(state.accounts, m)) : `${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`}
-                          aria-current={current ? "true" : undefined}
-                          style={{ "--i": Math.min(i, 6) } as CSSProperties}
-                        >
-                          <Avatar mail={m} provider={accountOf(m)?.provider} />
-                          <span className="row-text">
-                            <span className="row-line">
-                              <strong>
-                                <Redact text={m.sender} />
-                              </strong>
-                              <span className="row-subject">
-                                <Redact text={m.subject} />
-                              </span>
-                              {layout === "inline" && (
-                                <span className="row-preview">
-                                  <Redact text={m.preview} />
-                                </span>
-                              )}
-                            </span>
-                            {layout === "stacked" && (
-                              <span className="row-preview">
-                                <Redact text={m.preview} />
-                              </span>
-                            )}
-                          </span>
-                          {m.relevance === 3 && (
-                            <span className="row-label" title={privacy ? redactPrivateText(m.reason, collectPrivateNames(state.accounts, m)) : m.reason}>
-                              <Redact text={shortLabel(privacy ? redactPrivateText(m.reason, collectPrivateNames(state.accounts, m)) : m.reason)} />
-                            </span>
-                          )}
-                          <time>{relative(m.date)}</time>
-                        </button>
-                      </MailPrivacy>
-                    );
-                  })
+                  ) : (
+                    <button
+                      className="search search-closed"
+                      aria-label="Search mail"
+                      title={`Search (${shortcut("search")})`}
+                      onClick={showSearch}
+                    >
+                      <Search color="currentColor" size={14} />
+                      <span>Search mail</span>
+                      <kbd>{shortcut("search")}</kbd>
+                    </button>
+                  )}
+                </div>
+                <div className="pane-tools">
+                  <MailFilters
+                    open={filtersOpen}
+                    active={filtersActive}
+                    location={navigation.location}
+                    labels={labels}
+                    accounts={state.accounts}
+                    blocked={navigationBlocked}
+                    showReset={hasListControls}
+                    labelName={(name) => privacy ? redactPrivateText(name, collectPrivateNames(state.accounts, opened ? selected || {} : {})) : name}
+                    onOpen={setFiltersOpen}
+                    onChange={(patch) => navigate({ ...patch, selectedId: null, opened: false })}
+                    onReset={resetListControls}
+                  />
+                  {privacyButton}
+                  {!split && senderToggle}
+                </div>
+              </PaneHeader>
+              {view === "inbox" && !query && (
+                <InboxTabs tab={tab} unread={tabUnread} onTab={switchTab} />
+              )}
+              <UpdateNotice banner bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+              {!(split && opened) && actions}
+              <div
+                ref={listRef}
+                className={`list ${density}`}
+                aria-label={`${viewNames[view]} mail`}
+              >
+              <div key={paneKey} className={`pane ${pane.current.motion}`}>
+                {reader && !split ? reader : filtered.length ? (
+                  <MailList
+                    messages={filtered}
+                    selectedId={selected?.id}
+                    density={density}
+                    narrow={split}
+                    sort={sort}
+                    opening={interaction.opening}
+                    accounts={state.accounts}
+                    disabled={busy || syncing}
+                    onOpen={openMail}
+                    onSelect={setSelectedId}
+                    onMenu={showMailMenu}
+                    onMenuKey={mailMenuKey}
+                    onTrash={setTrashMail}
+                    trashUnavailable={trashUnavailable}
+                  />
                 ) : (
-                  <div className="empty">
-                    <p className="empty-title">
-                      {!loaded
-                        ? "Loading"
-                        : !state.accounts.length
-                          ? "No accounts connected"
-                          : hasListControls
-                            ? "No matching mail"
-                            : view === "snoozed"
-                              ? "No snoozed mail"
-                              : view === "archive"
-                                ? "No archived mail"
-                                : `Nothing in ${viewNames[view]}`}
-                    </p>
-                    {loaded &&
-                      (!state.accounts.length ? (
-                        <button
-                          className="link"
-                          onClick={() => setConnecting("choose")}
-                        >
-                          Connect an account <ArrowRight color="currentColor" size={11} />
-                        </button>
-                      ) : hasListControls ? (
-                        <>
-                          <p>No cached mail matches these controls in {viewNames[view]}.</p>
-                          <button type="button" className="link" onClick={resetListControls}>Reset filters and sort</button>
-                        </>
-                      ) : (
-                        <button
-                          className="link"
-                          disabled={syncing}
-                          onClick={() => void sync()}
-                        >
-                          {syncing ? "Syncing" : "Sync now"}
-                        </button>
-                      ))}
-                  </div>
+                  <ListEmpty
+                    loaded={loaded}
+                    hasAccounts={state.accounts.length > 0}
+                    filtered={hasListControls}
+                    title={view === "snoozed" ? "No snoozed mail" : view === "archive" ? "No archived mail" : `Nothing in ${tabName(tab)}`}
+                    viewName={viewNames[view]}
+                    syncing={syncing}
+                    onConnect={() => setConnecting("choose")}
+                    onReset={resetListControls}
+                    onSync={() => void sync()}
+                  />
                 )}
+              </div>
               </div>
             </section>
-            <aside className="context" aria-label="Sender context">
-              <div className="context-pane" key={selected?.id ?? "none"}>
-                {selected && (
-                  <MailPrivacy mail={selected}><div className="sender">
-                    <Avatar
-                      mail={selected}
-                      provider={selectedAccount?.provider}
-                      large
-                    />
-                    <h2>
-                      <Redact text={selected.sender} />
-                    </h2>
-                    <p className="sender-address">
-                      <Address value={selected.address} />
-                    </p>
-                    {selectedAccount && (
-                      <p>
-                        Writes to your <Address value={selectedAccount.email} />
-                      </p>
-                    )}
-                    <p className="dim">
-                      {senderMail.length}{" "}
-                      {senderMail.length === 1 ? "message" : "messages"}
-                    </p>
-                    {selected.reason && (
-                      <p className="sender-reason"><Redact text={selected.reason} /></p>
-                    )}
-                    <div className="tags">
-                      <span>{viewNames[selected.category]}</span>
-                      <span>
-                        {relevanceNames[selected.relevance]} relevance
-                      </span>
-                    </div>
-                  </div></MailPrivacy>
-                )}
-                {selected && senderMail.length > 1 && (
-                  <section className="context-list">
-                    <h3>
-                      Recent with{" "}
-                      <MailPrivacy mail={selected}><Redact text={selected.sender} /></MailPrivacy>
-                    </h3>
-                    {senderMail
-                      .filter((m) => m.id !== selected.id)
-                      .slice(0, 4)
-                      .map((m) => (
-                        <button key={m.id} onClick={() => jumpTo(m)}>
-                          <span>
-                            <MailPrivacy mail={m}><Redact text={m.subject} /></MailPrivacy>
-                          </span>
-                          <time>{relative(m.date)}</time>
-                        </button>
-                      ))}
-                  </section>
-                )}
-                {recentMail.length > 0 && (
-                  <section className="context-list">
-                    <h3>Recently opened</h3>
-                    {recentMail.slice(0, 4).map((m, i) => (
-                      <button key={m.id} onClick={() => jumpTo(m)}>
-                        <i>{i + 1}</i>
-                        <span>
-                          <MailPrivacy mail={m}><Redact text={`${m.sender} · ${m.subject}`} /></MailPrivacy>
-                        </span>
-                        <time>{relative(m.date)}</time>
-                      </button>
-                    ))}
-                  </section>
-                )}
-              </div>
-            </aside>
+            {split && (
+              <section className="reader-pane" aria-label="Reading pane">
+                <PaneHeader className="reader-head" corner={corner("reader")} maximized={maximized}>
+                  {opened && actions}
+                  <div className="pane-tools">{senderToggle}</div>
+                </PaneHeader>
+                <div ref={readerRef} className="reader-scroll">
+                  <div key={selected && opened ? selected.id : "empty"} className="pane open">
+                    {reader || <ReaderEmpty selected={!!selected} openKey={shortcut("open")} />}
+                  </div>
+                </div>
+              </section>
+            )}
+            {contextShown && (
+              <aside className="context" aria-label="Sender context">
+                <PaneHeader className="context-head" corner={corner("context")} maximized={maximized} />
+                <SenderPanel
+                  selected={selected}
+                  account={selectedAccount}
+                  tab={selected ? tabName(tabOf(selected)) : ""}
+                  senderMail={senderMail}
+                  recentMail={recentMail}
+                  onJump={jumpTo}
+                />
+              </aside>
+            )}
           </main>
         )}
+        </div>
         {contextMenu && menuMail && (
           <ContextMenu
             x={contextMenu.x}
             y={contextMenu.y}
             anchor={contextMenu.anchor}
             onClose={closeContextMenu}
-            actions={[
-              { label: "Open", key: shortcut("open"), run: () => openMail(menuMail) },
-              { label: reading.has(menuMail.id) ? "Marking as read…" : "Mark as read", disabled: !menuMail.unread || reading.has(menuMail.id), run: () => markRead(menuMail) },
-              { label: "Reply", key: shortcut("reply"), disabled: busy, run: () => startCompose(menuMail) },
-              { label: "Done", key: shortcut("done"), disabled: busy || syncing || menuMail.archived, run: () => archive(menuMail) },
-              { label: "Snooze", key: shortcut("snooze"), disabled: busy || syncing || menuMail.archived, run: () => setSnooze(menuMail) },
-              ...(isSnoozed(menuMail) ? [{ label: "Return to inbox", disabled: busy || syncing, run: () => void changeMessage(menuMail, "unsnooze") }] : []),
-              { label: "Move to Trash", disabled: busy || syncing || !!trashUnavailable(menuMail), run: () => setTrashMail(menuMail) },
-              { label: "Teach sorting", key: shortcut("teach"), disabled: busy || syncing, run: () => setTeach(menuMail) },
-            ]}
+            actions={mailMenuActions(menuMail)}
           />
         )}
         {labelMail && (
@@ -1601,1192 +1009,31 @@ export function App() {
           />
         )}
         {snooze && (
-          <MailPrivacy mail={snooze}><Dialog title="Snooze" onClose={() => setSnooze(null)}>
-            <p className="dialog-copy">
-              <Redact text={snooze.subject} />
-            </p>
-            {[
-              { label: "In one hour", until: Date.now() + 3600000 },
-              {
-                label: "Tomorrow morning",
-                until:
-                  new Date(new Date().setHours(9, 0, 0, 0)).getTime() +
-                  86400000,
-              },
-              { label: "In one week", until: Date.now() + 7 * 86400000 },
-            ].map((option) => (
-              <button
-                className="option"
-                key={option.label}
-                disabled={busy}
-                onClick={() =>
-                  void perform(async () => {
-                    await api(
-                      `/messages/${encodeURIComponent(snooze.id)}`,
-                      "PATCH",
-                      { action: "snooze", until: option.until },
-                    );
-                    setSnooze(null);
-                    setOpened(false);
-                  })
-                }
-              >
-                {option.label}
-                <span>{new Date(option.until).toLocaleString()}</span>
-              </button>
-            ))}
-            {snooze.snoozedUntil && (
-              <button
-                className="option"
-                disabled={busy}
-                onClick={() =>
-                  void perform(async () => {
-                    await api(
-                      `/messages/${encodeURIComponent(snooze.id)}`,
-                      "PATCH",
-                      { action: "unsnooze" },
-                    );
-                    setSnooze(null);
-                  })
-                }
-              >
-                Return to inbox now
-              </button>
-            )}
-          </Dialog></MailPrivacy>
+          <SnoozeDialog
+            mail={snooze}
+            busy={busy}
+            onClose={() => setSnooze(null)}
+            onSnooze={(until) => void perform(async () => {
+              await api(`/messages/${encodeURIComponent(snooze.id)}`, "PATCH", { action: "snooze", until });
+              setSnooze(null);
+              setOpened(false);
+            })}
+            onUnsnooze={() => void perform(async () => {
+              await api(`/messages/${encodeURIComponent(snooze.id)}`, "PATCH", { action: "unsnooze" });
+              setSnooze(null);
+            })}
+          />
         )}
         {trashMail && (
-          <Dialog title="Move to Trash" onClose={() => { if (!trashLock.current) setTrashMail(null); }}>
-            <p className="dialog-copy">Move this email to your provider’s Trash? It will be removed from this inbox. This does not permanently delete it.</p>
-            <div className="form-actions">
-              <button type="button" className="button" disabled={busy} onClick={() => setTrashMail(null)}>Cancel</button>
-              <button type="button" className="button trash-action" disabled={busy || syncing} aria-busy={busy}
-                onClick={() => void moveToTrash(trashMail)}>{busy ? "Moving to Trash…" : "Move to Trash"}</button>
-            </div>
-          </Dialog>
+          <TrashDialog
+            busy={busy}
+            syncing={syncing}
+            onConfirm={() => void moveToTrash(trashMail)}
+            onClose={() => { if (!trashLock.current) setTrashMail(null); }}
+          />
         )}
-        {shortcuts && (
-          <Dialog
-            title="Keyboard shortcuts"
-            onClose={() => setShortcuts(false)}
-          >
-            <div className="shortcut-list">
-              {[...interactionActions.map(({ id, label }) => [shortcut(id), label]),
-                ["Esc", "Close email or dialog"], ["Tab", "Important / Other from inbox"],
-                ["0–9", "Filter by account"],
-                ["Ctrl + / Ctrl −", "Less / more compact"],
-                ...(window.desktop?.platform === "darwin" ? [["Cmd+[ / Cmd+]", "Back / Forward"]] : []),
-              ].map(([key, text]) => (
-                <div key={key}>
-                  <span>{text}</span>
-                  <kbd>{key}</kbd>
-                </div>
-              ))}
-            </div>
-          </Dialog>
-        )}
+        {shortcuts && <ShortcutsDialog shortcut={shortcut} onClose={() => setShortcuts(false)} />}
       </div>
     </PrivacyContext.Provider>
-  );
-}
-
-export function LabelForm({ mail, labels, busy, onSave }: {
-  mail: Mail;
-  labels: GmailLabel[];
-  busy: boolean;
-  onSave: (labelIds: string[]) => void;
-}) {
-  const [selected, setSelected] = useState(() => new Set(mail.labelIds || []));
-  return (
-    <form onSubmit={(event) => {
-      event.preventDefault();
-      onSave(labels.filter((label) => selected.has(label.id)).map((label) => label.id));
-    }}>
-      <div className="label-options">
-        {labels.length ? labels.map((label) => (
-          <label key={label.id}>
-            <input type="checkbox" checked={selected.has(label.id)} disabled={busy} onChange={(event) => {
-              setSelected((current) => {
-                const next = new Set(current);
-                if (event.target.checked) next.add(label.id);
-                else next.delete(label.id);
-                return next;
-              });
-            }} />
-            <Redact text={label.name} />
-          </label>
-        )) : <p className="note">Create labels in Gmail, then sync this account.</p>}
-      </div>
-      <div className="form-actions">
-        <button className="button" disabled={busy || !labels.length}>Save labels</button>
-      </div>
-    </form>
-  );
-}
-
-function Dialog({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const close = useRef(onClose);
-  close.current = onClose;
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    (
-      ref.current?.querySelector<HTMLElement>("input, select, textarea") ||
-      ref.current?.querySelector<HTMLElement>("button")
-    )?.focus();
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        close.current();
-      }
-      if (e.key !== "Tab") return;
-      const controls = ref.current?.querySelectorAll<HTMLElement>(
-        "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]",
-      );
-      if (!controls?.length) return;
-      const first = controls[0],
-        last = controls[controls.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => {
-      window.removeEventListener("keydown", handler, true);
-      previous?.focus();
-    };
-  }, []);
-  return (
-    <div className="dialog-backdrop">
-      <div
-        className="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        ref={ref}
-      >
-        <div className="dialog-title">
-          <h2>{title}</h2>
-          <button className="icon" aria-label="Close dialog" onClick={onClose}>
-            <Close color="currentColor" size={13} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-export function ComposePanel({
-  draft,
-  setDraft,
-  accounts,
-  busy,
-  onClose,
-  onSend,
-}: {
-  draft: Compose;
-  setDraft: (value: Compose) => void;
-  accounts: Account[];
-  busy: boolean;
-  onClose: () => void;
-  onSend: () => void;
-}) {
-  return (
-    <Dialog
-      title={draft.inReplyTo ? "Reply" : "New message"}
-      onClose={() => {
-        if (busy) return;
-        if (
-          draft.sendUnknown
-            ? confirm("Discard this draft? This message may already have been sent.")
-            : !(draft.body || draft.to || draft.subject) || confirm("Discard this unsent draft?")
-        )
-          onClose();
-      }}
-    >
-      <form
-        className="compose-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!e.currentTarget.reportValidity()) return;
-          onSend();
-        }}
-      >
-        <label>
-          From
-          <select
-            value={draft.accountId}
-            onChange={(e) =>
-              setDraft({
-                ...draft,
-                accountId: e.target.value,
-                threadId: undefined,
-              })
-            }
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.email}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          To
-          <input
-            type="email"
-            required
-            value={draft.to}
-            onChange={(e) => setDraft({ ...draft, to: e.target.value })}
-          />
-        </label>
-        <label>
-          Subject
-          <input
-            value={draft.subject}
-            maxLength={998}
-            onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
-          />
-        </label>
-        <textarea
-          aria-label="Message body"
-          placeholder="Write your message"
-          required
-          value={draft.body}
-          onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-        />
-        {draft.sendUnknown && (
-          <p className="dialog-copy" role="status">{unknownSendNotice}</p>
-        )}
-        <div className="form-actions">
-          <span>
-            Plain text ·{" "}
-            {draft.inReplyTo
-              ? "Reply from the original account"
-              : "Send from the selected account"}
-          </span>
-          <button className="button" disabled={busy} type="submit">
-            {busy ? "Sending" : "Send"}
-          </button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-function TeachDialog({
-  mail,
-  busy,
-  onClose,
-  onSave,
-}: {
-  mail: Mail;
-  busy: boolean;
-  onClose: () => void;
-  onSave: (input: {
-    sender: string;
-    instruction: string;
-    category: Category;
-    relevance: number;
-  }) => void;
-}) {
-  const [category, setCategory] = useState(mail.category);
-  const [relevance, setRelevance] = useState(mail.relevance);
-  const [instruction, setInstruction] = useState("");
-  return (
-    <Dialog title="Teach" onClose={onClose}>
-      <form
-        className="settings-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSave({
-            sender: mail.address,
-            category,
-            relevance,
-            instruction:
-              instruction ||
-              `${mail.sender} belongs in ${category} with ${relevance === 3 ? "high" : relevance === 2 ? "medium" : "low"} relevance.`,
-          });
-        }}
-      >
-        <p className="dialog-copy">
-          Applies to existing and future mail from{" "}
-          <strong>
-            <Address value={mail.address} />
-          </strong>
-          .
-        </p>
-        <label>
-          Send to
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value as Category)}
-          >
-            <option value="important">Important</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <label>
-          Relevance
-          <select
-            value={relevance}
-            onChange={(e) => setRelevance(Number(e.target.value) as 1 | 2 | 3)}
-          >
-            <option value={3}>High · two-line row</option>
-            <option value={2}>Medium · standard row</option>
-            <option value={1}>Low · compact row</option>
-          </select>
-        </label>
-        <label>
-          Reason
-          <input
-            placeholder="Why this mail matters to you"
-            value={instruction}
-            maxLength={500}
-            onChange={(e) => setInstruction(e.target.value)}
-          />
-        </label>
-        <div className="form-actions">
-          <span>Sender rules take priority over AI.</span>
-          <button className="button" disabled={busy}>
-            Save rule <Check color="currentColor" size={12} />
-          </button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-
-type Api = <T>(url: string, method?: string, body?: unknown) => Promise<T>;
-function ProviderChoices({ googleConfigured, busy, onChoose }: {
-  googleConfigured: boolean;
-  busy: boolean;
-  onChoose: (provider: ImapProvider) => void;
-}) {
-  return (
-    <>
-      {googleConfigured && (
-        <div className="provider-row">
-          <ProviderIcon provider="gmail" />
-          <strong>Gmail</strong>
-          <span>Gmail and Workspace</span>
-          {busy ? <span>Wait for the current action</span> : (
-            <a className="action" href={window.desktop?.oauthUrl || "/api/oauth/google"}>
-              Continue with Google <ArrowRight color="currentColor" size={11} />
-            </a>
-          )}
-        </div>
-      )}
-      {(["gmail-imap", "icloud", "fastmail", "yahoo", "imap"] as const).map((provider) => (
-        <div key={provider} className="provider-row">
-          <ProviderIcon provider={provider} />
-          <strong>{provider === "gmail-imap" ? "Gmail / Workspace" : providerNames[provider]}</strong>
-          <span>{provider === "imap" ? "TLS IMAP and SMTP" : "Email and app password"}</span>
-          <button className="action" disabled={busy} onClick={() => onChoose(provider)}>
-            {provider === "gmail-imap" ? "Use app password" : "Connect"} <ArrowRight color="currentColor" size={11} />
-          </button>
-        </div>
-      ))}
-    </>
-  );
-}
-export function SettingsPage({
-  state,
-  busy,
-  perform,
-  api,
-  onConnectAccount,
-  onNotice,
-  windowSide,
-  onWindowSide,
-  interaction,
-  onInteraction,
-}: {
-  state: State;
-  busy: boolean;
-  perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
-  api: Api;
-  onConnectAccount: (provider: ImapProvider) => void;
-  onNotice: (text: string) => void;
-  windowSide: "left" | "right";
-  onWindowSide: (side: "left" | "right") => void;
-  interaction: InteractionPreferences;
-  onInteraction: (value: InteractionPreferences) => void;
-}) {
-  const { on: privacy, names } = useContext(PrivacyContext);
-  return (
-    <main className="settings">
-      <div className="settings-column">
-        <section>
-          <h1>Interaction</h1>
-          <InteractionSettings value={interaction} onChange={onInteraction} />
-        </section>
-        <section>
-          <h1>
-            <span>1</span>Accounts
-          </h1>
-          <h2>Connected</h2>
-          {state.accounts.length ? (
-            state.accounts.map((a) => (
-              <div className="account-row" key={a.id}>
-                <ProviderIcon provider={a.provider} />
-                <strong>
-                  <Address value={a.email} />
-                </strong>
-                <span
-                  className={a.error ? "attention" : undefined}
-                  title={
-                    [a.error && (privacy ? redactPrivateText(a.error, names) : a.error),
-                      a.syncFailure && `${a.syncFailure.phase}: ${a.syncFailure.code}${a.syncFailure.status ? ` (${a.syncFailure.status})` : ""}`,
-                      a.syncWarning && "Mail result retained; connection cleanup failed."].filter(Boolean).join("\n") || undefined
-                  }
-                >
-                  {a.syncStatus === "queued" ? "Retry queued" : a.syncStatus === "running" ? "Syncing" : a.error ? "Needs attention" : "Connected"}
-                </span>
-                <button
-                  className="link"
-                  disabled={busy || !!a.syncStatus}
-                  onClick={() => void perform(async () => {
-                    const result = await api<{ status: "queued" | "running" }>(`/accounts/${encodeURIComponent(a.id)}/reconnect`, "POST");
-                    onNotice(result.status === "running" ? "Connection retry running. Check this account's status for the result." : "Connection retry queued. Check this account's status for the result.");
-                  })}
-                >
-                  Retry connection
-                </button>
-                <button
-                  className="link"
-                  disabled={busy}
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Disconnect ${privacy ? redactPrivateText(a.email, names) : a.email}? This removes its local mail cache. Your provider mailbox stays intact.`,
-                      )
-                    )
-                      void perform(
-                        () => api(`/accounts/${a.id}`, "DELETE"),
-                        "Account disconnected.",
-                      );
-                  }}
-                >
-                  Disconnect
-                </button>
-              </div>
-            ))
-          ) : (
-            <p className="muted">No accounts connected.</p>
-          )}
-          <h2>Connect account</h2>
-          <ProviderChoices googleConfigured={state.googleConfigured} busy={busy} onChoose={onConnectAccount} />
-        </section>
-        <section>
-          <h1>
-            <span>2</span>Sorting
-          </h1>
-          <p className="note">
-            {state.jevConfigured
-              ? "Jev sorting is on. Sender, subject and preview text of new mail are sent to Jev."
-              : state.aiConfigured
-                ? "AI sorting is on. Sender, subject and preview text of new mail are sent to OpenAI."
-                : "Local sorting is on. Add a Jev or OpenAI key under Connection to enable AI sorting."}{" "}
-            Sender rules take priority. Use Teach on any email to correct it.
-          </p>
-          {state.rules.length ? (
-            state.rules.map((rule) => (
-              <div className="rule-row" key={rule.id}>
-                <div>
-                  <p>
-                    <Redact text={rule.instruction} />
-                  </p>
-                  <span>
-                    To {rule.category === "important" ? "Important" : "Other"} ·{" "}
-                    <Redact text={rule.sender} /> ·{" "}
-                    {relevanceNames[rule.relevance].toLowerCase()} relevance
-                  </span>
-                </div>
-                <button
-                  className="link"
-                  disabled={busy}
-                  onClick={() =>
-                    void perform(
-                      () => api(`/rules/${rule.id}`, "DELETE"),
-                      "Rule removed. Local sorting reapplied.",
-                    )
-                  }
-                >
-                  Remove
-                </button>
-              </div>
-            ))
-          ) : (
-            <p className="muted">
-              No sender rules yet. Press <kbd>m</kbd> on any email to add one.
-            </p>
-          )}
-        </section>
-        <section>
-          <h1>
-            <span>3</span>Connection
-          </h1>
-          <details>
-            <summary>Advanced connection setup</summary>
-            {!state.googleConfigured && (
-              <div className="setup">
-                <ol>
-                  <li>
-                    In Google Cloud, enable the Gmail API and configure an OAuth
-                    consent screen.
-                  </li>
-                  <li>
-                    Create a Web application OAuth client. Add your email as a
-                    test user.
-                  </li>
-                  <li>
-                    Register this redirect URI:{" "}
-                    <code>
-                      {
-                        new URL(
-                          window.desktop?.oauthUrl || "/api/oauth/google",
-                          location.origin,
-                        ).href
-                      }
-                      /callback
-                    </code>
-                  </li>
-                  <li>
-                    Save the client ID and secret below, then use Continue with
-                    Google.
-                  </li>
-                </ol>
-                <a
-                  className="action"
-                  href="https://console.cloud.google.com/apis/credentials"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open Google Cloud <ArrowRight color="currentColor" size={11} />
-                </a>
-                <p className="muted">
-                  Access requested: read mail, update labels and send mail.
-                  Credentials stay on this computer.
-                </p>
-              </div>
-            )}
-            <ConfigurationForm
-              api={api}
-              perform={perform}
-              busy={busy}
-              googleConfigured={state.googleConfigured}
-              googleClientId={state.googleClientId}
-              aiConfigured={state.aiConfigured}
-              jevConfigured={state.jevConfigured}
-              jevProvider={state.jevProvider}
-            />
-          </details>
-        </section>
-        <section>
-          <h1>
-            <span>4</span>Appearance
-          </h1>
-          {drawsWindowControls ? (
-            <>
-              <p className="note">
-                The window is drawn by the app itself, so its three controls
-                close, minimize and maximize it directly. They dim while another
-                window has focus.
-              </p>
-              <label className="setting-toggle">
-                <span>Window controls on the right</span>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={windowSide === "right"}
-                  onChange={(e) =>
-                    onWindowSide(e.target.checked ? "right" : "left")
-                  }
-                />
-              </label>
-            </>
-          ) : (
-            <p className="note">
-              macOS draws the window controls, so they stay in the top-left
-              corner.
-            </p>
-          )}
-        </section>
-        <BrandingSection
-          api={api}
-          perform={perform}
-          busy={busy}
-          onNotice={onNotice}
-        />
-        <McpSection api={api} perform={perform} busy={busy} />
-        <section>
-          <h1>
-            <span>7</span>About
-          </h1>
-          <p className="note">
-            Mail is stored encrypted on this computer and syncs every five
-            minutes while the app is running. Closing the desktop window keeps it
-            running in the tray; use Quit in the tray menu to exit. New unread
-            mail shows a desktop notification. Done archives mail in your provider
-            mailbox. Snooze is local to this client. Disconnect removes the
-            local account and cache without changing your mailbox.
-          </p>
-        </section>
-      </div>
-    </main>
-  );
-}
-// A dark dropdown: the native select popup ignores the app's theme on Windows.
-function Dropdown<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(value);
-  const id = useId();
-  const root = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (open) document.getElementById(`${id}-${active}`)?.scrollIntoView({ block: "nearest" });
-  }, [open, active, id]);
-  useEffect(() => {
-    if (!open) return;
-    setActive(value);
-    const away = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", away);
-    return () => window.removeEventListener("mousedown", away);
-  }, [open, value]);
-  const commit = (next: T) => {
-    setOpen(false);
-    trigger.current?.focus();
-    if (next !== value) onChange(next);
-  };
-  const move = (step: number) => {
-    const index = options.findIndex((option) => option.value === active);
-    setActive(options[Math.min(options.length - 1, Math.max(0, index + step))].value);
-  };
-  return (
-    <div className="dropdown" ref={root}>
-      <button
-        type="button"
-        ref={trigger}
-        className="dropdown-trigger"
-        role="combobox"
-        aria-label={label}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? id : undefined}
-        aria-activedescendant={open ? `${id}-${active}` : undefined}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (!open) return;
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            move(1);
-          } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            move(-1);
-          } else if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            commit(active);
-          } else if (event.key === "Escape") {
-            event.stopPropagation();
-            setOpen(false);
-          }
-        }}
-      >
-        {options.find((option) => option.value === value)?.label}
-        <ChevronDown color="currentColor" size={12} className={open ? "up" : undefined} />
-      </button>
-      {open && (
-        <ul
-          className="dropdown-menu"
-          id={id}
-          role="listbox"
-          aria-label={label}
-        >
-          {options.map((option) => (
-            <li
-              key={option.value}
-              id={`${id}-${option.value}`}
-              role="option"
-              aria-selected={option.value === value}
-              className={option.value === active ? "active" : undefined}
-              onMouseEnter={() => setActive(option.value)}
-              onClick={() => commit(option.value)}
-            >
-              {option.label}
-              {option.value === value && <Check color="currentColor" size={12} />}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-function StoredValue({ value, present }: { value?: string; present: boolean }) {
-  return present ? (
-    <p className="stored">
-      <Check color="currentColor" size={11} />
-      Saved · {value ? <Address value={value} /> : "••••••••••••"}
-    </p>
-  ) : (
-    <p className="stored none">Not saved yet</p>
-  );
-}
-function ConfigurationForm({
-  api,
-  perform,
-  busy,
-  googleConfigured,
-  googleClientId,
-  aiConfigured,
-  jevConfigured,
-  jevProvider,
-}: {
-  api: Api;
-  perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
-  googleConfigured: boolean;
-  googleClientId: string | null;
-  aiConfigured: boolean;
-  jevConfigured: boolean;
-  jevProvider: JevProvider;
-}) {
-  const [provider, setProvider] = useState(jevProvider);
-  return (
-    <form
-      className="settings-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const form = e.currentTarget;
-        const data = new FormData(form);
-        void perform(async () => {
-          await api("/config", "POST", {
-            googleClientId: data.get("googleClientId") || undefined,
-            googleClientSecret: data.get("googleClientSecret") || undefined,
-            openaiApiKey: data.get("openaiApiKey") || undefined,
-            jevApiKey: data.get("jevApiKey") || undefined,
-            jevProvider: provider,
-          });
-          form.reset();
-        }, "Connection settings saved.");
-      }}
-    >
-      <label>
-        Google OAuth client ID
-        <input
-          name="googleClientId"
-          autoComplete="off"
-          placeholder={
-            googleClientId
-              ? "Leave blank to keep the saved ID"
-              : "Client ID from Google Cloud"
-          }
-        />
-      </label>
-      <StoredValue present={!!googleClientId} value={googleClientId ?? undefined} />
-      <label>
-        Google OAuth client secret
-        <input
-          name="googleClientSecret"
-          type="password"
-          autoComplete="new-password"
-          placeholder={
-            googleConfigured
-              ? "Leave blank to keep the saved secret"
-              : "Client secret from Google Cloud"
-          }
-        />
-      </label>
-      <StoredValue present={googleConfigured} />
-      <label>
-        Decision model provider
-        <Dropdown
-          label="Decision model provider"
-          value={provider}
-          disabled={busy}
-          onChange={setProvider}
-          options={(Object.keys(jevProviders) as JevProvider[]).map((key) => ({
-            value: key,
-            label: jevProviders[key].name,
-          }))}
-        />
-      </label>
-      <label>
-        {jevProviders[provider].name} API key
-        <input
-          name="jevApiKey"
-          type="password"
-          autoComplete="new-password"
-          placeholder={
-            jevConfigured
-              ? "Leave blank to keep the saved key"
-              : jevProviders[provider].console
-          }
-        />
-      </label>
-      <StoredValue present={jevConfigured} />
-      <label>
-        OpenAI API key (optional)
-        <input
-          name="openaiApiKey"
-          type="password"
-          autoComplete="new-password"
-          placeholder={
-            aiConfigured
-              ? "Leave blank to keep the saved key"
-              : jevConfigured
-                ? "Optional · Jev handles sorting"
-                : "Leave blank to keep local sorting"
-          }
-        />
-      </label>
-      <StoredValue present={aiConfigured} />
-      <div className="form-actions">
-        <span>Stored on this computer.</span>
-        <button className="button" disabled={busy}>
-          Save settings
-        </button>
-      </div>
-    </form>
-  );
-}
-export function ConnectDialog({
-  provider,
-  busy,
-  onClose,
-  onConnect,
-  onBack,
-}: {
-  provider: ImapProvider;
-  busy: boolean;
-  onClose: () => void;
-  onConnect: (input: unknown) => Promise<void>;
-  onBack?: () => void;
-}) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const submitting = useRef(false);
-  const unavailable = busy || pending;
-  return (
-    <Dialog title={`Connect ${providerNames[provider]}`} onClose={() => { if (!submitting.current) onClose(); }}>
-      <form
-        className="settings-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (busy || submitting.current) return;
-          const data = new FormData(e.currentTarget);
-          submitting.current = true;
-          setPending(true);
-          setError("");
-          try {
-            await onConnect({
-              provider,
-              email: data.get("email"),
-              password: data.get("password"),
-              ...(provider === "imap"
-                ? {
-                    username: data.get("username") || undefined,
-                    imapHost: data.get("imapHost"),
-                    smtpHost: data.get("smtpHost"),
-                    imapPort: Number(data.get("imapPort")),
-                    smtpPort: Number(data.get("smtpPort")),
-                  }
-                : {}),
-            });
-          } catch (error) {
-            setError(error instanceof Error ? error.message : "Connection failed. Check your details and try again.");
-          } finally {
-            submitting.current = false;
-            setPending(false);
-          }
-        }}
-      >
-        <p className="dialog-copy">
-          {provider === "imap"
-            ? "Connect using TLS IMAP and SMTP. Server settings come from your email provider."
-            : provider === "gmail-imap"
-              ? "For Gmail and Google Workspace, use a 16-letter Google app password, not your regular password. App passwords require 2-Step Verification and depend on account and admin policy. If unavailable, use configured Google sign-in or contact your administrator."
-              : "Generate an app password in your provider account settings. Do not use your regular password."}
-        </p>
-        {appPasswordHelp[provider] && (
-          <a className="link" href={appPasswordHelp[provider]} target="_blank" rel="noopener noreferrer">How to create an app password</a>
-        )}
-        <label>
-          Email
-          <input name="email" type="email" autoComplete="username" required />
-        </label>
-        <label>
-          {provider === "imap" ? "Password" : "App password"}
-          <input name="password" type="password" autoComplete="off" required />
-        </label>
-        {provider === "imap" && (
-          <>
-            <label>
-              IMAP username (if different)
-              <input name="username" />
-            </label>
-            <div className="field-grid">
-              <label>
-                IMAP host
-                <input
-                  name="imapHost"
-                  placeholder="imap.example.com"
-                  required
-                />
-              </label>
-              <label>
-                Port
-                <input
-                  name="imapPort"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  defaultValue={993}
-                  required
-                />
-              </label>
-              <label>
-                SMTP host
-                <input
-                  name="smtpHost"
-                  placeholder="smtp.example.com"
-                  required
-                />
-              </label>
-              <label>
-                Port
-                <select name="smtpPort" defaultValue={465}>
-                  <option value={465}>465 · TLS</option>
-                  <option value={587}>587 · STARTTLS</option>
-                </select>
-              </label>
-            </div>
-          </>
-        )}
-        {error && <p className="attention" role="alert"><Redact text={error} /></p>}
-        <div className="form-actions">
-          <span>Encrypted on this computer.</span>
-          {onBack && <button className="link" type="button" disabled={unavailable} onClick={onBack}>Back</button>}
-          <button className="button" disabled={unavailable}>
-            {pending ? "Checking connection" : busy ? "Wait for the current action" : "Connect"}
-          </button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-
-function BrandingSection({
-  api,
-  perform,
-  busy,
-  onNotice,
-}: {
-  api: Api;
-  perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
-  onNotice: (text: string) => void;
-}) {
-  return (
-    <section>
-      <h1>
-        <span>5</span>Branding
-      </h1>
-      <p className="note">
-        Sender logos come from theSVG, an open brand icon library, and are
-        cached on this computer. Scan the senders already in your inbox to
-        fetch the ones that are still missing. Companies the library does not
-        know keep their letter.
-      </p>
-      <button
-        className="button"
-        disabled={busy}
-        onClick={() =>
-          void perform(async () => {
-            const { total, found, missing, failed } = await api<LogoSummary>(
-              "/logos/sync",
-              "POST",
-            );
-            onNotice(
-              `Logos scanned: ${total} company ${total === 1 ? "domain" : "domains"}, ${found} found, ${missing} not in the library${failed ? `, ${failed} failed` : ""}.`,
-            );
-          })
-        }
-      >
-        Fetch company logos
-      </button>
-    </section>
-  );
-}
-
-function McpSection({
-  api,
-  perform,
-  busy,
-}: {
-  api: Api;
-  perform: (task: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
-}) {
-  const [settings, setSettings] = useState<McpSettings | null>(null);
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    void api<McpSettings>("/mcp")
-      .then(setSettings)
-      .catch((error: unknown) =>
-        setError(
-          error instanceof Error
-            ? error.message
-            : "Could not load MCP settings.",
-        ),
-      );
-  }, [api]);
-  // Turning MCP on reveals its options and turning it off folds them away.
-  useEffect(() => {
-    if (settings) setOpen(settings.enabled);
-  }, [settings?.enabled]);
-  const update = (
-    input:
-      | Partial<Pick<McpSettings, "enabled" | "allowSending">>
-      | { regenerateToken: boolean },
-  ) =>
-    void perform(async () => {
-      setSettings(await api<McpSettings>("/mcp", "PATCH", input));
-    });
-  const endpoint = "http://127.0.0.1:32145/mcp";
-  const snippets = [
-    ["Endpoint", endpoint],
-    ...(settings?.token
-      ? [
-          ["Token", settings.token],
-          [
-            "Claude Code",
-            `claude mcp add --transport http emc2 ${endpoint} --header "Authorization: Bearer ${settings.token}"`,
-          ],
-          [
-            "JSON config",
-            JSON.stringify(
-              {
-                mcpServers: {
-                  "emc2": {
-                    url: endpoint,
-                    headers: { Authorization: `Bearer ${settings.token}` },
-                  },
-                },
-              },
-              null,
-              2,
-            ),
-          ],
-        ]
-      : []),
-  ];
-  return (
-    <section className="mcp-settings">
-      <div className="section-head">
-        <h1>
-          <span>6</span>MCP
-        </h1>
-        <button
-          className="disclosure"
-          aria-expanded={open}
-          aria-controls="mcp-options"
-          onClick={() => setOpen((value) => !value)}
-        >
-          {open ? "Hide options" : "Show options"}
-          <ChevronDown color="currentColor" size={12} className={open ? "up" : undefined} />
-        </button>
-      </div>
-      <p className="note">
-        Let AI clients read synced mail while the app is running. Sending
-        replies is opt-in.
-      </p>
-      {error && <p role="alert">{error}</p>}
-      {settings && (
-        <>
-          <label className="setting-toggle">
-            <span>Enable MCP</span>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={settings.enabled}
-              disabled={busy}
-              onChange={(e) => update({ enabled: e.target.checked })}
-            />
-          </label>
-          {open && (
-            <div className="disclosure-body" id="mcp-options">
-              <label className="setting-toggle">
-                <span>Allow sending replies</span>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={settings.allowSending}
-                  disabled={busy || !settings.enabled}
-                  onChange={(e) => update({ allowSending: e.target.checked })}
-                />
-              </label>
-              {snippets.map(([label, value]) => (
-                <div className="mcp-copy" key={label}>
-                  <div>
-                    <strong>{label}</strong>
-                    <pre>{value}</pre>
-                  </div>
-                  <button
-                    className="button"
-                    disabled={busy}
-                    onClick={() =>
-                      void perform(
-                        () => navigator.clipboard.writeText(value),
-                        `${label} copied.`,
-                      )
-                    }
-                  >
-                    Copy
-                  </button>
-                </div>
-              ))}
-              {settings.token && (
-                <button
-                  className="button"
-                  disabled={busy}
-                  onClick={() => update({ regenerateToken: true })}
-                >
-                  Regenerate token
-                </button>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </section>
   );
 }

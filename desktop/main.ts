@@ -6,6 +6,7 @@ import {
   Menu,
   Notification,
   nativeImage,
+  nativeTheme,
   safeStorage,
   session,
   shell,
@@ -24,6 +25,7 @@ import { DatabaseSync, backup } from "node:sqlite";
 import path from "node:path";
 import type { Server } from "node:http";
 import { editingMenu } from "./context-menu.js";
+import { menuPosition, nativeMenuItems, overlayColors, readWindowControls, writeWindowControls, type WindowControls } from "./window-chrome.js";
 import { isExternalLink, isLocalNavigation } from "./navigation.js";
 import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
 import type { Updates } from "./updates.js";
@@ -63,6 +65,10 @@ let quitting = false;
 let updates: Updates | undefined;
 let updateClosing = false;
 let finishUpdateClose: ((accepted: boolean) => void) | undefined;
+// Outside macOS the window shows either drawn traffic lights or the system's caption buttons.
+const controlsFile = path.join(dataPath, "window.json");
+let windowControls: WindowControls = "mac";
+let reopenWindow: (() => Promise<void>) | undefined;
 const origin = "http://127.0.0.1:32145";
 const developing = !app.isPackaged && process.argv.includes("--dev");
 const rendererOrigin = developing ? "http://127.0.0.1:5173" : origin;
@@ -72,6 +78,9 @@ const showWindow = () => {
   if (window?.isMinimized()) window.restore();
   window?.show();
   window?.focus();
+};
+const notifyMailChanged = () => {
+  if (window?.isVisible() && !window.isMinimized()) window.webContents.send("mail-changed");
 };
 
 mkdirSync(dataPath, { recursive: true });
@@ -102,6 +111,46 @@ else {
   app.on("activate", showWindow);
   // The window is frameless outside macOS, so the renderer's traffic lights ask
   // for these instead of the native caption buttons.
+  // Appearance switches the Windows material live: Mica tints from the
+  // wallpaper, Acrylic blurs what is behind the window. macOS keeps vibrancy.
+  ipcMain.on("window-material", (event, material: unknown) => {
+    if (!window || event.sender !== window.webContents || process.platform !== "win32") return;
+    if (material === "none" || material === "mica" || material === "acrylic")
+      window.setBackgroundMaterial(material);
+  });
+  // Light, dark or system appearance: the native theme tints Mica, Acrylic and
+  // macOS vibrancy, draws native menus, and decides what System reports.
+  ipcMain.on("window-scheme", (event, mode: unknown) => {
+    if (!window || event.sender !== window.webContents) return;
+    if (mode === "system" || mode === "light" || mode === "dark") nativeTheme.themeSource = mode;
+  });
+  // The caption buttons can only be chosen when a window is created, so a
+  // switch saves the choice and reopens the window in place.
+  ipcMain.on("window-controls", (event, controls: unknown) => {
+    if (!window || event.sender !== window.webContents || isMac || (controls !== "mac" && controls !== "windows")) return;
+    writeWindowControls(controlsFile, controls);
+    if (controls !== windowControls) void reopenWindow?.();
+  });
+  // System caption buttons take the colors of the pane beneath them.
+  ipcMain.on("window-overlay", (event, input: unknown) => {
+    const colors = overlayColors(input);
+    if (!window || event.sender !== window.webContents || windowControls !== "windows" || !colors) return;
+    window.setTitleBarOverlay({ ...colors, height: 52 });
+  });
+  // Mail rows use a native context menu; the renderer runs the chosen action.
+  ipcMain.handle("mail-menu", (event, input: unknown, position: unknown) => new Promise<string | null>((resolve) => {
+    const items = nativeMenuItems(input);
+    const at = menuPosition(position);
+    if (!window || event.sender !== window.webContents || !items) { resolve(null); return; }
+    let chosen = false;
+    const template = items.flatMap((item) => [
+      ...(item.separator ? [{ type: "separator" as const }] : []),
+      { label: item.label, enabled: item.enabled, accelerator: item.accelerator, registerAccelerator: false,
+        click: () => { chosen = true; resolve(item.id); } },
+    ]);
+    // Some platforms report the close before the click, so dismissal waits a moment.
+    Menu.buildFromTemplate(template).popup({ window, ...at, callback: () => setTimeout(() => { if (!chosen) resolve(null); }, 100) });
+  }));
   ipcMain.on("window-command", (_event, command: string) => {
     if (!window) return;
     if (command === "minimize") window.minimize();
@@ -114,6 +163,9 @@ else {
     .then(async () => {
       if (selectionError) throw selectionError;
       app.setName("Emc²");
+      // Dark until the renderer reports the chosen mode, so Acrylic and Mica
+      // never flash a pale frost behind the dark default.
+      nativeTheme.themeSource = "dark";
       Menu.setApplicationMenu(
         isMac
           ? Menu.buildFromTemplate([
@@ -218,7 +270,7 @@ else {
           window?.webContents.send("account-connected", error || null);
           showWindow();
         },
-        () => window?.webContents.send("mail-changed"),
+        notifyMailChanged,
         (count) => {
           if (checking || !Notification.isSupported()) return;
           const notification = new Notification({
@@ -247,30 +299,50 @@ else {
         (_contents, _permission, callback) => callback(false),
       );
       localSession.setPermissionCheckHandler(() => false);
-      const openWindow = async () => {
+      const openWindow = async (previous?: BrowserWindow) => {
+        windowControls = isMac ? "mac" : readWindowControls(controlsFile);
+        const nativeControls = windowControls === "windows";
         window = new BrowserWindow({
           title: "Emc²",
           width: 1440,
           height: 900,
+          // A window reopened for new controls keeps its place and size.
+          ...(previous && !previous.isMaximized() ? previous.getBounds() : {}),
           minWidth: 900,
           minHeight: 560,
-          backgroundColor: "#0a0a0a",
+          // macOS vibrancy and a Windows 11 material sit behind the page. The
+          // renderer paints an opaque theme over them unless Transparency is on,
+          // so the material only shows where the app leaves surfaces translucent.
+          backgroundColor: isMac || process.platform === "win32" ? "#00000000" : "#0a0a0a",
+          vibrancy: isMac ? "under-window" : undefined,
+          visualEffectState: isMac ? "followWindow" : undefined,
+          // Appearance replaces this with the user's choice once the page loads.
+          backgroundMaterial: process.platform === "win32" ? "mica" : undefined,
           icon: path.join(app.getAppPath(), "build/icon.png"),
           show: false,
           // macOS keeps its native traffic lights. Elsewhere the window is
-          // frameless and the renderer draws its own; Windows still rounds and
-          // shadows the frame, so the corners belong to the OS.
+          // frameless and either the renderer draws its own or the system's
+          // caption buttons sit over the top-right corner. Windows still rounds
+          // and shadows the frame, so the corners belong to the OS.
           titleBarStyle: isMac ? "hiddenInset" : "hidden",
-          trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
+          titleBarOverlay: nativeControls ? { color: "#0e0e10", symbolColor: "#ffffff", height: 52 } : undefined,
+          trafficLightPosition: isMac ? { x: 20, y: 20 } : undefined,
           webPreferences: {
             preload: path.join(__dirname, "preload.cjs"),
             contextIsolation: true,
             sandbox: true,
             nodeIntegration: false,
-            additionalArguments: checking ? ["--emc2-disable-updates"] : [],
+            additionalArguments: [
+              ...(checking ? ["--emc2-disable-updates"] : []),
+              ...(nativeControls ? ["--emc2-window-controls=windows"] : []),
+            ],
             session: localSession,
           },
         });
+        if (previous?.isMaximized()) window.maximize();
+        // Hidden windows catch up from the encrypted cache when shown again.
+        window.on("show", notifyMailChanged);
+        window.on("restore", notifyMailChanged);
         if (!tray) {
           const trayImage = nativeImage.createFromPath(
             path.join(app.getAppPath(), isMac ? "build/tray-icon.png" : "build/icon.png"),
@@ -353,6 +425,12 @@ else {
         window.once("ready-to-show", reveal);
         window.webContents.once("did-finish-load", reveal);
         await window.loadURL(rendererOrigin);
+      };
+      reopenWindow = async () => {
+        const previous = window;
+        if (!previous) return;
+        await openWindow(previous);
+        previous.destroy();
       };
       if (!checking) {
         const { Updates, registerUpdateIpc, trustedUpdateSender } = await import("./updates.js");

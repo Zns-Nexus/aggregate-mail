@@ -4,7 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import { MessageImages, MessageText, PrivacyContext } from "./App";
+import { MessageImages, MessageText } from "./mail/MessageContent";
+import { PrivacyContext } from "./ui/Privacy";
 import { imageSource, type MailImage } from "../shared/types";
 
 const image: MailImage = { src: "https://images.example.com/photo.png", alt: "Photo for alice@example.com" };
@@ -160,7 +161,7 @@ test("formatted reader recovery keeps text on failure, ignores late content and 
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
-  const { ReaderContent } = await import("./App");
+  const { ReaderContent } = await import("./mail/MessageContent");
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   let resolve!: (result: { html: string | null; images: MailImage[] }) => void;

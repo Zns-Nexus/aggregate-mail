@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MessageBody, PrivacyContext } from "./App";
+import { MessageBody } from "./mail/MessageContent";
+import { PrivacyContext } from "./ui/Privacy";
 
 const render = (text: string, privacy = false) => renderToStaticMarkup(
   <PrivacyContext.Provider value={{ on: privacy, revealed: new Set(), toggle: () => {} }}>

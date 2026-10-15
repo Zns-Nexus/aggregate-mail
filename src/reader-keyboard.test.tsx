@@ -44,7 +44,7 @@ function reader(opened = true, accountFilter = "a", selectedId: string | null = 
     state: { accounts: [{ id: "a" }, { id: "b" }], messages: [a, b, other] },
     activeLabel: undefined as Parameters<typeof matchesLabel>[1],
     now: a.date + 1,
-    get navigation() { return { location: { view: "important" as const, accountFilter: this.accountFilter,
+    get navigation() { return { location: { view: "inbox" as const, tab: "primary" as const, accountFilter: this.accountFilter,
       query: "", readFilter: "all" as const, relevanceFilter: "all" as const, sort: "newest" as const } }; },
     get filtered() { return this.state.messages.filter((mail) => (this.accountFilter === "all" || mail.accountId === this.accountFilter) && matchesLabel(mail, this.activeLabel)); },
     get selected() { return selectedMail(this.state.messages, this.filtered, this.selectedId, this.opened); },
@@ -62,7 +62,7 @@ function reader(opened = true, accountFilter = "a", selectedId: string | null = 
     reload: async () => {},
     contextMenu: false, settings: false, compose: false, teach: false,
     snooze: false, trashMail: false, trashLock: { current: false }, shortcuts: false, labelMail: false, connecting: false,
-    HTMLElement: Element, Error, densityShortcut, filterMail, markMailRead,
+    HTMLElement: Element, Error, densityShortcut, filterMail, markMailRead, tabOf: () => "primary",
     interaction: defaults, interactionActions, matches, window: { desktop: { platform: "darwin" } },
     markRead: (_mail: Mail) => {}, openMail: (_mail: Mail) => {},
   };

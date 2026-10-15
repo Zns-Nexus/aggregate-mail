@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { act } from "react";
 import { Window as DOMWindow } from "happy-dom";
-import { UpdateNotice } from "./UpdateNotice";
+import { UpdateNotice } from "./shell/UpdateNotice";
 import type { UpdateBridge, UpdateCommand, UpdateState } from "../shared/updates";
 
-async function mount(initial: UpdateState, execute: (command: UpdateCommand) => Promise<UpdateState>) {
+async function mount(initial: UpdateState, execute: (command: UpdateCommand) => Promise<UpdateState>, banner = false) {
   const dom = new DOMWindow({ url: "http://localhost/", settings: {
     enableJavaScriptEvaluation: false, disableJavaScriptFileLoading: true, disableCSSFileLoading: true,
     enableImageFileLoading: false, navigation: { disableMainFrameNavigation: true, disableChildFrameNavigation: true, disableChildPageNavigation: true },
@@ -19,7 +19,7 @@ async function mount(initial: UpdateState, execute: (command: UpdateCommand) => 
   const { createRoot } = await import("react-dom/client");
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
-  await act(async () => root.render(<UpdateNotice bridge={bridge} />));
+  await act(async () => root.render(<UpdateNotice bridge={bridge} banner={banner} />));
   return { container,
     button: () => container.querySelector<HTMLButtonElement>("button")!,
     emit: async (state: UpdateState) => { await act(async () => listener?.(state)); },
@@ -82,4 +82,17 @@ test("ad-hoc macOS and missing updater metadata give honest states without an in
       else assert.equal(ui.button().textContent?.trim(), "Check for updates");
     } finally { await ui.close(); }
   }
+});
+
+test("the top banner stays hidden until an update can be acted on", async () => {
+  const ui = await mount({ phase: "unsupported", reason: "development" }, async () => ({ phase: "current" }), true);
+  try {
+    assert.equal(ui.container.querySelector(".update-notice"), null);
+    await ui.emit({ phase: "error", reason: "network" });
+    assert.equal(ui.container.querySelector(".update-notice"), null);
+    await ui.emit({ phase: "available", version: "0.1.8" });
+    assert.equal(ui.button().textContent?.trim(), "Download, install and restart");
+    await ui.emit({ phase: "error", reason: "download" });
+    assert.match(ui.container.textContent!, /download failed/);
+  } finally { await ui.close(); }
 });

@@ -20,7 +20,7 @@ test("mounted App drains its send promise and retains the real unload guard for 
     command: async () => { throw new Error("No installer allowed in this DOM test"); }, onState: () => () => {},
     onDrain: (callback) => { drain = callback; return () => { drain = undefined; }; } };
   (dom.window as unknown as Window).desktop = {
-    platform: "darwin", oauthUrl: "", windowCommand() {}, onWindowState: () => () => {},
+    platform: "darwin", materials: false, oauthUrl: "", windowCommand() {}, onWindowState: () => () => {},
     onAccountConnected: () => () => {}, onMailChanged: () => () => {}, onNavigation: () => () => {}, updates: bridge,
   };
   const state: State = { accounts: [{ id: "a", email: "sender@example.test", provider: "imap" }], messages: [], labels: [], rules: [],
