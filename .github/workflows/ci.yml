@@ -67,6 +67,7 @@ jobs:
         run: node scripts/set-build-version.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm test
+        timeout-minutes: 8
       - run: npm run build
       - name: Check desktop startup
         if: runner.os != 'Linux'
