@@ -53,7 +53,7 @@ export function CredentialFallbackNotice({
   };
   if (collapsed) {
     return (
-      <div className="update-notice credential-fallback-notice collapsed" role="status">
+      <div className="credential-fallback-notice collapsed" role="status">
         <button
           className="link"
           type="button"
@@ -66,7 +66,7 @@ export function CredentialFallbackNotice({
     );
   }
   return (
-    <div className="update-notice credential-fallback-notice" role="alert">
+    <div className="credential-fallback-notice" role="alert">
       <div>
         <strong>Weaker local protection</strong>
         <p>

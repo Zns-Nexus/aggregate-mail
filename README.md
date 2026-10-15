@@ -9,6 +9,7 @@ An installable desktop email client for Windows, with a macOS build target, base
 - [Jev sorting](#jev-sorting)
 - [Other providers](#other-providers)
 - [Inbox](#inbox)
+- [Search and compose tools](#search-and-compose-tools)
 - [MCP](#mcp)
 - [Keyboard](#keyboard)
 - [Local storage](#local-storage)
@@ -58,6 +59,18 @@ Do not remove quarantine or disable Gatekeeper to make a build launch. If signat
 For local DMG and ZIP output, `npm run package:mac` uses the same signing hook. Local packaging never publishes downloads. Public binary distribution with a verified publisher still requires Developer ID signing and notarization by an authorized Apple team. The version-tag release workflow remains unchanged.
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit at the top left, beside the sidebar toggle. Closing the window hides the app to the tray on both platforms: it keeps syncing and shows a notification for new unread mail, and Quit in the tray menu exits. Unsent drafts still require confirmation.
+
+## Search and compose tools
+
+Search cached mail in the current view with words, quoted phrases and combined filters. For example, `from:team@example.com is:unread after:2026-10-01 -subject:newsletter` combines sender, unread state, date and exclusion. Supported fields are `from:`, `to:`, `subject:`, `body:`, `account:`, `is:read`, `is:unread`, `is:pinned`, `before:` and `after:`. Dates use `YYYY-MM-DD` at midnight UTC; before excludes that day and after includes it. Account matches the full account ID, email address or custom label. Existing account, Gmail-label, relevance and view filters still apply.
+
+Select Commands in the sidebar, or press Command+K on macOS and Control+K elsewhere, to search app actions. Up/Down move through the command choices; Enter runs one. In the closed mail list, Up/Down select an email without opening or reading it. j/k remain available.
+
+Settings, Compose manages reusable plain-text templates and per-account signatures. Save preferences before composing. A new message or reply gets its account's signature. Changing From replaces an unchanged signature; edited text stays intact. Insert template appends text and only fills the subject if it is empty. These preferences use the encrypted local store.
+
+Pin email in the toolbar or context menu marks a cached message locally. Search `is:pinned`, or choose Show pinned emails in this view in Commands, to find it. Pins do not change the provider mailbox or mail sorting.
+
+In-app toasts report new unread arrivals after the initial import, sending and action outcomes. Errors and delivery warnings remain until dismissed. A send warning can mean delivery succeeded but the Sent copy failed; check the stated outcome before sending again.
 
 ## Connect an account
 
@@ -120,6 +133,8 @@ Retry connection cannot repair rejected credentials. For a Google sign-in reject
 A partial listing retains cached mail and batches already fetched. Only a complete inbox listing archives cached messages absent from the provider. A cleanup warning preserves the sync result. Fresh Gmail mail appears in groups of up to ten while later downloads run; cached-only changes share page writes. Unchanged messages are not rewritten. Renderer notifications share one active read and one pending refresh, including a refresh requested during a failed read. These changes add no automatic provider retry. Real account recovery and native Settings interaction still need separate verification.
 
 ## Inbox
+
+Custom account names can be edited in Settings, Accounts. Privacy keeps these labels visible while hiding email addresses. Back returns from an email to the list; immediate Forward restores that email. The update icon opens dismissible details without a banner. All cached mail remains reachable through the windowed list.
 
 - Inbox combines all connected inboxes and splits them into Primary, Social, Promotions, Newsletters, Transactions and Updates tabs. Gmail mail follows Gmail's own categories; codes, security notices, support threads and replies always stay in Primary. Numbered account controls filter the view. Each sender shows its company logo, fetched once by the app from a favicon service and cached on this computer; senders on Gmail, Outlook, iCloud and similar hosts keep their initial, because their favicon would be the provider's logo rather than their own.
 - In a full-width list, comfortable rows use 28px for low relevance, 34px for medium, and 48px on two lines for high relevance; compact mode uses uniform 24px rows. Beside the reader, rows become two- or three-line cards. A 300px sender panel, which Sender details hides or shows, gives context, recent mail from the sender and recently opened mail. Measurements are recorded in `DESIGN.md`.

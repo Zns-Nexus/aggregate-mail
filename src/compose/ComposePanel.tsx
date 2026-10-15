@@ -1,6 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Account } from "../../shared/types";
+import { emptyComposePreferences, type ComposePreferences } from "../../shared/mail-features";
 import { Dialog } from "../ui/Dialog";
+import { changeComposeAccount, ComposePreferenceControls } from "./ComposePreferences";
 
 export type Compose = {
   accountId: string;
@@ -62,6 +64,7 @@ export function ComposePanel({
   busy,
   onClose,
   onSend,
+  preferences = emptyComposePreferences,
 }: {
   draft: Compose;
   setDraft: (value: Compose) => void;
@@ -69,6 +72,7 @@ export function ComposePanel({
   busy: boolean;
   onClose: () => void;
   onSend: () => void;
+  preferences?: ComposePreferences;
 }) {
   return (
     <Dialog
@@ -96,11 +100,7 @@ export function ComposePanel({
           <select
             value={draft.accountId}
             onChange={(e) =>
-              setDraft({
-                ...draft,
-                accountId: e.target.value,
-                threadId: undefined,
-              })
+              setDraft(changeComposeAccount(draft, e.target.value, preferences))
             }
           >
             {accounts.map((a) => (
@@ -134,6 +134,7 @@ export function ComposePanel({
           value={draft.body}
           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
         />
+        <ComposePreferenceControls draft={draft} preferences={preferences} busy={busy} onChange={setDraft} />
         {draft.sendUnknown && (
           <p className="dialog-copy" role="status">{unknownSendNotice}</p>
         )}

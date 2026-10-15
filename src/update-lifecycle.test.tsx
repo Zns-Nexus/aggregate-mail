@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { act } from "react";
 import { JSDOM } from "jsdom";
 import type { State } from "../shared/types";
-import type { UpdateBridge } from "../shared/updates";
+import type { UpdateBridge, UpdateState } from "../shared/updates";
 
 test("mounted App drains its send promise and retains the real unload guard for an unknown draft", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/" });
@@ -16,8 +16,9 @@ test("mounted App drains its send promise and retains the real unload guard for 
   const prior = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
   let drain: (() => Promise<void>) | undefined;
+  let updateState: ((state: UpdateState) => void) | undefined;
   const bridge: UpdateBridge = { state: async () => ({ phase: "ready", version: "0.1.7" }),
-    command: async () => { throw new Error("No installer allowed in this DOM test"); }, onState: () => () => {},
+    command: async () => { throw new Error("No installer allowed in this DOM test"); }, onState: (callback) => { updateState = callback; return () => { updateState = undefined; }; },
     onDrain: (callback) => { drain = callback; return () => { drain = undefined; }; } };
   (dom.window as unknown as Window).desktop = {
     platform: "darwin", materials: false, oauthUrl: "", windowCommand() {}, onWindowState: () => () => {},
@@ -55,6 +56,22 @@ test("mounted App drains its send promise and retains the real unload guard for 
   try {
     await act(async () => root.render(<App />));
     assert.equal(unload(), false);
+    assert.ok(updateState);
+    await act(async () => updateState!({ phase: "installing", version: "0.1.7" }));
+    assert.ok(container.querySelector(".frame")!.hasAttribute("inert"));
+    for (const key of ["c", "?", "/", ","]) {
+      await act(async () => dom.window.document.body.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true })));
+      assert.equal(container.querySelector('.compose-form, .settings, [role="dialog"], [role="search"]'), null,
+        `installing blocks global ${key} even when dispatched outside the inert frame`);
+    }
+    const updater = container.querySelector<HTMLButtonElement>('[aria-controls="update-details"]')!;
+    assert.equal(updater.disabled, false);
+    assert.equal(updater.closest(".frame"), null);
+    await act(async () => updater.click());
+    assert.equal(updater.getAttribute("aria-expanded"), "true", "the updater icon remains usable during installation");
+    assert.match(container.querySelector("#update-details")!.textContent!, /Finishing mail work/);
+    await act(async () => { updater.click(); updateState!({ phase: "ready", version: "0.1.7" }); });
+    assert.equal(container.querySelector(".frame")!.hasAttribute("inert"), false);
     await act(async () => dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "c", bubbles: true })));
     const form = container.querySelector<HTMLFormElement>(".compose-form"); assert.ok(form);
     assert.equal(unload(), false, "An empty composer has no discard guard");
@@ -78,7 +95,7 @@ test("mounted App drains its send promise and retains the real unload guard for 
     await fill(to, ""); await fill(body, "");
     assert.equal(unload(), true, "sendUnknown keeps the native unload guard even after fields are cleared");
   } finally {
-    await act(async () => root.unmount()); assert.equal(drain, undefined);
+    await act(async () => root.unmount()); assert.equal(drain, undefined); assert.equal(updateState, undefined);
     globalThis.fetch = oldFetch; dom.window.close();
     for (const [key, descriptor] of prior) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

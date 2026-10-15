@@ -11,5 +11,8 @@
 @import "./styles/sender.css";
 @import "./styles/settings.css";
 @import "./styles/dialogs.css";
+@import "./styles/mail-features.css";
+@import "./styles/compose-preferences.css";
 @import "./styles/motion.css";
 @import "./styles/responsive.css";
+@import "./update-notice.css";

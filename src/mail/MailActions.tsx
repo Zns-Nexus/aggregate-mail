@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { Mail } from "../../shared/types";
-import { Archive, Check, Clock, Close, Inbox, Reply, Trash } from "../ui/icons";
+import { Archive, Check, ChevronDown, ChevronUp, Clock, Close, Inbox, Pin, Reply, Trash } from "../ui/icons";
 
 type Icon = ComponentType<{ color?: string; size?: number }>;
 
@@ -29,6 +29,7 @@ function Tool({ label, title, Icon, disabled, busy, onClick }: {
 export function MailActions({
   mail, opened, reading, busy, syncing, snoozed, trashUnavailable, shortcut,
   onRead, onReply, onArchive, onTrash, onSnooze, onUnsnooze, onClose,
+  onPrevious, onNext, previousDisabled, nextDisabled, onPin,
 }: {
   mail: Mail;
   opened: boolean;
@@ -45,6 +46,11 @@ export function MailActions({
   onSnooze: () => void;
   onUnsnooze: () => void;
   onClose: () => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  previousDisabled?: boolean;
+  nextDisabled?: boolean;
+  onPin?: () => void;
 }) {
   const readLabel = reading ? "Marking as read…" : mail.unread ? "Mark as read" : "Read";
   return (
@@ -64,9 +70,15 @@ export function MailActions({
       <div className="tool-group">
         <Tool label="Reply" title={`Reply (${shortcut("reply")})`} Icon={Reply} disabled={busy} onClick={onReply} />
         <Tool label={readLabel} Icon={Check} disabled={!mail.unread || reading} busy={reading} onClick={onRead} />
+        {onPin && <Tool label={mail.pinned ? "Unpin email" : "Pin email"} title={`${mail.pinned ? "Unpin" : "Pin"} email (local to this app)`} Icon={Pin}
+          disabled={busy} onClick={onPin} />}
       </div>
       <span role="status">{reading ? "Read update pending." : busy ? "Updating email…" : ""}</span>
       {trashUnavailable && <span id="trash-unavailable">{trashUnavailable}</span>}
+      {opened && <div className="tool-group reader-navigation" role="group" aria-label="Reader navigation">
+        {onPrevious && <Tool label="Previous email" Icon={ChevronUp} disabled={previousDisabled} onClick={onPrevious} />}
+        {onNext && <Tool label="Next email" Icon={ChevronDown} disabled={nextDisabled} onClick={onNext} />}
+      </div>}
       {opened && (
         <button type="button" className="tool reader-close-hint" aria-label="Close email" title="Close email (Esc)" onClick={onClose}>
           <kbd>Esc</kbd><Close color="currentColor" size={14} />

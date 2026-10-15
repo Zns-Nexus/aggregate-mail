@@ -12,6 +12,8 @@ export function ShortcutsDialog({ shortcut, onClose }: {
         {[...interactionActions.map(({ id, label }) => [shortcut(id), label]),
           ["Esc", "Close email or dialog"], ["Tab", "Next Inbox category"],
           ["0–9", "Filter by account"],
+          ["↑ / ↓", "Select previous / next email in the list"],
+          [window.desktop?.platform === "darwin" ? "Cmd+K" : "Ctrl+K", "Commands"],
           ["Ctrl + / Ctrl −", "Less / more compact"],
           ...(window.desktop?.platform === "darwin" ? [["Cmd+[ / Cmd+]", "Back / Forward"]] : []),
         ].map(([key, text]) => (

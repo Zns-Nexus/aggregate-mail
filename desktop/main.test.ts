@@ -45,6 +45,7 @@ await build({
         let name = 'Emc²', fixedPath, identity;
         const helper = process.argv.includes('--emc2-keychain-helper');
         const handlers = new Map();
+        const ipcHandlers = new Map(); let lastWindow, windows = 0, chromeRan = false, prompts = 0;
         const audit = value => { if (config.audit) appendFileSync(config.audit, JSON.stringify({helper, value}) + '\\n'); };
         // Chromium stops switches at -- and only equals-form carries a value.
         const separator = process.argv.indexOf('--');
@@ -101,7 +102,10 @@ await build({
             return Buffer.concat([iv, cipher.getAuthTag(), bytes]);
           }
         };
-        export const dialog = { showErrorBox(_title, message) { console.error('dialog:' + message); } }, ipcMain = { on() {}, handle() {} }, shell = {}, nativeTheme = { themeSource: "system" };
+        export const dialog = {
+          showErrorBox(_title, message) { console.error('dialog:' + message); },
+          showMessageBoxSync() { prompts++; return config.chromeCase === 'accept' ? 1 : 0; }
+        }, ipcMain = { on(channel, handler) { ipcHandlers.set(channel, handler); }, handle(channel, handler) { ipcHandlers.set(channel, handler); } }, shell = {}, nativeTheme = { themeSource: "system" };
         export const nativeImage = {
           createFromPath(imagePath) {
             const image = { path: imagePath, width: 256, height: 256, template: false };
@@ -111,7 +115,10 @@ await build({
           }
         };
         export const Menu = {
-          buildFromTemplate() { return { items: [{ submenu: { items:
+          buildFromTemplate(template) { return { popup({callback, x, y}) {
+            console.log(JSON.stringify({ nativeMailMenu: true, x, y }));
+            template.find(item => item.enabled)?.click?.(); callback?.();
+          }, items: [{ submenu: { items:
             ['quit','close','undo','cut','copy','paste','selectall'].map(role => ({role}))
           }}] }; },
           setApplicationMenu(menu) { this.menu = menu; }, getApplicationMenu() { return this.menu; }
@@ -132,12 +139,17 @@ await build({
           on() {} show() {}
         }
         export class BrowserWindow {
-          destroyed = false; visible = false; handlers = new Map();
-          webContents = { setWindowOpenHandler() {}, on() {}, once() {} };
+          destroyed = false; visible = false; handlers = new Map(); contentHandlers = new Map();
+          constructor(options) { lastWindow = this; windows++; this.options = options; }
+          webContents = { mainFrame: {}, getURL: () => this.url,
+            setWindowOpenHandler() {}, on: (event, handler) => this.contentHandlers.set(event, handler), once() {}, send() {} };
           on(event, handler) {
             this.handlers.set(event, [...(this.handlers.get(event) || []), handler]);
           }
-          once() {} async loadURL() {}
+          once(event, handler) { this.on(event, handler); }
+          removeListener(event, handler) { this.handlers.set(event, (this.handlers.get(event) || []).filter(value => value !== handler)); }
+          async loadURL(url) { this.url = url; }
+          getBounds() { return { x: 12, y: 34, width: 1100, height: 700 }; }
           isVisible() { return this.visible; }
           isDestroyed() { return this.destroyed; }
           isMinimized() { return false; }
@@ -150,10 +162,37 @@ await build({
             for (const handler of this.handlers.get('close') || [])
               handler({ preventDefault() { prevented = true; } });
             if (prevented) return;
+            if (config.chromeCase) {
+              let discard = false;
+              this.contentHandlers.get('will-prevent-unload')?.({ preventDefault() { discard = true; } });
+              if (!discard) return;
+            }
             this.destroyed = true; this.visible = false;
+            for (const handler of [...(this.handlers.get('closed') || [])]) handler();
           }
         }
-        globalThis.fetch = async (_url, options) => ({ ok: !!options, status: options ? 200 : 403 });
+        globalThis.fetch = async (_url, options) => {
+          if (config.chromeCase && !chromeRan && options) {
+            chromeRan = true;
+            const first = lastWindow, contents = first.webContents;
+            const trusted = { sender: contents, senderFrame: contents.mainFrame };
+            for (const event of [{ sender: {}, senderFrame: contents.mainFrame }, { sender: contents, senderFrame: {} }, trusted]) {
+              if (event === trusted) first.url = 'https://example.com/';
+              ipcHandlers.get('window-scheme')(event, 'light');
+              ipcHandlers.get('window-controls')(event, 'windows');
+              if (await ipcHandlers.get('mail-menu')(event, [{ id: 'open', label: 'Open', enabled: true }])) throw Error('Untrusted menu accepted');
+            }
+            first.url = 'http://127.0.0.1:32145';
+            if (nativeTheme.themeSource !== 'dark' || windows !== 1 || existsSync(path.join(config.appData, 'Emc²/window.json'))) throw Error('Untrusted appearance changed');
+            const choice = await ipcHandlers.get('mail-menu')(trusted, [{ id: 'open', label: 'Open', enabled: true }], { x: 15, y: 25 });
+            if (choice !== 'open') throw Error('Native menu choice lost');
+            ipcHandlers.get('window-controls')(trusted, 'windows');
+            for (let i = 0; i < 10; i++) await Promise.resolve();
+            console.log(JSON.stringify({ chromeGuard: true, windows, prompts, originalDestroyed: first.destroyed,
+              width: lastWindow.options.width, x: lastWindow.options.x }));
+          }
+          return { ok: !!options, status: options ? 200 : 403 };
+        };
       ` : `
         import { readFileSync, existsSync } from 'node:fs';
         import { createDecipheriv } from 'node:crypto';
@@ -651,3 +690,17 @@ for (const mode of ["premature", "trailing", "duplicate", "malformed", "utf8"])
       preserved(saved.profile, saved);
     } finally { rmSync(path.dirname(profile), { recursive: true, force: true }); }
   });
+
+for (const chromeCase of ["cancel", "accept"]) test(`caption-control recreation honors draft ${chromeCase} and rejects untrusted IPC`, () => {
+  const saved = fixture("Emc²");
+  const result = launch(saved.appData, { platform: "win32", chromeCase });
+  passed(result, 0);
+  const receipt = JSON.parse(result.stdout.match(/\{"chromeGuard"[^\n]+/)?.[0] ?? "{}");
+  assert.equal(receipt.windows, chromeCase === "accept" ? 2 : 1);
+  assert.equal(receipt.prompts, 1);
+  const menu = JSON.parse(result.stdout.match(/\{"nativeMailMenu"[^\n]+/)?.[0] ?? "{}");
+  assert.deepEqual(menu, { nativeMailMenu: true, x: 15, y: 25 });
+  assert.equal(receipt.originalDestroyed, chromeCase === "accept");
+  if (chromeCase === "accept") { assert.equal(receipt.width, 1100); assert.equal(receipt.x, 12); }
+  preserved(saved.profile, saved);
+});

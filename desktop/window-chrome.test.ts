@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { nativeMenuItems, overlayColors, readWindowControls, writeWindowControls } from "./window-chrome.js";
+import { menuPosition, nativeMenuItems, overlayColors, readWindowControls, writeWindowControls } from "./window-chrome.js";
 
 test("window controls default to the drawn lights and round-trip the system buttons", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "emc2-window-"));
@@ -33,4 +33,10 @@ test("caption colors and native menu items are checked before they reach Electro
   for (const input of [[], "open", [{ id: "Open!", label: "Open", enabled: true }], [{ id: "open", label: "", enabled: true }],
     [{ id: "open", label: "Open", enabled: "yes" }], Array.from({ length: 21 }, () => ({ id: "open", label: "Open", enabled: true }))])
     assert.equal(nativeMenuItems(input), null);
+});
+
+test("native mail menu positions accept only bounded integer window coordinates", () => {
+  assert.deepEqual(menuPosition({ x: 0, y: 19999 }), { x: 0, y: 19999 });
+  for (const input of [null, {}, { x: -1, y: 1 }, { x: 1, y: 20000 }, { x: 1.5, y: 0 }, { x: "1", y: 0 }])
+    assert.deepEqual(menuPosition(input), {});
 });

@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+- Stack the mail features on the Linux fallback, keeping its protection warning separate from the update icon and retaining draft and account-privacy guards.
+
 - On Linux without system credential encryption, start fresh profiles with a local 0600 mail key and show a persistent weaker-protection warning instead of failing. Profiles protected by the system keyring still stop, now with a clear keyring/reset message instead of a raw decrypt error. macOS and Windows still stop when encryption is unavailable. See ADR 0027.
 
+- Rebase the mail features onto the merged sidebar redesign, keeping the corner toggle, update icon, privacy and draft guards. Reconcile decision links with main.
+
+- Keep disabled row Trash buttons hidden until hover or keyboard focus so they cannot overlap mail timestamps during sync. Preserve always-visible actions on touch devices.
 - Rebase the sidebar redesign onto current main, preserving macOS key migration and test timeouts. Reconcile contributor guidance, component links and ADR numbering.
 
 - Add a macOS migration path that wraps the existing mail key under Emc² and preserves the original protected key, identity metadata and encrypted mail for rollback. Later starts prefer a validated current record; migration errors stop before opening mail. Native Keychain labels and reinstall behavior still require separate verification.
@@ -14,30 +19,22 @@
 
 - Let Windows and Linux choose between the drawn macOS-style window controls and the system's own caption buttons, switched from Settings, Appearance by reopening the window in place. Use native context menus for mail rows on the desktop. Make the email toolbar icon-only in Mail-style groups and add Move to Trash to it. Mark unread mail with an accent dot, divide rows with hairlines and fill the selected row with the accent while the list has focus. Tint sidebar icons with the accent and let its sections fold. Arrange Settings in System Settings-style groups.
 
-- Render quoted replies with one inset and bar per level instead of the browser's 40px margins on both sides, so deep threads no longer shrink to a narrow column. Center newsletter layouts that use `align="center"`, `<center>` or `margin: 0 auto`, read `ex` and `ch` lengths and borders in any word order. Move the filter controls into a popover under the Filters button, which stays lit while the list is filtered. Draw the Inbox categories as a larger segmented row that fills the list column beside the reader.
+- Add structured cached-mail search, a searchable command palette, plain-text templates and per-account signatures, local message pins, and queued in-app arrival/send/error toasts. Store templates and signatures in the encrypted mail store. Preserve uncertain-send and Sent-copy warnings until dismissal.
+- Let Up and Down select emails in the list without page scrolling, opening mail or marking it read. Keep editor and open-reader arrow behavior.
 
-- Add light mode with System, Light and Dark choices; every theme now has a light palette, and the window material and native menus follow the mode. Keep the mail list, reader and sender panel near neutral so themes tint only the window frame and sidebar. Open mail beside the list by default, with the email actions in the reader's header and the list as two- or three-line cards; Full width keeps the earlier in-place reader. Redesign the opened email around one sender line, a short date and a quieter image-consent strip, and let the sender panel be hidden. Remove Search from the sidebar now that the mail header has a search field. Split the renderer into components by area and the stylesheet into token and area files.
+- Port the full `feat/sidebar-design` interface: full-height sidebar and Settings navigation, per-pane headers, six Inbox categories, light/dark/system modes, themes, accents, native materials, side-by-side or full-width reading, compact action/filter controls and native mail menus. Keep the updater as an icon with dismissible details and retain the account-label, Back/Forward, density and windowing corrections.
+- Check Gmail API mailbox revisions every 15 seconds with backoff, preserving IMAP events, the shared sync queue, updater drain and five-minute recovery sync. Reuse unchanged renderer snapshots and avoid hidden-window redraws.
+- Preserve bounded newsletter layout, centering and quoted-reply formatting without loading scripts, sender stylesheets or images before consent. Keep Windows caption changes behind the native draft guard and validate new IPC against the current main frame and application origin.
+- Disable overscroll bouncing on the showcase website.
 
-- Replace Important and Other with one Inbox split into Primary, Social, Promotions, Newsletters, Transactions and Updates tabs, using Gmail's own categories where available. Keep codes, security notices, support threads and replies in Primary, and mark security mail important in the local sorter. Add a hover wash that follows the pointer in the sidebar, Settings and tabs, and let more of the window material show through the sidebar.
+- Let Back leave the reader and immediate Forward reopen the latest email without adding mail-to-mail history. Preserve mouse, shortcut and draft guards; ignore stale reader identities.
+- Keep saved custom account labels visible during privacy mode while hiding addresses inside them. Restore Ctrl plus/minus density changes from focused closed filters.
+- Bound mounted inbox rows to the viewport with overscan, keeping all cached mail reachable, selected/focused rows retained, reader-return positioning and wrapped touch controls. Avoid scanning message bodies when search is empty.
+- Document database and cross-platform E2E encryption options, migration safeguards and recipient compatibility limits. No encryption implementation changes.
 
-- Replace the top bar and rail with a full-height sidebar and per-pane headers, closer to a native macOS mail layout. Fold the mail filter row behind a Filters button. Offer Transparency as Off, Subtle (Mica) or Glass (Acrylic) on Windows, switched live; Glass restores the see-through blur. Window controls sit inside the pane headers so they stay clickable, in close, minimize, maximize order, with the sidebar toggle fixed beside them. Search is a field centered in the mail header.
+- Allow local account names in Settings through a validated name-only PATCH. Preserve names across sync and reconnect, store them with encrypted accounts and redact addresses in privacy mode.
 
-- Check Gmail API mailbox revisions every 15 seconds and sync changed accounts through the existing queue, with backoff, account replacement guards and updater/shutdown cleanup. Keep IMAP inbox events and the five-minute recovery sync.
-- Reduce mail-interface redraw work by reusing unchanged snapshot records and memoizing privacy text and avatars. Remove duplicate desktop polling and defer cache notifications to hidden windows until they are shown. Use Windows Mica instead of live Acrylic, and reduce floating-layer CSS blur. Add a synthetic 1,800-message benchmark.
 
-- Fix Today/Yesterday headings retaining the removed history toolbar's sticky offset. Tighten date-heading padding, mail rows, sender-to-subject spacing, filter/action spacing, pane gutters and sender-panel padding while preserving both density modes.
-
-- Rename Done to Archive throughout the mail interface and shortcut labels. Move Trash out of the action toolbar into an outline icon revealed on each mail row by hover or keyboard focus, retaining confirmation and provider safeguards. Remove Back/Forward buttons from the mail pane while preserving history shortcuts and mouse side buttons.
-
-- Move the app-update notice off the top of the window. It now lives in Settings, About, and appears above the mail pane only when an update can be downloaded or installed, or that action fails. Development and unsupported builds no longer show a permanent "Automatic update unavailable" bar.
-
-- Turn off scroll bouncing (overscroll rubber-banding) on the showcase website.
-
-- Show the Settings sections in the sidebar instead of mail, one section at a time. Add Settings, Appearance with four dark themes, six accent colors and a Transparency switch that uses macOS vibrancy or Windows 11 acrylic behind the window chrome and sidebar. Make menus, dropdowns, notices and dialogs glass, and move the sidebar selection and collapse on a spring.
-
-- Replace the top-bar tabs and account filters with a navigation rail and a collapsible sidebar in the macOS source-list style. The sidebar holds New message, the mail views, the account list with Add account (replacing the top-bar account picker) and sync status, and remembers whether it is open. Refresh the dark design tokens for a more native macOS look.
-
-- Render newsletter layouts closer to the sender's design: accept sender styles marked `!important`, keep block, inline-block and table display modes and floats, stop underlining links the sender marks as undecorated, align small icons with their text, keep the height of images sized only by height, parse newsletters nested up to 96 levels deep instead of falling back to plain text, show hidden preview text as one line, and draw blocked images as empty boxes at their size instead of squeezed text.
 
 - Trigger synthetic Gmail timeout tests after the loopback request arrives, preserving real connection-close and no-retry checks. Add a negative control for lost transport cancellation.
 
@@ -53,7 +50,7 @@
 
 - Keep reader keyboard navigation in the chosen sort order when read-on-open removes the current message from Unread results.
 
-- Add a visible account setup button and a compact picker for multiple accounts. Combine unread, relevance, account, label and search filters; sort by newest, oldest or relevance and restore controls with Back/Forward. Keep account names and addresses hidden in privacy mode.
+- Add a visible account setup button and a compact picker for multiple accounts. Combine unread, relevance, account, label and search filters; sort by newest, oldest or relevance and restore controls with Back/Forward. Keep account addresses hidden in privacy mode.
 
 - Use a 16-pixel template image for the macOS tray and a 22-pixel tray image on Linux. Keep the Windows tray image unchanged.
 - Add visible Read, Reply, Done, Snooze and Move to Trash controls for selected and opened mail. Show pending reads and apply confirmed read state before an inbox refresh completes. Report failed actions without removing mail.

@@ -16,3 +16,11 @@ export function isExternalLink(url: string, origin: string) {
     return false;
   }
 }
+
+export function trustedWindowSender(event: { sender: unknown; senderFrame: unknown }, contents: {
+  mainFrame: unknown; getURL: () => string;
+}, origin: string) {
+  if (event.sender !== contents || event.senderFrame !== contents.mainFrame) return false;
+  try { const url = new URL(contents.getURL()); return url.origin === origin && url.pathname === "/"; }
+  catch { return false; }
+}

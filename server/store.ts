@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import type { Account, Mail, Rule, McpSettings, GmailLabel } from "../shared/types.js";
+import type { ComposePreferences } from "../shared/mail-features.js";
 
 const dataPath = process.env.MAIL_DATA_DIR || ".data";
 mkdirSync(dataPath, { recursive: true, mode: 0o700 });
@@ -38,6 +39,7 @@ function decrypt(value: string): unknown {
   );
 }
 type Records = {
+  compose: ComposePreferences;
   account: StoredAccount;
   mail: Mail;
   label: GmailLabel;

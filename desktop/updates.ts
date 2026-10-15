@@ -11,6 +11,7 @@ import type { DownloadExecutorTask } from "electron-updater/out/AppUpdater.js";
 import type { DownloadedUpdateHelper } from "electron-updater/out/DownloadedUpdateHelper.js";
 import { parseUpdateInfo } from "electron-updater/out/providers/Provider.js";
 import type { UpdateCommand, UpdateReason, UpdateState } from "../shared/updates.js";
+import { trustedWindowSender } from "./navigation.js";
 
 const repository = "screen-devs/aggregate-mail";
 const latestRelease = `https://api.github.com/repos/${repository}/releases/latest`;
@@ -443,21 +444,13 @@ export class Updates {
   }
 }
 
-export function trustedUpdateSender(event: { sender: unknown; senderFrame: unknown }, contents: {
-  mainFrame: unknown; getURL: () => string;
-}, origin: string) {
-  if (event.sender !== contents || event.senderFrame !== contents.mainFrame) return false;
-  try { const url = new URL(contents.getURL()); return url.origin === origin && url.pathname === "/"; }
-  catch { return false; }
-}
-
 export function registerUpdateIpc(ipc: {
   handle: (channel: string, listener: (event: { sender: unknown; senderFrame: unknown }, ...args: unknown[]) => unknown) => void;
 }, contents: () => { mainFrame: unknown; getURL: () => string } | undefined, origin: string, updates: Updates) {
   for (const channel of ["update-state", "update-command"]) {
     ipc.handle(channel, (event, ...args) => {
       const sender = contents();
-      if (!sender || !trustedUpdateSender(event, sender, origin) ||
+      if (!sender || !trustedWindowSender(event, sender, origin) ||
           (channel === "update-state" ? args.length !== 0 : args.length !== 1 || !["check", "download", "install"].includes(args[0] as string)))
         throw new Error("Update request rejected.");
       return channel === "update-state" ? updates.snapshot() : updates.command(args[0] as UpdateCommand);

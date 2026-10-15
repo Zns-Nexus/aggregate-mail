@@ -27,7 +27,7 @@ import path from "node:path";
 import type { Server } from "node:http";
 import { editingMenu } from "./context-menu.js";
 import { menuPosition, nativeMenuItems, overlayColors, readWindowControls, writeWindowControls, type WindowControls } from "./window-chrome.js";
-import { isExternalLink, isLocalNavigation } from "./navigation.js";
+import { isExternalLink, isLocalNavigation, trustedWindowSender } from "./navigation.js";
 import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
 import type { Updates } from "./updates.js";
 import { canonicalKey, readCurrentRecord, migrateLegacyKey, MIGRATION_ERROR, type CurrentRecord } from "./keychain.js";
@@ -126,34 +126,34 @@ else {
   // Appearance switches the Windows material live: Mica tints from the
   // wallpaper, Acrylic blurs what is behind the window. macOS keeps vibrancy.
   ipcMain.on("window-material", (event, material: unknown) => {
-    if (!window || event.sender !== window.webContents || process.platform !== "win32") return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || process.platform !== "win32") return;
     if (material === "none" || material === "mica" || material === "acrylic")
       window.setBackgroundMaterial(material);
   });
   // Light, dark or system appearance: the native theme tints Mica, Acrylic and
   // macOS vibrancy, draws native menus, and decides what System reports.
   ipcMain.on("window-scheme", (event, mode: unknown) => {
-    if (!window || event.sender !== window.webContents) return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin)) return;
     if (mode === "system" || mode === "light" || mode === "dark") nativeTheme.themeSource = mode;
   });
   // The caption buttons can only be chosen when a window is created, so a
   // switch saves the choice and reopens the window in place.
   ipcMain.on("window-controls", (event, controls: unknown) => {
-    if (!window || event.sender !== window.webContents || isMac || (controls !== "mac" && controls !== "windows")) return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || isMac || (controls !== "mac" && controls !== "windows")) return;
     writeWindowControls(controlsFile, controls);
     if (controls !== windowControls) void reopenWindow?.();
   });
   // System caption buttons take the colors of the pane beneath them.
   ipcMain.on("window-overlay", (event, input: unknown) => {
     const colors = overlayColors(input);
-    if (!window || event.sender !== window.webContents || windowControls !== "windows" || !colors) return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || windowControls !== "windows" || !colors) return;
     window.setTitleBarOverlay({ ...colors, height: 52 });
   });
   // Mail rows use a native context menu; the renderer runs the chosen action.
   ipcMain.handle("mail-menu", (event, input: unknown, position: unknown) => new Promise<string | null>((resolve) => {
     const items = nativeMenuItems(input);
     const at = menuPosition(position);
-    if (!window || event.sender !== window.webContents || !items) { resolve(null); return; }
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || !items) { resolve(null); return; }
     let chosen = false;
     const template = items.flatMap((item) => [
       ...(item.separator ? [{ type: "separator" as const }] : []),
@@ -163,8 +163,8 @@ else {
     // Some platforms report the close before the click, so dismissal waits a moment.
     Menu.buildFromTemplate(template).popup({ window, ...at, callback: () => setTimeout(() => { if (!chosen) resolve(null); }, 100) });
   }));
-  ipcMain.on("window-command", (_event, command: string) => {
-    if (!window) return;
+  ipcMain.on("window-command", (event, command: unknown) => {
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin)) return;
     if (command === "minimize") window.minimize();
     else if (command === "maximize")
       window.isMaximized() ? window.unmaximize() : window.maximize();
@@ -337,7 +337,7 @@ else {
         (_contents, _permission, callback) => callback(false),
       );
       localSession.setPermissionCheckHandler(() => false);
-      const openWindow = async (previous?: BrowserWindow) => {
+      const openWindow = async (restore?: { bounds: Electron.Rectangle; maximized: boolean }) => {
         windowControls = isMac ? "mac" : readWindowControls(controlsFile);
         const nativeControls = windowControls === "windows";
         window = new BrowserWindow({
@@ -345,7 +345,7 @@ else {
           width: 1440,
           height: 900,
           // A window reopened for new controls keeps its place and size.
-          ...(previous && !previous.isMaximized() ? previous.getBounds() : {}),
+          ...(restore && !restore.maximized ? restore.bounds : {}),
           minWidth: 900,
           minHeight: 560,
           // macOS vibrancy and a Windows 11 material sit behind the page. The
@@ -378,7 +378,7 @@ else {
             session: localSession,
           },
         });
-        if (previous?.isMaximized()) window.maximize();
+        if (restore?.maximized) window.maximize();
         // Hidden windows catch up from the encrypted cache when shown again.
         window.on("show", notifyMailChanged);
         window.on("restore", notifyMailChanged);
@@ -465,14 +465,36 @@ else {
         window.webContents.once("did-finish-load", reveal);
         await window.loadURL(rendererOrigin);
       };
+      const closeWindow = () => new Promise<boolean>((resolve) => {
+        if (!window || window.isDestroyed()) { resolve(false); return; }
+        const closingWindow = window;
+        const closed = () => { window = null; finish(true); };
+        const finish = (accepted: boolean) => {
+          clearTimeout(timer);
+          closingWindow.removeListener("closed", closed);
+          finishUpdateClose = undefined;
+          if (!accepted) { quitting = false; updateClosing = false; }
+          resolve(accepted);
+        };
+        const timer = setTimeout(() => finish(false), 30000);
+        finishUpdateClose = finish;
+        closingWindow.once("closed", closed);
+        showWindow();
+        updateClosing = true;
+        quitting = true;
+        closingWindow.close();
+      });
       reopenWindow = async () => {
         const previous = window;
-        if (!previous) return;
-        await openWindow(previous);
-        previous.destroy();
+        if (!previous || updateClosing) return;
+        const restore = { bounds: previous.getBounds(), maximized: previous.isMaximized() };
+        // The existing close path asks before discarding an unsent or uncertain draft.
+        if (!await closeWindow()) return;
+        quitting = false; updateClosing = false;
+        await openWindow(restore);
       };
       if (!checking) {
-        const { Updates, registerUpdateIpc, trustedUpdateSender } = await import("./updates.js");
+        const { Updates, registerUpdateIpc } = await import("./updates.js");
         updates = new Updates({
           target: { platform: process.platform, arch: process.arch, version: app.getVersion(),
             packaged: app.isPackaged, appImage: process.env.APPIMAGE },
@@ -483,7 +505,7 @@ else {
             if (!window) { reject(new Error("Update renderer unavailable.")); return; }
             const request = randomBytes(16).toString("hex");
             const listener = (event: Electron.IpcMainEvent, response: unknown) => {
-              if (response !== request || !window || !trustedUpdateSender(event, window.webContents, rendererOrigin)) return;
+              if (response !== request || !window || !trustedWindowSender(event, window.webContents, rendererOrigin)) return;
               clearTimeout(timer);
               ipcMain.removeListener("update-drained", listener);
               resolve();
@@ -495,25 +517,7 @@ else {
             ipcMain.on("update-drained", listener);
             window.webContents.send("update-drain", request);
           }),
-          closeWindow: () => new Promise<boolean>((resolve) => {
-            if (!window || window.isDestroyed()) { resolve(false); return; }
-            const closingWindow = window;
-            const closed = () => { window = null; finish(true); };
-            const finish = (accepted: boolean) => {
-              clearTimeout(timer);
-              closingWindow.removeListener("closed", closed);
-              finishUpdateClose = undefined;
-              if (!accepted) { quitting = false; updateClosing = false; }
-              resolve(accepted);
-            };
-            const timer = setTimeout(() => finish(false), 30000);
-            finishUpdateClose = finish;
-            closingWindow.once("closed", closed);
-            showWindow();
-            updateClosing = true;
-            quitting = true;
-            closingWindow.close();
-          }),
+          closeWindow,
           restoreWindow: async () => {
             quitting = false; updateClosing = false;
             if (!window || window.isDestroyed()) await openWindow();

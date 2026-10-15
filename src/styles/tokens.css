@@ -6,6 +6,15 @@
   --radius-pane: 14px;
   --sidebar: 228px;
   --list-width: clamp(340px, 30vw, 480px);
+  --mail-row-low: 30px;
+  --mail-row-medium: 36px;
+  --mail-row-high: 50px;
+  --mail-row-compact: 26px;
+  --mail-row-card-low: 60px;
+  --mail-row-card-medium: 80px;
+  --mail-row-card-high: 80px;
+  --mail-row-card-compact: 54px;
+  --mail-group-height: 30px;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   /* A lightly damped spring: settles with a small overshoot, never loops. */

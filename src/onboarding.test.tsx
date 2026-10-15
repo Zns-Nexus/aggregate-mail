@@ -332,8 +332,16 @@ test("fallback warning collapses across mail and Settings and remains reopenable
   const api = mockApp();
   window.desktop!.platform = "linux";
   window.desktop!.credentialFallback = "linux-local";
+  window.desktop!.updates = {
+    state: async () => ({ phase: "current" }),
+    command: async () => { throw new Error("Opening the warning must not issue an update command"); },
+    onState: () => () => {}, onDrain: () => () => {},
+  };
   await render(<App />);
   assert.equal(container.querySelectorAll(".credential-fallback-notice").length, 1);
+  assert.equal(container.querySelectorAll(".update-notice").length, 1);
+  assert.ok(container.querySelector(".app-update-control .update-notice-trigger"));
+  assert.equal(container.querySelector(".credential-fallback-notice.update-notice"), null);
   assert.ok(container.querySelector('.list-pane .credential-fallback-notice[role="alert"]'));
   await act(async () => element<HTMLButtonElement>(container, '.credential-fallback-notice button').click());
   assert.equal(sessionStorage.getItem(FALLBACK_DISMISS_KEY), "1");

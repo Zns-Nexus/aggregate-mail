@@ -26,12 +26,20 @@ export function ChevronDown(props: IconProps) {
   return <Outline {...props}><path d="m6 9 6 6 6-6" /></Outline>;
 }
 
+export function ChevronUp(props: IconProps) {
+  return <Outline {...props}><path d="m6 15 6-6 6 6" /></Outline>;
+}
+
 export function ArrowRight(props: IconProps) {
   return <Outline {...props}><path d="M4 12h16m-6-6 6 6-6 6" /></Outline>;
 }
 
 export function ArrowLeft(props: IconProps) {
   return <Outline {...props}><path d="M20 12H4m6-6-6 6 6 6" /></Outline>;
+}
+
+export function Pin(props: IconProps) {
+  return <Outline {...props}><path d="m16 3 5 5-4 1-3 6-2-2-5 5-1-1 5-5-2-2 6-3Z" /></Outline>;
 }
 
 export function Check(props: IconProps) {

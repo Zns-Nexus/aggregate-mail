@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from "react";
-import { providerNames, type Account } from "../../shared/types";
+import type { Account } from "../../shared/types";
+import { accountLabel } from "../mail-ui";
 import { ProviderIcon } from "../mail/Avatar";
 import { relative, sidebarViews, viewNames, type View } from "../mail/format";
 import { settingsSections, type SettingsSection } from "../settings/sections";
 import { SlidingNav } from "../ui/SlidingNav";
-import { ChevronDown, Compose as ComposeIcon, Mail as MailIcon, Plus, Settings, SidebarIcon } from "../ui/icons";
+import { ChevronDown, Compose as ComposeIcon, Mail as MailIcon, Plus, Search, Settings, SidebarIcon } from "../ui/icons";
 import { captionDoubleClick, type Corner } from "./PaneHeader";
 import { TrafficLights } from "../ui/TrafficLights";
 
@@ -58,6 +59,7 @@ export function Sidebar({
     onAddAccount: () => void;
     onCompose: () => void;
     onSettings: () => void;
+    onCommands?: () => void;
     shortcut: (action: "compose" | "settings") => string;
     syncing: boolean;
     lastSync: number | null;
@@ -132,6 +134,11 @@ export function Sidebar({
               Settings
             </button>
           </SlidingNav>
+          {mail.onCommands && <div className="sidebar-group sidebar-primary">
+            <button aria-label="Commands" title="Commands (Cmd/Ctrl+K)" disabled={mail.blocked} onClick={mail.onCommands}>
+              <Search color="currentColor" size={16} />Commands
+            </button>
+          </div>}
           <SlidingNav activeKey={mail.view} label="Mail views" className="sidebar-group">
             <Heading id="mail" folded={folded.has("mail")} onFold={fold}>Mail</Heading>
             {!folded.has("mail") && sidebarViews.map(({ view, Icon }) => {
@@ -166,13 +173,7 @@ export function Sidebar({
             {!folded.has("accounts") && mail.accounts.map((account, index) => (
               <button
                 key={account.id}
-                title={
-                  mail.privacy
-                    ? providerNames[account.provider]
-                    : account.error
-                      ? `${account.email}: ${account.error}`
-                      : account.email
-                }
+                title={accountLabel(account, index, mail.privacy)}
                 className={mail.accountFilter === account.id ? "active" : undefined}
                 aria-pressed={mail.accountFilter === account.id}
                 disabled={mail.blocked}
@@ -180,9 +181,8 @@ export function Sidebar({
               >
                 {index < 9 && <kbd>{index + 1}</kbd>}
                 <ProviderIcon provider={account.provider} />
-                {/* Privacy mode numbers accounts instead of drawing bars, so they stay distinguishable. */}
                 <span className="sidebar-name">
-                  {mail.privacy ? `Account ${index + 1} · ${providerNames[account.provider]}` : account.email}
+                  {accountLabel(account, index, mail.privacy)}
                 </span>
                 {account.error && (
                   <i className="error-dot" aria-label="Needs attention" />

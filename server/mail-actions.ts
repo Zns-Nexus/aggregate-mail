@@ -39,6 +39,7 @@ export function runMailWork<T>(task: () => Promise<T>): Promise<T> {
 }
 
 export const messageActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.enum(["pin", "unpin"]) }).strict(),
   z.object({
     action: z.enum(["read", "archive", "snooze", "unsnooze", "trash"]),
     until: z
@@ -68,6 +69,13 @@ export async function updateMessage(
 ) {
   return runMailWork(async () => {
     const m = findMail(id);
+    if (input.action === "pin" || input.action === "unpin") {
+      const updated = { ...m };
+      if (input.action === "pin") updated.pinned = true;
+      else delete updated.pinned;
+      put("mail", m.id, updated);
+      return updated;
+    }
     if (input.action === "read" && !m.unread) return m;
     if (input.action === "trash") {
       const a = account(m.accountId);

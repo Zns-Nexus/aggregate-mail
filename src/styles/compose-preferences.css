@@ -1,0 +1,19 @@
+.compose-preference-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+}
+.compose-preference-controls label { flex: 1; }
+.compose-preference-controls .note { flex-basis: 100%; font-size: 12px; }
+.private .compose-form :is(input, textarea):not(:focus) { filter: blur(5px); }
+.compose-settings :is(input, textarea, select) { min-width: 0; max-width: 100%; }
+.compose-settings .stacked :is(input, textarea) { width: 100%; }
+.compose-settings textarea { resize: vertical; line-height: 1.45; }
+.compose-settings-actions { justify-content: flex-start; flex-wrap: wrap; }
+.compose-settings-save { display: grid; justify-items: start; gap: 8px; margin-top: 16px; }
+.compose-settings-save [role="alert"] { color: var(--danger); }
+.compose-settings-save [role="status"] { color: var(--text-3); }
+.compose-settings :is(input, textarea, select):focus-visible,
+.compose-preference-controls select:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
