@@ -84,7 +84,6 @@ export function Sidebar({
       inert={!open}
     >
       <div className={corner === "reserve" ? "sidebar-head reserve-lights" : "sidebar-head"} onDoubleClick={captionDoubleClick}>
-        {corner === "left" && <TrafficLights maximized={maximized} />}
         <button
           className="icon"
           aria-label="Hide sidebar"
@@ -94,6 +93,7 @@ export function Sidebar({
         >
           <SidebarIcon color="currentColor" size={16} />
         </button>
+        {corner === "left" && <TrafficLights maximized={maximized} />}
       </div>
       {settings ? (
         <div className="sidebar-content" key="settings">

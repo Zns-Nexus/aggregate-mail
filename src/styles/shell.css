@@ -29,7 +29,8 @@
   font-weight: 600;
   animation: fade-in 220ms var(--ease-out);
 }
-.pane-head > .icon:first-child {
+.pane-head > .icon:first-child,
+.sidebar-head > .icon:first-child {
   margin-left: -8px;
 }
 /* The mail header centers its search field across the pane. */
@@ -128,7 +129,6 @@
   gap: 8px;
   -webkit-app-region: no-drag;
 }
-.sidebar-head .traffic,
 .pane-head .traffic:not(.right) {
   margin-right: 10px;
 }

@@ -6,6 +6,8 @@
 
 - Limit macOS filesystem test fixtures to supported hosts while retaining portable protocol checks and Windows startup coverage.
 
+- Put the sidebar toggle first in the top-left corner, before drawn window controls, at the same spot whether the sidebar is open or closed. Tint the selected row with the accent while the list has focus instead of filling it, keeping the row's own text colors.
+
 - Let Windows and Linux choose between the drawn macOS-style window controls and the system's own caption buttons, switched from Settings, Appearance by reopening the window in place. Use native context menus for mail rows on the desktop. Make the email toolbar icon-only in Mail-style groups and add Move to Trash to it. Mark unread mail with an accent dot, divide rows with hairlines and fill the selected row with the accent while the list has focus. Tint sidebar icons with the accent and let its sections fold. Arrange Settings in System Settings-style groups.
 
 - Render quoted replies with one inset and bar per level instead of the browser's 40px margins on both sides, so deep threads no longer shrink to a narrow column. Center newsletter layouts that use `align="center"`, `<center>` or `margin: 0 auto`, read `ex` and `ch` lengths and borders in any word order. Move the filter controls into a popover under the Filters button, which stays lit while the list is filtered. Draw the Inbox categories as a larger segmented row that fills the list column beside the reader.

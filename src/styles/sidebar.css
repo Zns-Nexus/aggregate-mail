@@ -15,8 +15,8 @@
   width: 0;
   opacity: 0;
 }
-/* Same left inset as the main header, so the window controls and the
-   sidebar toggle stay in place when the sidebar opens or closes. */
+/* Same left inset as the main header, so the sidebar toggle and the window
+   controls after it stay in place when the sidebar opens or closes. */
 .sidebar-head {
   width: var(--sidebar);
   padding: 0 10px 0 20px;

@@ -62,24 +62,13 @@
     opacity: 1;
   }
 }
-/* Selection as in Mail: an accent fill while the list has focus, a gray wash otherwise. */
+/* Selection: an accent tint while the list has focus, a gray wash otherwise.
+   Text keeps its own colors, so it reads with every accent and mode. */
 .row.selected {
   background: var(--selected);
 }
 .list:focus-within .row.selected {
-  background: var(--accent);
-}
-.list:focus-within .row.selected :is(strong, .row-subject, .unread-dot) {
-  color: #fff;
-}
-.list:focus-within .row.selected :is(.row-preview, .row-label, time) {
-  color: rgba(255, 255, 255, 0.78);
-}
-.list:focus-within .row.selected .unread-dot {
-  background: #fff;
-}
-.list:focus-within .mail-row:has(.row.selected) .row-trash {
-  color: #fff;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 /* Unread mail carries a small accent dot in the row's left gutter. */
 .unread-dot {

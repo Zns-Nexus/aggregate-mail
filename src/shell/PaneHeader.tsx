@@ -19,15 +19,18 @@ export function captionDoubleClick(event: MouseEvent) {
  * window's caption: they drag the window, and the one in each corner carries
  * the window controls.
  */
-export function PaneHeader({ className, corner, maximized, children }: {
+export function PaneHeader({ className, corner, maximized, lead, children }: {
   className?: string;
   corner: Corner;
   maximized: boolean;
+  // Sits in the corner before drawn window controls (the sidebar toggle).
+  lead?: ReactNode;
   children?: ReactNode;
 }) {
   return (
     <header className={`pane-head${className ? ` ${className}` : ""}${corner === "reserve" ? " reserve-lights" : corner === "caption" ? " reserve-caption" : ""}`}
       onDoubleClick={captionDoubleClick}>
+      {lead}
       {corner === "left" && <TrafficLights maximized={maximized} />}
       {children}
       {corner === "right" && <TrafficLights right maximized={maximized} />}

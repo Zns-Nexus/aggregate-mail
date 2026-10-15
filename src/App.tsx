@@ -763,8 +763,7 @@ export function App() {
           />
         {settings ? (
           <div className="settings-pane">
-            <PaneHeader className="main-head" corner={corner("main")} maximized={maximized}>
-              {sidebarToggle}
+            <PaneHeader className="main-head" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
               <h1 className="pane-title">Settings</h1>
               <div className="pane-tools">{privacyButton}</div>
             </PaneHeader>
@@ -799,8 +798,7 @@ export function App() {
         ) : (
           <main className={split ? "workspace split" : "workspace"}>
             <section className="list-pane">
-              <PaneHeader className="main-head" corner={corner("main")} maximized={maximized}>
-                {sidebarToggle}
+              <PaneHeader className="main-head" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
                 <h1 className="pane-title">{viewNames[view]}</h1>
                 <div className="head-search">
                   {searching ? (
