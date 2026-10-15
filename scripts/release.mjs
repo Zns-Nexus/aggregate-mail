@@ -1,7 +1,5 @@
 // Cuts a release locally: bumps the version, builds the Windows installer,
 // prints its checksum, and publishes it to GitHub when a release lane exists.
-// GitCafe hosts the source but runs no CI and has no release downloads, so the
-// installer has to live somewhere that serves binaries.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";

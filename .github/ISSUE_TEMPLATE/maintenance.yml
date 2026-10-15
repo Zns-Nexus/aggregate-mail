@@ -1,13 +1,14 @@
 name: Maintenance task
 description: Track documentation, dependency or other repository maintenance.
 title: "[Maintenance]: "
+labels: ["chore"]
 body:
   - type: markdown
     attributes:
       value: |
-        Follow [CONTRIBUTING.md](https://github.com/Zns-Nexus/aggregate-mail/blob/main/CONTRIBUTING.md)
+        Follow [CONTRIBUTING.md](https://github.com/screen-devs/aggregate-mail/blob/main/CONTRIBUTING.md)
         for ownership and scope. Use the private path in
-        [SECURITY.md](https://github.com/Zns-Nexus/aggregate-mail/blob/main/SECURITY.md)
+        [SECURITY.md](https://github.com/screen-devs/aggregate-mail/blob/main/SECURITY.md)
         for vulnerabilities.
   - type: textarea
     id: task

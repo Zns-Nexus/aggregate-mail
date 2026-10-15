@@ -13,7 +13,7 @@ published as `Emc²-<version>-<os>-<arch>.<ext>`.
 ## Report a vulnerability
 
 Report privately through GitHub's [private vulnerability
-reporting](https://github.com/Zns-Nexus/aggregate-mail/security/advisories/new)
+reporting](https://github.com/screen-devs/aggregate-mail/security/advisories/new)
 (Security → Advisories → Report a vulnerability). Include the version, the
 platform, and the steps or proof of concept that show the problem.
 

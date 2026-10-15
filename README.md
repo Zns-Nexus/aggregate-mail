@@ -20,7 +20,7 @@ An installable desktop email client for Windows, with a macOS build target, base
 
 ## Install
 
-Download the newest published Windows setup installer from [Releases](https://github.com/Zns-Nexus/aggregate-mail/releases). The next release is `0.1.4`, published as `Emc²-0.1.4-win-x64.exe`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
+Download the newest published Windows setup installer from [Releases](https://github.com/screen-devs/aggregate-mail/releases), named `Emc²-<version>-win-x64.exe`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
 
 To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Emc².exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
@@ -35,7 +35,7 @@ xcode-select --install
 Clone the source with Git, install the locked dependencies and build the app:
 
 ```sh
-git clone https://github.com/Zns-Nexus/aggregate-mail.git
+git clone https://github.com/screen-devs/aggregate-mail.git
 cd aggregate-mail
 npm ci
 npm run package:mac:dir
@@ -244,6 +244,6 @@ The installer is unsigned, so Windows SmartScreen warns on first run. There is n
 
 The macOS Apple silicon candidate builds as a DMG and ZIP. Its packaged startup check passed through the desktop launch path, including encrypted database access, renderer loading, native menu roles and API isolation. A maintainer confirmed the inbox window was visible. Intel runtime, live account operations and downloaded-app Gatekeeper acceptance remain unverified.
 
-Strict TypeScript and production builds pass. Tests cover sender-rule precedence, visual classification, header validation, message-link rendering and privacy, desktop navigation restrictions, configuration preservation, and MCP authentication, mail reads and mocked reply operations. `node scripts/check-mcp.mjs` checks an MCP initialize/tools-list handshake against a separate temporary server and verifies requests without a token get 401. Development and packaged native startup checks passed, including encrypted database access and rejection of requests outside the desktop session. The email-link repair was tested in the T3 Code browser with synthetic mail: mouse and keyboard activation, quoted URLs, address privacy and escaped HTML. Native Windows and macOS browser handoff were not tested for this repair. Real account sign-in, mailbox operations and delivery remain unverified until provider credentials are supplied.
+Strict TypeScript and production builds pass. Tests cover sender-rule precedence, visual classification, header validation, message-link rendering and privacy, desktop navigation restrictions, configuration preservation, and MCP authentication, mail reads and mocked reply operations. `node scripts/check-mcp.mjs` checks an MCP initialize/tools-list handshake against a separate temporary server and verifies requests without a token get 401. Development and packaged native startup checks passed, including encrypted database access and rejection of requests outside the desktop session. The email-link repair was tested in a browser with synthetic mail: mouse and keyboard activation, quoted URLs, address privacy and escaped HTML. Native Windows and macOS browser handoff were not tested for this repair. Real account sign-in, mailbox operations and delivery remain unverified until provider credentials are supplied.
 
 Video frames at 25s, 65s, 104s, 140s and 178s were inspected and measured at native resolution. The transcript is `.reference/transcript.txt`. The video's future Cloudflare mailbox idea is outside this version.
