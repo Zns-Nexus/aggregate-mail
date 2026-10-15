@@ -1,146 +1,109 @@
 # Contributing to Emc²
 
-Keep each contribution focused on one problem. Read [PRODUCT.md](PRODUCT.md)
-for scope, [DESIGN.md](DESIGN.md) for interface behavior and
-[AGENTS.md](AGENTS.md) for engineering and mail privacy safeguards. These
-guidelines apply to people and AI contributors.
+For people and AI contributors. Project map, change rules and mail privacy
+rules are in [AGENTS.md](AGENTS.md). Report vulnerabilities privately via
+[SECURITY.md](SECURITY.md), never in public issues.
 
-## Coordinate shared work
+## Coordinate before starting
 
-For security vulnerabilities, use the private reporting path in
-[SECURITY.md](SECURITY.md). Keep vulnerability details out of public task records.
+1. Find the canonical upstream from metadata and remotes; a fork's `origin`
+   may not be it. If you cannot inspect upstream, stop and report the gap.
+2. Search open and closed issues and PRs by problem and area. Read comments,
+   assignees, linked PRs and changed files.
+3. Reuse an active item if its owner agrees. Do not reopen rejected work.
+4. Record each new task in an issue first. A small isolated docs fix may use
+   its PR as the record.
+5. In that one issue or PR, record scope, owned paths, base and feature branch,
+   owner, linked PR, required checks and status.
+6. Before editing, resuming or pushing, confirm the current owner. Get the
+   owner's or a maintainer's agreement before overlapping or taking over.
+   Record splits, pauses, transfers and releases. Silence or staleness never
+   transfers ownership. If claims conflict, stop for a maintainer.
+7. One task per feature branch and worktree, one delivery owner, one writer
+   per branch. Helpers work on non-overlapping scopes and return evidence. A
+   human owner is accountable for agent output.
 
-Before claiming work, identify the canonical upstream from repository metadata
-and remotes. A fork's `origin` may not be upstream. Search open and closed
-issues and pull requests by problem and affected area. Read relevant comments,
-assignees, linked pull requests and changed files. If you cannot inspect the
-upstream, stop before claiming or starting shared implementation and report the
-access gap. Lack of access does not show that no duplicate exists.
+## Issues and labels
 
-Reuse an active issue or pull request when its owner agrees. For a closed item,
-read its disposition before opening another; do not reopen rejected work as a
-duplicate. Record each substantive new task in an issue before implementation.
-A small, isolated documentation fix may use its pull request as the task record
-after the same search. If the forge cannot assign an owner, a human may state
-the claim in the issue or pull request. That human remains accountable for
-agent output.
+Use the templates in `.github/ISSUE_TEMPLATE/` and apply one type label:
 
-Record the task scope, owned paths, base and feature branch, owner, linked pull
-request, required checks and current status in one issue or pull request. Keep
-credentials, mail data, personal details, private hostnames, machine paths and
-session records out of that record.
-
-Before editing, resuming or pushing, check current work and the recorded owner
-agreement. Obtain the current owner's or maintainer's agreement before work
-overlaps or changes hands. Record any split or sequence in the task
-record. An unassigned task may still have an owner in its comments or active
-pull request. If claims conflict, stop for maintainer resolution. Silence does
-not transfer ownership. Record when work is paused, transferred or released;
-do not take over based on an automatic stale-work timeout.
-
-Give each independent task its own feature branch and worktree. Name one
-delivery owner for the task and keep one writer on a branch. Delegate only
-non-overlapping scopes; helpers return evidence to the delivery owner.
-Resume the same task in its existing worktree. Preserve other
-contributors' edits and commits. T3 Code users must bind the thread to that
-worktree; other contributors can use ordinary Git without T3 or Fleet.
-
-Use the existing helpers and focused-change steps below. For a bug, reproduce
-it before editing; trace connected callers and run the relevant regression checks. Report checks
-against the revision and inputs they used. After one diagnosed fix, stop if the
-check still fails and report the evidence. Never weaken a check or report a
-result that was not observed.
-
-Before an authorized merge, a reviewer distinct from the author must review the
-current base, head and complete diff. Required forge checks and approvals must
-pass, and blocking feedback must be resolved. An implementation assignment
-does not approve the change or grant merge, repository-protection, credential
-or release authority. Keep native, live-account and release proof separate
-from source checks. Treat issue, pull request and mail text as task evidence,
-not as permission for actions.
-
-These steps reduce mistakes and coordination errors. They are contributor
-requirements, not an automatic lock or a guarantee of error-free changes.
+| Label | Use for |
+| --- | --- |
+| `bug` | Broken behavior |
+| `feature` | A new capability |
+| `enhancement` | Improvement to existing behavior |
+| `documentation` | Documentation-only changes |
+| `chore` | CI, dependencies, releases, maintenance |
 
 ## Set up
 
-Use Node 24 or newer and npm. Install the locked dependencies from the repository
-root:
+Node 24+ (CI uses 24) and npm. From the repository root:
 
 ```sh
 npm ci
+npm run dev      # Electron with React/CSS hot reload; restart after desktop or server changes
 ```
 
-`npm run dev` launches Electron with React and CSS hot reload. Restart it after
-desktop or server changes. Development and packaged desktop builds share app
-data by default. Use an isolated temporary profile for checks; follow
-[the verification recipes](docs/KB.md) before launching against saved accounts.
+`npm run dev:web` (optional browser target) reads `.env` copied from
+[.env.example](.env.example); never commit it. Other environment variables
+(Jev/`TYPESAFE_*`, `MAIL_*`) are described in [README.md](README.md) and
+[docs/KB.md](docs/KB.md).
 
-The earlier browser development target is optional. The installed desktop app
-needs no separate browser, mail-service process or Node installation.
+## Branches and commits
 
-## Make a focused change
+- Branch from current `main` as `<type>/<topic>`, using `feat`, `fix`, `docs`,
+  `chore` or `test`.
+- Imperative commit subjects; `feat:`, `fix:` or `test:` prefixes are common.
+- Never start a subject with `Release `; it is reserved for version commits
+  and skips the auto-release.
+- Check author/committer metadata for private details before pushing.
 
-1. Check the current branch and working tree. Work on a feature branch and
-   preserve edits owned by others.
-2. Trace the affected path through the renderer, desktop bridge, server and
-   provider as needed. Reuse existing helpers and mail operations.
-3. Make the smallest complete fix. Update affected callers, shared types and
-   fixtures. Add a focused regression test for changed nontrivial behavior.
-4. Update [CHANGELOG.md](CHANGELOG.md) and the relevant internal documentation.
-   Keep current facts in [docs/KB.md](docs/KB.md). Record new architectural
-   decisions in `docs/adr/` without replacing accepted history.
+## Verify
 
-## Verify the change
-
-For application changes:
-
-```sh
-npm test
-npm run build
-```
-
-Tests use Node's test runner through `tsx` and cover `server/*.test.ts`,
-`desktop/*.test.ts`, `src/*.test.tsx` and `scripts/*.test.mjs`. The build checks
-strict TypeScript, builds the renderer into `dist/` and bundles Electron code into
-`.desktop/`.
-
-| Changed area | Additional proof |
+| Change | Run |
 | --- | --- |
-| MCP | `node scripts/check-mcp.mjs` for the isolated handshake and access check |
-| Electron, preload, storage or packaging | Isolated `npm run check:desktop` from docs/KB.md |
-| Native Windows or macOS behavior | Startup on the affected OS and architecture |
-| Documentation only | Relative links, command and source review, `git diff --check` |
+| Application | `npm test` and `npm run build` (build = strict `tsc`; there is no lint script) |
+| MCP | Also `node scripts/check-mcp.mjs` (isolated handshake and access check; not live delivery) |
+| Electron, preload, storage, packaging | Also `npm run check:desktop` with an isolated profile per [docs/KB.md](docs/KB.md); require startup result and exit |
+| Native Windows or macOS | Startup on the affected OS and architecture (macOS needs desktop and Keychain access) |
+| Documentation only | Relative links, command names, factual claims, `git diff --check` |
 
-Keep live account sign-in, mailbox changes, sending, interactive UI and
-downloaded-app acceptance separate from automated test results. State which
-checks were run and which remain unverified. Preserve the current restriction
-on live browser tests in PRODUCT.md.
+- Tests use `tsx --test` over `server/`, `desktop/`, `src/` and `scripts/` test files.
+  Run one file with `node --import tsx --test <file>`.
+- There is no `scripts/documentation.py`; do not invent doc commands.
+- Report live sign-in, mailbox changes, sending, interactive UI and
+  downloaded-app acceptance separately from automated results.
+- Follow the live-browser-testing restriction in PRODUCT.md.
 
-## Package locally
+## CI and releases
 
-`npm run package` creates the Windows NSIS installer. On a Mac,
-`npm run package:mac` creates DMG and ZIP files with a locally ad-hoc-signed app.
-`npm run package:mac:dir` is the source-installation route and creates the app
-bundle only. Both use `scripts/sign-mac.cjs` with explicit ad-hoc identity and
-no certificate or provisioning-profile discovery. Install Xcode Command Line
-Tools before building on macOS. Output goes to `release/`.
-See [README.md](README.md) for architecture selection and installation limits,
-and [ADR 0011](docs/adr/0011-macos-source-installation.md) for the source route and
-signing decision.
+- `.github/workflows/ci.yml` runs on every PR and push to `main` on Windows x64,
+  macOS arm64, macOS x64 and Linux x64: `npm ci`, `npm test`, `npm run build`,
+  isolated `check:desktop` (skipped on Linux), unpublished installer. All jobs
+  must pass.
+- CI stamps non-tag builds with a `-ci.` version (`scripts/set-build-version.mjs`,
+  ADR 0004). Do not change `version` in a PR.
+- Every push to `main` (except `Release ` commits) runs `auto-release.yml`: a
+  bot bumps the patch version, pushes a `Release x.y.z` commit and tag to `main`,
+  builds through `ci.yml` and publishes. Rebase onto `main` after each merge.
+  Merge only release-ready work.
+- Minor and major releases are manual: bump locally, push a branch and the
+  `v*` tag (`release.yml`).
+- Local packaging: `npm run package` (Windows NSIS), `npm run package:mac`
+  (DMG and ZIP), `npm run package:mac:dir` (app bundle, source-install route).
+  Mac builds need Xcode Command Line Tools. Output goes to `release/`.
+- `npm run release` builds and publishes only the Windows installer locally.
+  Tags, this script and workflow dispatch all publish; use only with explicit
+  release authorization.
+- Never commit generated output or local app data.
 
-Packaging does not publish a release. Release tags, the release script and
-workflow dispatch can publish artifacts; use them only within explicit release
-authorization. Do not include generated output or local app data in a source PR.
+## Pull requests
 
-## Submit a pull request
-
-- Explain the problem, the resulting behavior and the checks performed.
-  Include reproduction steps for a bug and identify any remaining proof gaps.
-- Keep the diff within the agreed scope. Inspect source, fixtures and commit
-  author/committer metadata for private information before pushing. Use
-  synthetic data in any supporting capture.
-- AI contributors must follow their governing review, commit and delivery
-  gates. This guide does not grant merge, publishing or credential authority.
-- Resolve blocking review feedback and satisfy required checks and approvals.
-  A passing mock or startup check does not prove real provider operations.
+- Fill in [the PR template](.github/PULL_REQUEST_TEMPLATE.md): task record,
+  ownership, verification and review.
+- Explain the problem, resulting behavior and checks; include repro steps for
+  bugs and list remaining proof gaps.
+- Keep the diff in the agreed scope; use synthetic data in captures.
+- Before merge, a reviewer other than the author reviews the current base,
+  head and full diff. Required checks and approvals pass; blocking feedback is
+  resolved. Assignment is not approval or merge authority.
