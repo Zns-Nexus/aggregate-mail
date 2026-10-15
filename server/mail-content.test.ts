@@ -45,3 +45,39 @@ test("links use explicit HTTP schemes and privacy catches encoded tokens, malfor
     assert.equal(privateMailLink(value, redact), true, value);
   assert.equal(privateMailLink("https://example.com/public?q=one%20two", redact), false);
 });
+
+test("inline style grammar keeps sender layout modes and floats but never hides content", () => {
+  assert.deepEqual(mailStyle("display:inline-block;float:right;clear:both;vertical-align:middle"), {
+    display: "inline-block", float: "right", clear: "both", verticalAlign: "middle",
+  });
+  for (const value of ["block", "inline", "table", "table-row", "table-cell"])
+    assert.deepEqual(mailStyle(`display:${value}`), { display: value });
+  assert.deepEqual(mailStyle("display:none;display:contents;display:flex;float:inline-start;visibility:hidden"), {});
+});
+
+test("inline style grammar accepts !important declarations, which newsletters use throughout", () => {
+  assert.deepEqual(mailStyle("text-decoration:none !important;display:inline-block!important;width:24px ! important;color:#333 !IMPORTANT"), {
+    textDecoration: "none", display: "inline-block", width: "24px", color: "#333",
+  });
+  assert.deepEqual(mailStyle("display:none !important;background:url(x) !important"), {});
+});
+
+test("newsletter-depth tables parse instead of falling back to plain text", () => {
+  // Real job-alert digests nest about 50 levels of tables and links.
+  assert.notEqual(parseMailContent("<table><tr><td>".repeat(20) + "text"), null);
+});
+
+test("zero dimensions are dropped so hidden preview text reads as one line, not one letter per line", () => {
+  assert.deepEqual(mailStyle("visibility:hidden;height:0px;max-height:0;width:0px;overflow:hidden;opacity:0"), {});
+  assert.deepEqual(mailStyle("width:0%;max-width:0em;height:24px"), { height: "24px" });
+});
+
+test("inline style grammar reads Gmail quote insets, any-order borders and centered columns", () => {
+  assert.deepEqual(mailStyle("margin:0px 0px 0px 0.8ex;border-left:1px #ccc solid;padding-left:1ex"), {
+    margin: "0px 0px 0px 6.4px", borderLeft: "1px solid #ccc", paddingLeft: "8px",
+  });
+  assert.deepEqual(mailStyle("border-left:1px solid rgb(204, 204, 204);margin:0 auto"), {
+    borderLeft: "1px solid rgb(204, 204, 204)", margin: "0 auto",
+  });
+  assert.deepEqual(mailStyle("border:solid #ccc;padding:0 auto;border-top:1px solid url(x)"), { border: "1px solid #ccc" });
+});

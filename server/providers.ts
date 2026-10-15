@@ -105,13 +105,22 @@ export function oauth() {
     `${process.env.APP_URL || "http://127.0.0.1:5173"}/api/oauth/google/callback`,
   );
 }
-function gmail(a: StoredAccount) {
+function gmail(a: StoredAccount, timeout = 30000) {
   const auth = oauth();
   auth.setCredentials({ refresh_token: a.credentials.refreshToken });
-  auth.transporter.defaults.timeout = 30000;
+  auth.transporter.defaults.timeout = timeout;
   auth.transporter.defaults.retry = false;
   auth.transporter.defaults.retryConfig = { retry: 0 };
   return google.gmail({ version: "v1", auth });
+}
+
+export async function gmailHistoryId(a: StoredAccount): Promise<string> {
+  const result = await syncOperation(a.provider, "list", () => gmail(a, 10000).users.getProfile(
+    { userId: "me", fields: "historyId" }, { timeout: 10000, retry: false },
+  ));
+  const id = result.data.historyId;
+  if (typeof id !== "string" || !/^\d+$/.test(id)) throw new Error("Gmail did not return a mailbox revision.");
+  return id;
 }
 
 export async function listGmailLabels(a: StoredAccount): Promise<GmailLabel[]> {

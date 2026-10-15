@@ -1,0 +1,25 @@
+/* Narrow windows. The app removes whole panes itself (see useMedia in App.tsx),
+   so the window controls follow the pane in each corner; these rules only
+   tighten spacing. */
+@media (max-width: 1280px) {
+  .message {
+    padding: 24px 28px 64px;
+  }
+}
+@media (max-width: 760px) {
+  .message {
+    padding: 24px 18px 48px;
+  }
+  .settings-column {
+    padding: 20px 16px 40px;
+  }
+  .stacked .row-preview {
+    padding-left: 0;
+  }
+  .row-line strong {
+    width: auto;
+  }
+  .provider-row strong {
+    width: 96px;
+  }
+}

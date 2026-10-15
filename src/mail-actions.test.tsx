@@ -41,7 +41,7 @@ async function mount() {
   };
   let changed: (() => void) | undefined;
   (dom.window as unknown as Window).desktop = {
-    platform: "linux", oauthUrl: "", windowCommand() {}, onNavigation: () => () => {},
+    platform: "linux", materials: false, oauthUrl: "", windowCommand() {}, onNavigation: () => () => {},
     onWindowState: () => () => {}, onAccountConnected: () => () => {},
     onMailChanged: (callback) => { changed = callback; return () => { changed = undefined; }; },
   };
@@ -97,10 +97,11 @@ async function mount() {
     return event;
   };
   const row = (id = "a:1:5") => container.querySelector<HTMLButtonElement>(`[id='mail-${id}']`)!;
+  const trash = (id = "a:1:5") => button("Move to Trash", row(id).parentElement!);
   const toolbar = () => container.querySelector<HTMLElement>(".mail-actions")!;
   const dialog = () => container.querySelector<HTMLElement>('[role="dialog"]')!;
   return {
-    state, container, button, click, key, row, toolbar, dialog, mutations,
+    state, container, button, click, key, row, trash, toolbar, dialog, mutations,
     refresh: async () => { await act(async () => changed?.()); },
     open: async (id = "a:1:5") => { await click(row(id)); await key("Enter", row(id)); },
     // JSDOM has no native button default action; model Enter after dispatching the key.
@@ -199,13 +200,13 @@ test("pointer Snooze and keyboard Return to inbox use the local message action",
     await app.activate(app.button("Return to inbox", app.toolbar()));
     assert.deepEqual(app.mutations.at(-1), { id: "b:1:5", action: "unsnooze" });
     assert.equal(app.state.messages.find((mail) => mail.id === "b:1:5")!.snoozedUntil, null);
-    await app.click(app.button("Important3"));
+    await app.click(app.button("Inbox3"));
     await app.key("s");
     assert.equal(app.dialog().getAttribute("aria-label"), "Snooze");
     await app.key("Escape");
     assert.equal(app.dialog(), null);
-    await app.click(app.button("Done", app.toolbar()));
-    assert.equal(app.mutations.at(-1)!.action, "archive", "Done retains archive semantics");
+    await app.click(app.button("Archive", app.toolbar()));
+    assert.equal(app.mutations.at(-1)!.action, "archive");
   } finally { await app.close(); }
 });
 
@@ -214,14 +215,14 @@ test("Trash confirmation is private, cancelable and keyboard accessible; success
   try {
     await app.click(app.button("Hide personal information"));
     await app.click(app.row());
-    await app.activate(app.button("Move to Trash", app.toolbar()));
+    await app.activate(app.trash());
     assert.equal(app.mutations.length, 0);
     assert.doesNotMatch(app.dialog().outerHTML, /Private Reader|reader@example.com|sender@example.com/);
     assert.doesNotMatch(app.toolbar().outerHTML, /Private Reader|reader@example.com/);
     await app.click(app.button("Cancel", app.dialog()));
     assert.equal(app.mutations.length, 0);
     assert.ok(app.row());
-    await app.click(app.button("Move to Trash", app.toolbar()));
+    await app.click(app.trash());
     const cancel = app.button("Cancel", app.dialog());
     cancel.focus();
     const tab = await app.key("Tab", cancel, { shiftKey: true });
@@ -253,7 +254,9 @@ test("failed reader Trash keeps mail visible and never retries or claims success
   try {
     await app.open();
     app.failTrash(true);
-    await app.click(app.button("Move to Trash", app.toolbar()));
+    await act(async () => app.container.querySelector<HTMLElement>(".message")!
+      .dispatchEvent(new app.container.ownerDocument.defaultView!.MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+    await app.click(app.button("Move to Trash", app.container.querySelector('[role="menu"]')!));
     await app.click(app.button("Move to Trash", app.dialog()));
     assert.ok(app.container.querySelector(".message"));
     assert.ok(app.dialog());
@@ -273,12 +276,31 @@ test("archived IMAP without Message-ID disables Trash with an accessible explana
     app.state.messages[0].messageId = undefined;
     await app.refresh();
     await app.click(app.button("Archive"));
-    const trash = app.button("Move to Trash", app.toolbar());
+    const trash = app.trash();
     assert.equal(trash.disabled, true);
-    assert.equal(trash.getAttribute("aria-describedby"), "trash-unavailable");
-    assert.match(app.container.querySelector("#trash-unavailable")!.textContent!, /Message-ID is missing.*provider/);
+    assert.match(trash.getAttribute("aria-description")!, /Message-ID is missing.*provider/);
     await app.click(trash);
     assert.equal(app.dialog(), null);
     assert.equal(app.mutations.length, 0);
+  } finally { await app.close(); }
+});
+
+test("row Trash targets an unselected email without opening or marking it read", async () => {
+  const app = await mount();
+  try {
+    await app.click(app.row("a:1:6"));
+    const trash = app.trash("b:1:5");
+    assert.ok(trash.querySelector("svg"));
+    assert.equal(trash.textContent, "");
+    assert.equal(app.container.querySelector("button button"), null);
+    await app.activate(trash);
+    assert.equal(app.container.querySelector(".message"), null);
+    assert.equal(app.row("a:1:6").getAttribute("aria-current"), "true");
+    assert.equal(app.mutations.length, 0);
+    await app.click(app.button("Move to Trash", app.dialog()));
+    assert.deepEqual(app.mutations, [{ id: "b:1:5", action: "trash" }]);
+    assert.ok(app.row("a:1:5"));
+    assert.ok(app.row("a:1:6"));
+    assert.equal(app.row("b:1:5"), null);
   } finally { await app.close(); }
 });

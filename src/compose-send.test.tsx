@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ComposePanel, sendCompose, type Compose } from "./App";
+import { ComposePanel, sendCompose, type Compose } from "./compose/ComposePanel";
 
 const initial: Compose = {
   accountId: "synthetic",

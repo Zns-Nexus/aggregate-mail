@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
-import type { Category } from "../shared/types";
+import type { InboxTab } from "../shared/inbox-tabs";
 
 export type MailLocation = {
-  view: Category | "snoozed" | "archive";
+  view: "inbox" | "snoozed" | "archive";
+  // The Inbox category tab; Snoozed and Archive ignore it.
+  tab: InboxTab;
   accountFilter: string;
   labelFilter: string;
   query: string;
@@ -15,7 +17,7 @@ export type MailLocation = {
 
 export function useMailNavigation() {
   const [location, update] = useState<MailLocation>({
-    view: "important", accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest", selectedId: null, opened: false,
+    view: "inbox", tab: "primary", accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest", selectedId: null, opened: false,
   });
   // Keep message IDs and search text in memory, never in URLs or storage.
   const history = useRef({ entries: [location], index: 0, editingSearch: false });

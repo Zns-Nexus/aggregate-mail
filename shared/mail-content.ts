@@ -2,7 +2,8 @@ import { Parser } from "htmlparser2";
 
 export const MAIL_HTML_LIMIT = 256_000;
 export const MAIL_NODE_LIMIT = 4_000;
-export const MAIL_DEPTH_LIMIT = 40;
+// Newsletters nest tables about 50 deep; the node limit bounds the total work.
+export const MAIL_DEPTH_LIMIT = 96;
 
 // Keep decoded source bytes intact inside the limit; larger mail uses its text body.
 export function boundedMailHtml(value: string | false | undefined): string | null {
@@ -15,7 +16,7 @@ export type MailContentNode = string | {
   children: MailContentNode[];
 };
 
-const allowedTags = new Set(("div span p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del " +
+const allowedTags = new Set(("div span p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del center " +
   "blockquote pre code ul ol li table thead tbody tfoot tr td th caption colgroup col a img font").split(" "));
 const droppedTags = new Set(("head script style title iframe frame frameset object embed svg math " +
   "form input button select option textarea template noscript audio video source link meta base").split(" "));
@@ -67,7 +68,8 @@ export function mailStyle(value: string): Record<string, string | number> {
     const colon = declaration.indexOf(":");
     if (colon < 0) continue;
     const name = declaration.slice(0, colon).trim().toLowerCase();
-    const input = declaration.slice(colon + 1).trim().toLowerCase();
+    // Inline styles cannot be overridden here, so the priority flag carries no meaning.
+    const input = declaration.slice(colon + 1).trim().toLowerCase().replace(/\s*!\s*important$/, "");
     let output: string | number | null = null;
     if (["color", "background-color", "border-color"].includes(name)) output = color(input);
     if (name === "background") output = color(input);
@@ -79,19 +81,26 @@ export function mailStyle(value: string): Record<string, string | number> {
     if (name === "text-decoration" && /^(none|underline|line-through)$/.test(input)) output = input;
     if (name === "white-space" && /^(normal|pre-wrap|pre-line)$/.test(input)) output = input;
     if (name === "border-collapse" && /^(collapse|separate)$/.test(input)) output = input;
+    // Layout modes that newsletters use for columns and icon rows. Values that
+    // hide content (none, visibility) stay rejected so all sender text is visible.
+    if (name === "display" && /^(block|inline|inline-block|table|table-row|table-cell)$/.test(input)) output = input;
+    if (name === "float" && /^(left|right|none)$/.test(input)) output = input;
+    if (name === "clear" && /^(left|right|both|none)$/.test(input)) output = input;
     if (name === "line-height") {
       if (/^\d+(?:\.\d+)?$/.test(input) && Number(input) >= 1 && Number(input) <= 3) output = input;
       else output = length(input, 96);
     }
-    if (/^(width|max-width|height|max-height)$/.test(name)) output = length(input, 1200, name.includes("width"));
+    if (/^(width|max-width|height|max-height)$/.test(name)) {
+      output = length(input, 1200, name.includes("width"));
+      // Zero boxes hide text (preview lines) and would wrap it one letter per line.
+      if (output !== null && parseFloat(output) === 0) output = null;
+    }
     if (/^(margin|padding)(-(top|right|bottom|left))?$/.test(name)) {
-      const parts = input.split(/\s+/).map((part) => length(part, 48));
+      // `margin: 0 auto` is how most newsletters center their column.
+      const parts = input.split(/\s+/).map((part) => part === "auto" && name.startsWith("margin") ? part : length(part, 48));
       if (parts.length <= 4 && parts.every((part) => part !== null)) output = parts.join(" ");
     }
-    if (name === "border" || /^border-(top|right|bottom|left)$/.test(name)) {
-      const match = /^(\d+(?:\.\d+)?px) (solid|dashed|dotted) (.+)$/.exec(input);
-      if (match && length(match[1], 4) && color(match[3])) output = input;
-    }
+    if (name === "border" || /^border-(top|right|bottom|left)$/.test(name)) output = border(input);
     if (output !== null) {
       const property = (name === "background" ? "background-color" : name)
         .replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
@@ -106,12 +115,30 @@ function color(value: string): string | null {
 }
 function length(value: string, maximum: number, percent = false): string | null {
   if (value === "0") return "0";
-  const match = /^(\d+(?:\.\d+)?)(px|pt|em|rem|%)$/.exec(value);
+  const match = /^(\d*\.?\d+)(px|pt|em|rem|ex|ch|%)$/.exec(value);
   if (!match) return null;
   const amount = Number(match[1]);
   if (match[2] === "%") return percent && amount <= 100 ? value : null;
-  const pixels = amount * (match[2] === "pt" ? 4 / 3 : ["em", "rem"].includes(match[2]) ? 16 : 1);
+  // Mail uses ex and ch for quote insets; at the 16px body size each is about half an em.
+  const scale = { px: 1, pt: 4 / 3, em: 16, rem: 16, ex: 8, ch: 8 }[match[2] as "px"];
+  const pixels = Math.round(amount * scale * 100) / 100;
   return pixels <= maximum ? `${pixels}px` : null;
+}
+// A border shorthand in any word order, as Gmail writes `1px #ccc solid`. The
+// result is always `width style color`, so the renderer can swap the color.
+function border(value: string): string | null {
+  const functional = /(?:rgba?|hsla?)\([^)]*\)/.exec(value);
+  let colorValue = functional ? color(functional[0]) : null;
+  if (functional && !colorValue) return null;
+  let width: string | null = null, style: string | null = null;
+  const rest = functional ? value.replace(functional[0], " ") : value;
+  for (const token of rest.trim().split(/\s+/)) {
+    if (!style && /^(solid|dashed|dotted)$/.test(token)) style = token;
+    else if (!width && /\d/.test(token) && length(token, 4) !== null) width = length(token, 4);
+    else if (!colorValue && color(token)) colorValue = token;
+    else return null;
+  }
+  return style && colorValue ? `${width === "0" ? "0px" : width ?? "1px"} ${style} ${colorValue}` : null;
 }
 
 export function mailLink(value: string): string | null {

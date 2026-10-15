@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { act, useState } from "react";
 import { JSDOM } from "jsdom";
-import { InteractionSettings } from "./InteractionSettings";
+import { InteractionSettings } from "./settings/InteractionSettings";
 import { defaults, interactionActions, matches, read, save, shortcutFromEvent, shortcutLabel, validateShortcut, type InteractionPreferences } from "./interaction";
 
 const copy = () => structuredClone(defaults);

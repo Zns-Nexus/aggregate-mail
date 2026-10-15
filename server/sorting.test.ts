@@ -32,7 +32,7 @@ test("security remains prominent in Other, promotions stay compact", () => {
       },
       [],
     ),
-    { category: "other", relevance: 3, reason: "Account or security alert" },
+    { category: "important", relevance: 3, reason: "Account or security alert" },
   );
   assert.equal(
     sortMail(

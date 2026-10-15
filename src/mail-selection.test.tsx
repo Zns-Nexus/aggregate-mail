@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Mail } from "../shared/types";
-import { selectMail } from "./App";
+import { selectMail } from "./mail-ui";
 
 const openedMail: Mail = {
   id: "account-a:mail-a",

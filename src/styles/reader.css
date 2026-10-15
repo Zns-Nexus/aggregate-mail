@@ -1,0 +1,230 @@
+/* The opened email: actions, header, body, images and formatted sender content. */
+.message {
+  max-width: 820px;
+  padding: 28px 36px 72px;
+  margin: 0 auto;
+  width: 100%;
+}
+/* Actions for the selected or opened email: quiet tools with an icon and a label. */
+.mail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+/* Icon-only tools in groups, as in Mail's toolbar; names are labels and tooltips. */
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.tool-group + .tool-group {
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+.tool {
+  width: 32px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-control);
+  color: var(--text-2);
+  transition:
+    background-color 140ms var(--ease-out),
+    color 140ms var(--ease-out);
+}
+.tool:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.tool.reader-close-hint {
+  width: auto;
+  gap: 6px;
+  padding: 0 8px;
+}
+.mail-actions > span {
+  margin-left: 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.mail-actions > span:empty {
+  display: none;
+}
+.mail-actions .reader-close-hint {
+  margin-left: auto;
+  color: var(--text-3);
+}
+.reader-close-hint kbd {
+  font-size: 12px;
+}
+/* Beside the list, the actions fill the reader's header. */
+.reader-head {
+  padding-left: 10px;
+}
+.reader-head .mail-actions {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  padding: 0;
+  border-bottom: 0;
+}
+.reader-head .pane-tools {
+  margin-left: 2px;
+}
+.trash-action {
+  color: var(--danger);
+}
+.message h1 {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+/* One sender line, the recipient beneath it and the date at the right. */
+.message-from {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 18px 0 24px;
+}
+.message-from .avatar {
+  width: 36px;
+  height: 36px;
+  margin: 0;
+}
+.message-from .avatar-letter {
+  font-size: 14px;
+}
+.from-text {
+  flex: 1;
+  min-width: 0;
+}
+.from-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  overflow-wrap: anywhere;
+}
+.from-line strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.from-address,
+.from-to {
+  font-size: 12.5px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.message-from time {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.message-body {
+  max-width: 65ch;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text-body);
+}
+.message-body p {
+  margin: 0 0 0.85em;
+  white-space: pre-wrap;
+}
+.message-images {
+  overflow-wrap: anywhere;
+}
+/* Image consent is one quiet strip above the body: the warning, then the action. */
+.image-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 7px 8px 7px 12px;
+  border-radius: var(--radius-control);
+  background: var(--hover);
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.image-controls span {
+  order: 1;
+  flex: 1 1 240px;
+}
+.image-controls .button {
+  order: 2;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  background: var(--surface);
+}
+.message-images figure {
+  margin: 16px 0;
+}
+.message-images img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.message-images figcaption,
+.message-images p[role="status"] {
+  margin: 8px 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.message-body a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.message-body a:hover,
+.message-body a:focus-visible {
+  color: var(--text);
+}
+.message-labels {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin: -8px 0 20px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.message-labels > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.message-images .message-body { margin-top: 22px; }
+.message-body:has(.formatted-mail) { max-width: 100%; }
+.formatted-mail { color: var(--text); }
+.formatted-mail p { white-space: normal; }
+.formatted-mail-fallback { white-space: pre-wrap; }
+.formatted-mail table { max-width: 100%; }
+.formatted-mail a { text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.formatted-mail :is(h1, h2, h3, h4, h5, h6) { margin: 1em 0 0.5em; line-height: 1.3; }
+/* Quoted replies: one inset and a quiet bar per level, whatever the sender's client wrote. */
+.formatted-mail blockquote {
+  margin: 0.75em 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--quote);
+  color: var(--text-2);
+}
+.formatted-mail blockquote blockquote {
+  margin-left: 2px;
+}
+.formatted-mail-image-placeholder { display: inline-block; max-width: 100%; vertical-align: middle; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.formatted-mail-image-status { display: inline-block; margin: 6px 0; color: var(--text-2); font-size: 13px; }
+.mail-actions #trash-unavailable {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
