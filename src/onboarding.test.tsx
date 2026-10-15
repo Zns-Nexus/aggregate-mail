@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, type ReactNode } from "react";
 import { Window as DOMWindow } from "happy-dom";
 import { App } from "./App";
+import { FALLBACK_DISMISS_KEY } from "./shell/CredentialFallbackNotice";
 import { ConnectDialog } from "./dialogs/ConnectDialog";
 import { SettingsPage } from "./settings/SettingsPage";
 import { defaults } from "./interaction";
@@ -15,14 +16,14 @@ const state: State = {
   googleClientId: null, jevConfigured: false, jevProvider: "typesafe",
   aiConfigured: false, lastSync: null, syncing: false,
 };
-const settings = (googleConfigured: boolean) => {
+const settings = (googleConfigured: boolean, desktop?: unknown) => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const previousLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
-  globalThis.window = { desktop: undefined } as unknown as Window & typeof globalThis;
+  globalThis.window = { desktop } as unknown as Window & typeof globalThis;
   globalThis.location = { origin: "http://127.0.0.1:3001" } as Location;
   try {
-    // Settings shows one section at a time; onboarding spans Accounts and Connection.
-    return (["accounts", "connection"] as const).map((section) => renderToStaticMarkup(<SettingsPage
+    // Render the sections used by onboarding and storage-copy assertions.
+    return (["accounts", "connection", "about"] as const).map((section) => renderToStaticMarkup(<SettingsPage
     state={{ ...state, googleConfigured }} busy={false} api={async <T,>() => ({} as T)}
     perform={async () => {}} onConnectAccount={() => {}} onNotice={() => {}}
     windowSide="left" onWindowSide={() => {}}
@@ -100,7 +101,7 @@ async function withDOM(run: (ui: {
   });
   const globals: Record<string, unknown> = {
     window: dom, document: dom.document, location: dom.location,
-    history: dom.history, localStorage: dom.localStorage,
+    history: dom.history, localStorage: dom.localStorage, sessionStorage: dom.sessionStorage,
     HTMLElement: dom.HTMLElement, FormData: dom.FormData,
     requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
     cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom),
@@ -305,4 +306,61 @@ test("initially busy connection rejects a dispatched submit and permits it when 
   assertDetails(container);
   await act(async () => submit(container));
   assert.equal(submissions, 1);
+}));
+
+test("add-account footer reflects credential fallback mode", () => {
+  const g = globalThis as { window?: unknown };
+  const prior = g.window;
+  try {
+    g.window = undefined;
+    assert.match(form("imap"), /Encrypted on this computer\./);
+    g.window = { desktop: { credentialFallback: "linux-local" } };
+    const html = form("imap");
+    assert.doesNotMatch(html, /Encrypted on this computer/);
+    assert.match(html, /local key \(file permissions only, weaker than system encryption\)/);
+    const about = settings(true, { credentialFallback: "linux-local" });
+    assert.doesNotMatch(about, /stored encrypted on this computer/);
+    assert.match(about, /protected by a local key and file permissions only/);
+    g.window = undefined;
+    assert.match(settings(true), /Mail is stored encrypted on this computer/);
+  } finally {
+    g.window = prior;
+  }
+});
+
+test("fallback warning collapses across mail and Settings and remains reopenable", async () => withDOM(async ({ container, render }) => {
+  const api = mockApp();
+  window.desktop!.platform = "linux";
+  window.desktop!.credentialFallback = "linux-local";
+  await render(<App />);
+  assert.equal(container.querySelectorAll(".credential-fallback-notice").length, 1);
+  assert.ok(container.querySelector('.list-pane .credential-fallback-notice[role="alert"]'));
+  await act(async () => element<HTMLButtonElement>(container, '.credential-fallback-notice button').click());
+  assert.equal(sessionStorage.getItem(FALLBACK_DISMISS_KEY), "1");
+  assert.ok(container.querySelector('.credential-fallback-notice[role="status"] button[aria-expanded="false"]'));
+
+  await act(async () => element<HTMLButtonElement>(container, '[aria-label="Settings"]').click());
+  assert.equal(container.querySelectorAll(".credential-fallback-notice").length, 1);
+  assert.ok(container.querySelector('.settings-pane .credential-fallback-notice.collapsed'));
+  const about = [...container.querySelectorAll<HTMLButtonElement>(".sidebar-group button")]
+    .find((button) => button.textContent?.trim() === "About");
+  assert.ok(about);
+  await act(async () => about.click());
+  assert.match(element(container, ".settings").textContent!, /protected by a local key and file permissions only/);
+  assert.match(element(container, ".settings").textContent!, /IMAP watches for changes/);
+  await act(async () => element<HTMLButtonElement>(container, '.credential-fallback-notice button').click());
+  assert.equal(sessionStorage.getItem(FALLBACK_DISMISS_KEY), null);
+  assert.ok(container.querySelector('.settings-pane .credential-fallback-notice[role="alert"]'));
+
+  await act(async () => element<HTMLButtonElement>(container, '.credential-fallback-notice button').click());
+  await act(async () => element<HTMLButtonElement>(container, '[aria-label="Close settings"]').click());
+  assert.ok(container.querySelector('.list-pane .credential-fallback-notice.collapsed'));
+  await render(null);
+  await render(<App />);
+  assert.ok(container.querySelector('.list-pane .credential-fallback-notice.collapsed'));
+  await render(null);
+  sessionStorage.clear();
+  await render(<App />);
+  assert.ok(container.querySelector('.list-pane .credential-fallback-notice[role="alert"]'));
+  assert.ok(api.calls.every((call) => call === "GET /api/state"), "No account or provider mutation");
 }));

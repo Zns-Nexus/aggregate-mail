@@ -7,6 +7,7 @@ import { redactPrivateText } from "../privacy";
 import { ProviderChoices, type ImapProvider } from "../dialogs/ConnectDialog";
 import { ProviderIcon } from "../mail/Avatar";
 import { relevanceNames } from "../mail/format";
+import { aboutStorageSentence } from "../shell/CredentialFallbackNotice";
 import { UpdateNotice } from "../shell/UpdateNotice";
 import { Address, PrivacyContext, Redact } from "../ui/Privacy";
 import { Segmented } from "../ui/Segmented";
@@ -269,7 +270,7 @@ export function SettingsPage({
         {section === "about" && <section>
           <h1>About</h1>
           <p className="note">
-            Mail is stored encrypted on this computer. IMAP watches for changes;
+            {aboutStorageSentence(globalThis.window?.desktop?.credentialFallback)}. IMAP watches for changes;
             Gmail checks for changes every 15 seconds, with periodic full sync
             for recovery. Closing the desktop window keeps it
             running in the tray; use Quit in the tray menu to exit. New unread
