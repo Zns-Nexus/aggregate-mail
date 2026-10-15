@@ -29,6 +29,88 @@ Multiple IMAP accounts use the existing account store and provider setup. The to
 
 Synthetic mounted-App tests cover combined controls, empty-result reset, privacy-safe account labels, account-specific compose, setup entry, keyboard ownership, read-on-open and history. They do not prove actual account connections or native appearance.
 
+## Encrypted local draft API
+
+`server/drafts.ts` stores local compose/reply snapshots as encrypted `draft`
+records using the existing data key. Draft recovery never invokes a provider.
+The renderer still holds compose state in memory; this backend does not add
+UI autosave, close protection or automatic send recovery. See
+[ADR 0026](adr/0026-encrypted-local-drafts.md).
+
+All draft routes are under `/api/accounts/:accountId/drafts` and inherit the
+Host, origin, desktop-session, CSRF and `Cache-Control: no-store` guards.
+The routes allow writes during sync. Updater quiescence rejects their writes
+with 503; reads remain available. Synchronous transactions finish before a
+quiesce can begin, so they cannot leave admitted asynchronous draft work.
+
+| Method and suffix | Request | Result |
+| --- | --- | --- |
+| GET `/` | No body | At most 100 summaries, newest first with ID ties |
+| POST `/` | Draft content | 201 with a new server-generated UUID, revision 1 and full snapshot |
+| GET `/:id` | No body | Full snapshot |
+| PUT `/:id` | Draft content plus current `revision` | Full snapshot with revision increased by one |
+| DELETE `/:id` | Current `revision`, plus `confirmUnknown: true` when needed | `{ ok: true }` |
+
+Draft content requires `to`, `subject` and `body` strings, including empty or
+unfinished values. Optional fields are `inReplyTo`, `threadId`, `references`
+and `sendUnknown`. Limits are 10,000 UTF-16 code units for `to`, 998 for subject
+and reply/reference strings, 100 for thread ID, 100 references and 1,000,000
+for body. The existing 2 MB HTTP JSON limit also applies. Unknown body fields
+and invalid revisions are rejected with 400. Sending retains its separate,
+stricter validation. PUT replaces the content snapshot; omitted optional reply
+fields are removed. Omitted `sendUnknown` preserves a stored true value.
+
+Every snapshot includes `id`, `accountId`, `revision`, `updatedAt` and a boolean
+`sendUnknown`. Summaries contain those fields plus `to` and `subject`; bodies
+and reply metadata require GET by ID. Missing accounts/drafts and another
+account's draft IDs return 404. Revision conflicts, capacity exhaustion,
+clearing a true uncertainty flag or deleting it without confirmation return
+409. Creation refuses draft 101 without eviction. Account removal atomically
+purges that account's drafts, including uncertain drafts, alongside its cached
+mail and labels. Reconnecting an account does not remove its drafts.
+
+The renderer integration must serialize writes per draft and retain local
+edits until a save is acknowledged. Create once, then use only the returned ID
+and latest acknowledged revision for PUT. If a create response is lost, inspect
+the list and recover rather than blindly creating another draft. A lost PUT
+response requires GET and reconciliation before another save. Never resolve a
+409 by attaching the newest revision to stale content. Cancel pending autosaves
+before explicit deletion. PUT never creates a missing record, so delayed saves
+cannot restore a deleted ID; a new compose must POST for a new ID.
+
+Before sending, the caller must freeze editing, drain autosaves, save the exact
+snapshot with `sendUnknown: true`, and await its acknowledgement. If that save
+is unacknowledged, do not send. Only then call the existing `/api/send` once.
+An acknowledged `ok: true`, including a Sent-copy warning, proves provider
+acceptance only, never recipient delivery. The caller may then DELETE the exact
+frozen revision with `confirmUnknown: true`. A dropped send response, crash,
+or unacknowledged deletion retains uncertainty until the caller reads current
+state. Never infer an unsent message from a recovered draft or retry a send
+because copying to Sent failed. Resending an uncertain draft requires explicit
+duplicate-risk confirmation. Manual discard also requires explicit confirmation.
+Editing cannot clear the marker. There is no receipt engine, outbox or retry.
+
+These sequences are requirements for future caller work. Existing renderer and
+MCP send callers are unchanged and do not use this draft lifecycle. This API
+cannot coordinate those callers or guarantee recovery of unacknowledged edits.
+SQLite uses WAL with explicit FULL synchronization; acknowledged saves survive
+the tested process restart/crash with the same key. This does not prove device
+power-loss behavior, disk survival or native close integration.
+
+Focused synthetic service and subprocess verification:
+
+```sh
+node --import tsx --test --test-timeout=30000 server/drafts.test.ts
+npm run build
+```
+
+The tests inspect DB/WAL bytes for synthetic draft plaintext, reopen in fresh
+processes, hard-kill a writer after committed saves/deletion and verify recovery
+with the original key. They cover account isolation/removal, capacity, strict
+validation, authentication, conflicting saves/deletes, sticky uncertainty and
+sync/updater guards. They use temporary stores and no real accounts or sends.
+Full-suite and isolated desktop verification remain separate checks.
+
 ## Desktop targets
 
 ### App updates

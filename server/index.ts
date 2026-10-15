@@ -8,7 +8,8 @@ import path from "node:path";
 import express from "express";
 import { google } from "googleapis";
 import { z } from "zod";
-import { all, put, putBatch, remove, account, type StoredAccount } from "./store.js";
+import { all, put, putBatch, remove, account, transaction, type StoredAccount } from "./store.js";
+import { mountDrafts } from "./drafts.js";
 import { oauth, providers, presets, validateImap, listGmailLabels, syncError } from "./providers.js";
 import { ImapWatch, sameImapAccount, type ImapWatchFactory } from "./imap-watch.js";
 import {
@@ -92,6 +93,7 @@ app.use("/api", (req, res, next) => {
   if (
     syncing &&
     !["GET", "HEAD"].includes(req.method) &&
+    !/^\/accounts\/[^/]+\/drafts(?:\/[^/]+)?\/?$/.test(req.path) &&
     !req.path.startsWith("/send") &&
     req.path !== "/mcp" &&
     !(req.method === "PATCH" && /^\/messages\/[^/]+$/.test(req.path) && req.body?.action === "read") &&
@@ -102,6 +104,7 @@ app.use("/api", (req, res, next) => {
       .json({ error: "Wait for the current sync to finish, then try again." });
   next();
 });
+mountDrafts(app);
 app.get("/api/state", (_req, res) => {
   res.json({
     csrf,
@@ -359,13 +362,17 @@ app.post("/api/accounts/:id/reconnect", (req, res) => {
   res.status(202).json({ status: accountSyncStatus(a.id), error: a.error, syncFailure: a.syncFailure });
 });
 app.delete("/api/accounts/:id", (req, res) => {
-  account(req.params.id);
-  remove("account", req.params.id);
+  transaction(() => {
+    account(req.params.id);
+    remove("account", req.params.id);
+    for (const draft of all("draft").filter((draft) => draft.accountId === req.params.id))
+      remove("draft", draft.id);
+    for (const m of all("mail").filter((m) => m.accountId === req.params.id))
+      remove("mail", m.id);
+    for (const label of all("label").filter((label) => label.accountId === req.params.id))
+      remove("label", `${label.accountId}:${label.id}`);
+  });
   imapWatch?.reconcile(all("account"));
-  for (const m of all("mail").filter((m) => m.accountId === req.params.id))
-    remove("mail", m.id);
-  for (const label of all("label").filter((label) => label.accountId === req.params.id))
-    remove("label", `${label.accountId}:${label.id}`);
   res.json({ ok: true });
 });
 app.post("/api/sync", async (_req, res) => {

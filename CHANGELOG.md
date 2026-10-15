@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an encrypted local draft API with revision-checked saves and deletion, account-scoped recovery and persistent unknown-send protection. Draft writes remain available during sync and stop during updater quiescence. Renderer autosave and send coordination require separate integration.
+
 - Add a macOS migration path that wraps the existing mail key under Emc² and preserves the original protected key, identity metadata and encrypted mail for rollback. Later starts prefer a validated current record; migration errors stop before opening mail. Native Keychain labels and reinstall behavior still require separate verification.
 
 - Limit macOS filesystem test fixtures to supported hosts while retaining portable protocol checks and Windows startup coverage.

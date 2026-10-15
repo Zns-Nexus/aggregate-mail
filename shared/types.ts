@@ -29,6 +29,25 @@ export type Account = {
   syncStatus?: "queued" | "running";
 };
 export type Category = "important" | "other";
+export type DraftContent = {
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+  threadId?: string;
+  references?: string[];
+  sendUnknown?: boolean;
+};
+export type Draft = DraftContent & {
+  id: string;
+  accountId: string;
+  revision: number;
+  updatedAt: number;
+  sendUnknown: boolean;
+};
+export type DraftSummary = Pick<Draft, "id" | "accountId" | "revision" | "updatedAt" | "to" | "subject" | "sendUnknown">;
+export type DraftSave = DraftContent & { revision: number };
+export type DraftDelete = { revision: number; confirmUnknown?: boolean };
 // Every System One style decision provider speaks the same request and answer
 // shapes; only the URL, the model id and the key differ.
 export type JevProvider = "typesafe" | "vercel" | "openrouter";
