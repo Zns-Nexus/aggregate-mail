@@ -245,7 +245,7 @@ AI contributors must also read the project instructions in [AGENTS.md](AGENTS.md
 
 ## Releasing
 
-GitHub hosts CI and release downloads. Each non-release push to `main` runs `auto-release.yml`, which bumps the patch version and builds the matching tag. Pushing a `v*` tag also has a release route in `.github/workflows/release.yml`. Both reuse the CI build jobs and publish the Windows setup installer, both macOS DMGs, the Linux AppImage, `latest.yml`, `latest-linux.yml` and `SHA256SUMS.txt` after all jobs pass. The tag must match `package.json`. Manual CI runs create build artifacts without publishing releases.
+GitHub hosts CI and release downloads. Each non-release push to `main` runs `auto-release.yml`, which builds the next patch version from that commit without modifying the source version, then creates its tag after all builds pass. Manual `v*` tags use `.github/workflows/release.yml` and must match `package.json`. Both routes reuse the CI build jobs and publish the Windows setup installer, both macOS DMGs, the Linux AppImage, `latest.yml`, `latest-linux.yml` and `SHA256SUMS.txt` after all jobs pass. Retry automatic releases through their original workflow run; their tags retain the older source version and cannot use the strict manual tag route. Manual CI runs create build artifacts without publishing releases.
 
 New installer filenames use the GitHub-safe `Emc2-` prefix; the application name stays Emc². Linux x64 installers end in `linux-x86_64.AppImage`. CI validates the Windows/Linux manifest version, filename, size and SHA512 against the packaged installer before upload. See [ADR 0039](docs/adr/0039-release-update-assets.md).
 
