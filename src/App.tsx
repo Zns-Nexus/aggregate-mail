@@ -1,3 +1,4 @@
+import { readNotifications, saveNotifications } from "./notifications";
 import {
   useCallback,
   useEffect,
@@ -226,7 +227,8 @@ export function App() {
   );
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
+  const [notifications, setNotifications] = useState(readNotifications);
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts(notifications);
   const setNotice = useCallback((text: string) => { if (text) pushToast(text, "error"); }, [pushToast]);
   const arrivals = useRef<number | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
@@ -452,8 +454,11 @@ export function App() {
     setBusy(true);
     try {
       await task();
-      await reload();
-      if (success) pushToast(success, "success");
+      if (success) {
+        pushToast(success, "success");
+        try { await reload(); }
+        catch { setNotice(`${success} Inbox refresh failed. Refresh the inbox separately.`); }
+      } else await reload();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Action failed.");
     } finally {
@@ -470,6 +475,7 @@ export function App() {
         action,
         until,
       }),
+      action === "archive" ? "Email archived." : action === "unsnooze" ? "Email returned to inbox." : undefined,
     );
   const markRead = (mail: Mail) => {
     void markMailRead(mail, pendingReads.current, async () => {
@@ -501,7 +507,7 @@ export function App() {
         !(message.id === mail.id && message.accountId === mail.accountId && message.remoteId === mail.remoteId)) }));
       setTrashMail(null);
       if (selectedId === mail.id) setOpened(false);
-      setNotice("Email moved to Trash.");
+      pushToast("Email moved to Trash.", "success");
       try { await reload(); }
       catch { setNotice("Email moved to Trash. Inbox refresh failed. Refresh the inbox separately."); }
     } catch (error) {
@@ -851,7 +857,7 @@ export function App() {
         className={`app${window.desktop ? " desktop" : ""}${privacy ? " private" : ""}`}
         data-platform={window.desktop?.platform}
       >
-        <ToastStack toasts={toasts} onDismiss={dismissToast} />
+        <ToastStack toasts={toasts} onDismiss={dismissToast} position={notifications.position} />
         {palette && !updateInstalling && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
         <div className="app-update-control" style={{ right: systemCaption ? 154 : drawsWindowControls && windowSide === "right" ? 106 : 12 }}>
           <UpdateNotice bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
@@ -899,6 +905,12 @@ export function App() {
             <CredentialFallbackNotice mode={window.desktop?.credentialFallback} />
             {historyControls}
             <SettingsPage
+              notifications={notifications}
+              onNotifications={(value) => {
+                setNotifications(value);
+                if (!saveNotifications(value)) setNotice("Notification settings could not be saved on this device. Your selection applies until the app closes.");
+              }}
+              onNotificationPreview={() => pushToast("This is a sample in-app notification.", "info")}
               state={state}
               busy={busy}
               perform={perform}
@@ -1200,11 +1212,11 @@ export function App() {
               await api(`/messages/${encodeURIComponent(snooze.id)}`, "PATCH", { action: "snooze", until });
               setSnooze(null);
               setOpened(false);
-            })}
+            }, `Email snoozed until ${new Date(until).toLocaleString()}.`)}
             onUnsnooze={() => void perform(async () => {
               await api(`/messages/${encodeURIComponent(snooze.id)}`, "PATCH", { action: "unsnooze" });
               setSnooze(null);
-            })}
+            }, "Email returned to inbox.")}
           />
         )}
         {trashMail && (
