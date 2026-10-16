@@ -2,6 +2,7 @@ import { useContext } from "react";
 import type { State } from "../../shared/types";
 import type { Api, Perform } from "../api";
 import type { Appearance, Scheme } from "../appearance";
+import type { ThemePreview } from "../themes";
 import type { InteractionPreferences } from "../interaction";
 import { redactPrivateText } from "../privacy";
 import { ProviderChoices, type ImapProvider } from "../dialogs/ConnectDialog";
@@ -35,6 +36,7 @@ export function SettingsPage({
   appearance,
   scheme,
   onAppearance,
+  onThemePreview,
 }: {
   state: State;
   busy: boolean;
@@ -50,7 +52,8 @@ export function SettingsPage({
   section: SettingsSection;
   appearance: Appearance;
   scheme: Scheme;
-  onAppearance: (value: Appearance) => void;
+  onAppearance: (value: Appearance) => boolean;
+  onThemePreview?: (preview: ThemePreview | null) => void;
 }) {
   const { on: privacy, names } = useContext(PrivacyContext);
   return (
@@ -220,7 +223,7 @@ export function SettingsPage({
         </section>}
         {section === "appearance" && <section>
           <h1>Appearance</h1>
-          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} />
+          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} onPreview={onThemePreview} />
           {window.desktop && window.desktop.platform !== "darwin" ? (
             <>
               <h2>Window controls</h2>

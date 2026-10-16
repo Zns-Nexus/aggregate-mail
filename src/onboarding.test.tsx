@@ -27,7 +27,7 @@ const settings = (googleConfigured: boolean) => {
     perform={async () => {}} onConnectAccount={() => {}} onNotice={() => {}}
     windowSide="left" onWindowSide={() => {}}
     interaction={defaults} onInteraction={() => {}}
-    section={section} appearance={defaultAppearance} scheme="dark" onAppearance={() => {}}
+    section={section} appearance={defaultAppearance} scheme="dark" onAppearance={() => true}
     />)).join("");
   } finally {
     for (const [key, descriptor] of [["window", previousWindow], ["location", previousLocation]] as const) {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add custom themes in Settings, Appearance with light and dark palettes, background/accent generation, advanced color controls and live preview. Create, edit, duplicate, export and import Emc² JSON themes; confirm deletion and restore the previous appearance on Cancel. Save the theme library and selection together on this device, retaining the editor if storage fails.
+
 - Rebase the sidebar redesign onto current main, preserving macOS key migration and test timeouts. Reconcile contributor guidance, component links and ADR numbering.
 
 - Add a macOS migration path that wraps the existing mail key under Emc² and preserves the original protected key, identity metadata and encrypted mail for rollback. Later starts prefer a validated current record; migration errors stop before opening mail. Native Keychain labels and reinstall behavior still require separate verification.

@@ -12,6 +12,7 @@ import { inboxTab, inboxTabs, type InboxTab } from "../shared/inbox-tabs";
 import type { Mail, State } from "../shared/types";
 import { coalesceReload } from "./api";
 import { applyAppearance, hexColor, readAppearance, resolveScheme, saveAppearance } from "./appearance";
+import type { ThemePreview } from "./themes";
 import { ComposePanel, sendCompose, type Compose } from "./compose/ComposePanel";
 import { ConnectDialog, ProviderChoices, type ImapProvider } from "./dialogs/ConnectDialog";
 import { LabelForm } from "./dialogs/LabelForm";
@@ -164,17 +165,18 @@ export function App() {
   // The Filters popover; its button stays lit while a filter or sort differs from its default.
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [appearance, setAppearance] = useState(readAppearance);
+  const [themePreview, setThemePreview] = useState<ThemePreview | null>(null);
   const prefersLight = useMedia("(prefers-color-scheme: light)", false);
   const scheme = resolveScheme(appearance.mode, prefersLight);
   useLayoutEffect(() => {
-    applyAppearance(appearance, scheme);
+    applyAppearance(appearance, scheme, document.documentElement, themePreview);
     // System caption buttons take the pane surface and text color beneath them.
     if (!systemCaption) return;
     const tokens = window.getComputedStyle(document.documentElement);
     const color = hexColor(tokens.getPropertyValue("--surface"));
     const symbolColor = hexColor(tokens.getPropertyValue("--text"));
     if (color && symbolColor) window.desktop?.setOverlay?.({ color, symbolColor });
-  }, [appearance, scheme]);
+  }, [appearance, scheme, themePreview]);
   // Panes that need room drop out as the window narrows: the sender panel, then
   // the reader beside the list (mail then opens in place), then the sidebar.
   const roomy = useMedia("(min-width: 760px)");
@@ -788,11 +790,16 @@ export function App() {
               }}
               section={settingsSection}
               appearance={appearance}
-              scheme={scheme}
+              scheme={themePreview?.scheme ?? scheme}
               onAppearance={(value) => {
+                if (!saveAppearance(value)) {
+                  setNotice("Appearance could not be saved on this device.");
+                  return false;
+                }
                 setAppearance(value);
-                if (!saveAppearance(value)) setNotice("Appearance could not be saved on this device.");
+                return true;
               }}
+              onThemePreview={setThemePreview}
             />
           </div>
         ) : (
