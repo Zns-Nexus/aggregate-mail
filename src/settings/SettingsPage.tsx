@@ -4,6 +4,7 @@ import { emptyComposePreferences, type ComposePreferences } from "../../shared/m
 import { ComposeSettings } from "./ComposeSettings";
 import type { Api, Perform } from "../api";
 import type { Appearance, Scheme } from "../appearance";
+import type { ThemePreview } from "../themes";
 import type { InteractionPreferences } from "../interaction";
 import { accountLabel } from "../mail-ui";
 import { redactPrivateText } from "../privacy";
@@ -39,6 +40,7 @@ export function SettingsPage({
   scheme,
   onAppearance,
   onComposePreferences,
+  onThemePreview,
 }: {
   state: State;
   busy: boolean;
@@ -54,8 +56,9 @@ export function SettingsPage({
   section: SettingsSection;
   appearance: Appearance;
   scheme: Scheme;
-  onAppearance: (value: Appearance) => void;
+  onAppearance: (value: Appearance) => boolean;
   onComposePreferences?: (value: ComposePreferences) => Promise<void>;
+  onThemePreview?: (preview: ThemePreview | null) => void;
 }) {
   const { on: privacy, names } = useContext(PrivacyContext);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -245,7 +248,7 @@ export function SettingsPage({
         </section>}
         {section === "appearance" && <section>
           <h1>Appearance</h1>
-          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} />
+          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} onPreview={onThemePreview} />
           {window.desktop && window.desktop.platform !== "darwin" ? (
             <>
               <h2>Window controls</h2>

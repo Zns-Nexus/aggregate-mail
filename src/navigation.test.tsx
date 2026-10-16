@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { act } from "react";
 import { JSDOM } from "jsdom";
 import type { Mail, State } from "../shared/types";
+import { generatePalette, parseThemeFile, serializeThemeFile, type CustomTheme } from "./themes";
 
 async function mount(native = false, setup?: (state: State, storage: Storage) => void, bridge: Partial<NonNullable<Window["desktop"]>> | boolean = {}) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/" });
@@ -168,6 +169,241 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
     },
   };
 }
+
+function themeButton(app: Awaited<ReturnType<typeof mount>>, label: string): HTMLButtonElement {
+  const document = app.window.document;
+  const scope = document.querySelector('[role="dialog"]') ?? app.container;
+  const button = [...scope.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent?.trim() === label || button.getAttribute("aria-label") === label);
+  assert.ok(button, `theme button ${label}`);
+  return button;
+}
+
+const sampleTheme = (): CustomTheme => ({
+  id: `custom:${crypto.randomUUID()}`, name: "Nightfall", palettes: {
+    dark: generatePalette("#1a1b26", "#7aa2f7", "dark"),
+    light: generatePalette("#eef0f8", "#3456bc", "light"),
+  },
+});
+
+test("custom theme preview cancels without saving; both palettes persist through an App restart", async () => {
+  const app = await mount();
+  let saved = "";
+  try {
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(app.button("Midnight"));
+    const before = app.storage.getItem("emc2.appearance.v1");
+    const document = app.window.document;
+    const root = document.documentElement;
+    await app.click(themeButton(app, "Create theme"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#202530");
+    assert.equal(root.style.getPropertyValue("--bg"), "#202530");
+    const color = document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!;
+    await app.input(color, "#123");
+    assert.equal(color.value, "#123", "shorthand must not interrupt typing a six-digit color");
+    await app.input(color, "#1234");
+    assert.equal(color.getAttribute("aria-invalid"), "true");
+    await app.click(themeButton(app, "Save theme"));
+    assert.ok(document.querySelector('[role="dialog"]'), "invalid colors block saving");
+    await app.input(color, "#123456");
+    assert.equal(root.style.getPropertyValue("--bg"), "#123456");
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), before);
+    await app.key("Escape");
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(root.style.getPropertyValue("--bg"), "");
+    assert.equal(root.dataset.theme, "midnight");
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), before);
+
+    await app.click(themeButton(app, "Create theme"));
+    await app.input(document.querySelector<HTMLInputElement>('.theme-name input')!, "Nightfall");
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#202530");
+    await app.click(themeButton(app, "Light"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#eef0f8");
+    assert.equal(root.dataset.scheme, "light");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(root.dataset.scheme, "dark", "saving returns to the selected appearance mode");
+    assert.equal(root.style.getPropertyValue("--bg"), "#202530");
+    saved = app.storage.getItem("emc2.appearance.v1")!;
+    const value = JSON.parse(saved);
+    assert.equal(value.customThemes.length, 1);
+    assert.equal(value.customThemes[0].palettes.light.canvas, "#eef0f8");
+    assert.equal(value.theme, value.customThemes[0].id);
+    await app.click(app.button("Close settings"));
+    assert.equal(root.style.getPropertyValue("--bg"), "#202530");
+    assert.equal(app.mutations.length, 0, "theme work never mutates mail");
+  } finally { await app.close(); }
+  const restarted = await mount(false, (_state, storage) => storage.setItem("emc2.appearance.v1", saved));
+  try {
+    assert.equal(restarted.window.document.documentElement.style.getPropertyValue("--bg"), "#202530");
+    await restarted.click(restarted.button("Settings"));
+    await restarted.click(restarted.button("Appearance"));
+    assert.equal(restarted.button("Nightfall").getAttribute("aria-checked"), "true");
+    await restarted.click(themeButton(restarted, "Light"));
+    assert.equal(restarted.window.document.documentElement.style.getPropertyValue("--bg"), "#eef0f8");
+  } finally { await restarted.close(); }
+});
+
+test("edit, duplicate, rename conflicts and confirmed deletion preserve independent themes", async () => {
+  const original = sampleTheme();
+  const app = await mount(false, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: original.id, customThemes: [original] })));
+  try {
+    const document = app.window.document;
+    const read = () => JSON.parse(app.storage.getItem("emc2.appearance.v1")!);
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(themeButton(app, "Edit theme"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Links hex"]')!, "#00ccaa");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(read().customThemes[0].palettes.dark.link, "#00ccaa");
+    await app.click(themeButton(app, "Duplicate theme"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#323232");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(read().customThemes.length, 2);
+    assert.notEqual(read().customThemes[0].id, read().customThemes[1].id);
+    assert.equal(read().customThemes[0].palettes.dark.canvas, original.palettes.dark.canvas);
+    assert.equal(read().customThemes[1].palettes.dark.canvas, "#323232");
+    await app.click(themeButton(app, "Edit theme"));
+    await app.input(document.querySelector<HTMLInputElement>('.theme-name input')!, "Nightfall");
+    await app.click(themeButton(app, "Save theme"));
+    assert.match(document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /already has this name/);
+    assert.equal(read().customThemes[1].name, "Nightfall copy");
+    await app.click(themeButton(app, "Cancel"));
+    await app.click(themeButton(app, "Delete theme"));
+    await app.click(themeButton(app, "Cancel"));
+    assert.equal(read().customThemes.length, 2);
+    await app.click(themeButton(app, "Delete theme"));
+    await app.click(themeButton(app, "Delete theme"));
+    assert.equal(read().customThemes.length, 1);
+    assert.equal(read().theme, "black");
+    assert.equal(document.documentElement.style.getPropertyValue("--bg"), "");
+  } finally { await app.close(); }
+});
+
+test("JSON import validates before saving and export downloads a portable copy", async () => {
+  const app = await mount();
+  const createObjectURL = URL.createObjectURL;
+  const revokeObjectURL = URL.revokeObjectURL;
+  let downloaded: Blob | undefined;
+  let filename = "";
+  let revoked = "";
+  try {
+    const document = app.window.document;
+    URL.createObjectURL = (blob) => {
+      assert.ok(blob instanceof Blob);
+      downloaded = blob;
+      return "blob:synthetic-theme";
+    };
+    URL.revokeObjectURL = (url) => { revoked = url; };
+    app.window.HTMLAnchorElement.prototype.click = function () { filename = this.download; };
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(themeButton(app, "Import theme"));
+    await app.input(document.querySelector<HTMLTextAreaElement>("textarea")!, '{"version":2}');
+    await app.click(themeButton(app, "Import theme"));
+    assert.match(document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /Emc² version 1/);
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), null);
+    const theme = sampleTheme();
+    await app.input(document.querySelector<HTMLTextAreaElement>("textarea")!, serializeThemeFile(theme));
+    await app.click(themeButton(app, "Import theme"));
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    const imported = JSON.parse(app.storage.getItem("emc2.appearance.v1")!).customThemes[0];
+    assert.notEqual(imported.id, theme.id);
+    await app.click(themeButton(app, "Export theme"));
+    assert.equal(filename, "nightfall.emc2-theme.json");
+    assert.ok(downloaded);
+    assert.deepEqual(parseThemeFile(await downloaded.text()), { name: theme.name, palettes: theme.palettes });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(revoked, "blob:synthetic-theme");
+    await app.click(themeButton(app, "Import theme"));
+    await app.input(document.querySelector<HTMLTextAreaElement>("textarea")!, await downloaded.text());
+    await app.click(themeButton(app, "Import theme"));
+    const themes = JSON.parse(app.storage.getItem("emc2.appearance.v1")!).customThemes;
+    assert.deepEqual(themes.map((item: CustomTheme) => item.name), ["Nightfall", "Nightfall (2)"]);
+    assert.notEqual(themes[0].id, themes[1].id);
+  } finally {
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    await app.close();
+  }
+});
+
+test("failed theme saves keep the editor and draft available and Cancel restores the saved appearance", async () => {
+  const app = await mount();
+  try {
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(app.button("Midnight"));
+    const saved = app.storage.getItem("emc2.appearance.v1");
+    Object.defineProperty(app.window.Storage.prototype, "setItem", { configurable: true, value() { throw new Error("quota"); } });
+    await app.click(themeButton(app, "Create theme"));
+    await app.input(app.window.document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#202530");
+    await app.click(themeButton(app, "Save theme"));
+    assert.ok(app.window.document.querySelector('[role="dialog"]'));
+    assert.match(app.window.document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /could not be saved/);
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), saved);
+    await app.click(themeButton(app, "Cancel"));
+    assert.equal(app.window.document.documentElement.dataset.theme, "midnight");
+    assert.equal(app.window.document.documentElement.style.getPropertyValue("--bg"), "");
+  } finally { await app.close(); }
+});
+
+test("theme file input reads bounded files and ignores a read completed after Cancel", async () => {
+  const app = await mount();
+  try {
+    const document = app.window.document;
+    const exported = serializeThemeFile(sampleTheme());
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(themeButton(app, "Import theme"));
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x".repeat(65537)], "large.json")] });
+    await act(async () => input.dispatchEvent(new app.window.Event("change", { bubbles: true })));
+    assert.match(document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /64 KB/);
+    Object.defineProperty(input, "files", { configurable: true, value: [new File([exported], "theme.json")] });
+    await act(async () => input.dispatchEvent(new app.window.Event("change", { bubbles: true })));
+    assert.equal(document.querySelector<HTMLTextAreaElement>("textarea")!.value, exported);
+    await app.click(themeButton(app, "Import theme"));
+    const saved = app.storage.getItem("emc2.appearance.v1");
+    await app.click(themeButton(app, "Import theme"));
+    let finish = (_text: string) => {};
+    const pending = new Promise<string>((resolve) => { finish = resolve; });
+    const nextInput = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(nextInput, "files", { value: [{ size: 100, text: () => pending }] });
+    await act(async () => nextInput.dispatchEvent(new app.window.Event("change", { bubbles: true })));
+    assert.ok(themeButton(app, "Reading file…").disabled);
+    await app.click(themeButton(app, "Cancel"));
+    await act(async () => { finish(exported); await pending; });
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), saved);
+  } finally { await app.close(); }
+});
+
+test("a full theme library keeps editing available and the theme picker supports keyboard wrapping", async () => {
+  const themes = Array.from({ length: 32 }, (_, index) => ({ ...sampleTheme(), name: `Palette ${index + 1}` }));
+  const app = await mount(false, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: themes[0].id, customThemes: themes })));
+  try {
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    assert.ok(themeButton(app, "Create theme").disabled);
+    assert.ok(themeButton(app, "Import theme").disabled);
+    assert.ok(themeButton(app, "Duplicate theme").disabled);
+    await app.click(themeButton(app, "Edit theme"));
+    await app.input(app.window.document.querySelector<HTMLInputElement>('.theme-name input')!, "Renamed palette");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(JSON.parse(app.storage.getItem("emc2.appearance.v1")!).customThemes.length, 32);
+    const chosen = app.button("Renamed palette");
+    chosen.focus();
+    await act(async () => chosen.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+    assert.equal(app.button("Black").getAttribute("aria-checked"), "true");
+    assert.equal(app.window.document.activeElement, app.button("Black"));
+    await act(async () => app.button("Black").dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    assert.equal(app.button("Palette 32").getAttribute("aria-checked"), "true");
+    assert.equal(app.window.document.activeElement, app.button("Palette 32"));
+    assert.equal(app.container.querySelectorAll('.theme-choices [tabindex="0"]').length, 1);
+  } finally { await app.close(); }
+});
 
 test("context menu Open navigates and marks read without a menu guard blocking it", async () => {
   const app = await mount();

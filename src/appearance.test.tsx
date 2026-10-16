@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
+import { generatePalette, type CustomTheme } from "./themes";
 
 // Runs appearance code against a fresh DOM with a synthetic desktop bridge.
 async function withDesktop(platform: string, run: (calls: string[], dom: JSDOM) => Promise<void>) {
@@ -23,7 +24,7 @@ test("transparency picks the Windows material live and migrates the earlier on/o
   await withDesktop("win32", async (calls, dom) => {
     const { applyAppearance, defaultAppearance, readAppearance } = await import("./appearance");
     dom.window.localStorage.setItem("emc2.appearance.v1", JSON.stringify({ theme: "midnight", accent: "pink", glass: false }));
-    assert.deepEqual(readAppearance(), { mode: "dark", theme: "midnight", accent: "pink", transparency: "off", reading: "split" });
+    assert.deepEqual(readAppearance(), { mode: "dark", theme: "midnight", accent: "pink", transparency: "off", reading: "split", customThemes: [] });
     for (const transparency of ["glass", "subtle", "off"] as const)
       applyAppearance({ ...defaultAppearance, transparency });
     assert.deepEqual(calls.filter((call) => !call.startsWith("scheme:")), ["acrylic", "mica", "none"]);
@@ -51,5 +52,68 @@ test("light mode sets the scheme, a deeper accent and the native theme; System f
     assert.equal(resolveScheme("system", true), "light");
     assert.equal(resolveScheme("system", false), "dark");
     assert.equal(resolveScheme("dark", true), "dark");
+  });
+});
+
+test("custom selection and both palettes survive a restart, with safe fallback for a missing theme", async () => {
+  await withDesktop("linux", async (_calls, dom) => {
+    const { defaultAppearance, readAppearance, saveAppearance } = await import("./appearance");
+    const theme: CustomTheme = { id: `custom:${crypto.randomUUID()}`, name: "Nightfall", palettes: {
+      dark: generatePalette("#1a1b26", "#7aa2f7", "dark"), light: generatePalette("#eef0f8", "#3456bc", "light"),
+    } };
+    const value = { ...defaultAppearance, theme: theme.id, customThemes: [theme], mode: "system" as const };
+    assert.equal(saveAppearance(value), true);
+    assert.deepEqual(readAppearance(), value);
+    dom.window.localStorage.setItem("emc2.appearance.v1", JSON.stringify({ ...value, customThemes: [] }));
+    assert.equal(readAppearance().theme, "black");
+    assert.equal(saveAppearance({ ...value, customThemes: [] }), false, "never persist a dangling selection");
+    dom.window.localStorage.setItem("emc2.appearance.v1", JSON.stringify({ ...value, customThemes: [{ ...theme, palettes: { dark: {} } }] }));
+    assert.equal(readAppearance().theme, "black");
+    assert.deepEqual(readAppearance().customThemes, []);
+  });
+});
+
+test("custom and preview colors follow the resolved scheme and clear fully when a built-in returns", async () => {
+  await withDesktop("win32", async (calls, dom) => {
+    const { applyAppearance, defaultAppearance } = await import("./appearance");
+    const theme: CustomTheme = { id: `custom:${crypto.randomUUID()}`, name: "Nightfall", palettes: {
+      dark: generatePalette("#1a1b26", "#7aa2f7", "dark"), light: generatePalette("#eef0f8", "#3456bc", "light"),
+    } };
+    const root = dom.window.document.documentElement;
+    const value = { ...defaultAppearance, theme: theme.id, customThemes: [theme], mode: "system" as const };
+    for (const scheme of ["dark", "light"] as const) {
+      applyAppearance(value, scheme);
+      assert.equal(root.dataset.scheme, scheme);
+      assert.equal(root.style.getPropertyValue("--bg"), theme.palettes[scheme].canvas);
+      assert.equal(root.style.getPropertyValue("--accent"), theme.palettes[scheme].accent);
+      assert.equal(root.style.getPropertyValue("--veil"), theme.palettes[scheme].veil);
+    }
+    applyAppearance(value, "dark", root, { scheme: "light", palette: { ...theme.palettes.light, canvas: "#ffeedd" } });
+    assert.equal(root.dataset.scheme, "light");
+    assert.equal(root.style.getPropertyValue("--bg"), "#ffeedd");
+    assert.equal(calls.at(-2), "scheme:light");
+    applyAppearance(value, "dark");
+    assert.equal(root.style.getPropertyValue("--bg"), "#1a1b26");
+    assert.equal(calls.at(-2), "scheme:system");
+    applyAppearance(defaultAppearance, "dark");
+    assert.equal(root.dataset.theme, "black");
+    assert.equal(root.style.getPropertyValue("--bg"), "");
+    assert.equal(root.style.getPropertyValue("--text"), "");
+    assert.equal(root.style.getPropertyValue("--avatar"), "");
+    assert.equal(root.style.getPropertyValue("--veil-hover"), "");
+    assert.equal(root.style.getPropertyValue("--line-2"), "");
+    assert.equal(root.style.getPropertyValue("--accent"), "#6b9cff");
+  });
+});
+
+test("an unavailable storage write leaves the saved theme library and selection intact", async () => {
+  await withDesktop("linux", async (_calls, dom) => {
+    const { defaultAppearance, readAppearance, saveAppearance } = await import("./appearance");
+    assert.equal(saveAppearance(defaultAppearance), true);
+    const saved = dom.window.localStorage.getItem("emc2.appearance.v1");
+    Object.defineProperty(dom.window.Storage.prototype, "setItem", { configurable: true, value() { throw new Error("quota"); } });
+    assert.equal(saveAppearance({ ...defaultAppearance, accent: "purple" }), false);
+    assert.equal(dom.window.localStorage.getItem("emc2.appearance.v1"), saved);
+    assert.equal(readAppearance().accent, "blue");
   });
 });

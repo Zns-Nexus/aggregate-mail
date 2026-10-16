@@ -310,7 +310,7 @@
 /* Settings, Appearance: theme previews, accent swatches and Transparency. */
 .theme-choices {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   gap: 12px;
 }
 .theme-choices button {
@@ -373,3 +373,70 @@
 .account-name-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .account-name-form input { flex: 1; min-width: 120px; }
 .account-name-form [role="alert"] { flex-basis: 100%; color: var(--danger); }
+.theme-choice-name {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.theme-library-actions {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+.theme-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.theme-name {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-2);
+}
+.theme-name input,
+.theme-name textarea {
+  width: 100%;
+  color: var(--text);
+}
+.theme-name textarea {
+  resize: vertical;
+  max-height: 35dvh;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.theme-editor .note {
+  margin: 0;
+  font-size: 12px;
+}
+.theme-color > div {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+.theme-color input[type="color"] {
+  width: 32px;
+  height: 30px;
+  padding: 3px;
+  cursor: pointer;
+}
+.theme-color input:not([type="color"]) {
+  width: 96px;
+  padding: 5px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.theme-color input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.theme-error {
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

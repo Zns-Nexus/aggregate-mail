@@ -9,6 +9,8 @@
 - Rebase the mail features onto the merged sidebar redesign, keeping the corner toggle, update icon, privacy and draft guards. Reconcile decision links with main.
 
 - Keep disabled row Trash buttons hidden until hover or keyboard focus so they cannot overlap mail timestamps during sync. Preserve always-visible actions on touch devices.
+- Add custom themes in Settings, Appearance with light and dark palettes, background/accent generation, advanced color controls and live preview. Create, edit, duplicate, export and import Emc² JSON themes; confirm deletion and restore the previous appearance on Cancel. Save the theme library and selection together on this device, retaining the editor if storage fails.
+
 - Rebase the sidebar redesign onto current main, preserving macOS key migration and test timeouts. Reconcile contributor guidance, component links and ADR numbering.
 
 - Add a macOS migration path that wraps the existing mail key under Emc² and preserves the original protected key, identity metadata and encrypted mail for rollback. Later starts prefer a validated current record; migration errors stop before opening mail. Native Keychain labels and reinstall behavior still require separate verification.
