@@ -54,8 +54,8 @@ npm run dev      # Electron with React/CSS hot reload; restart after desktop or 
 - Branch from current `main` as `<type>/<topic>`, using `feat`, `fix`, `docs`,
   `chore` or `test`.
 - Imperative commit subjects; `feat:`, `fix:` or `test:` prefixes are common.
-- Never start a subject with `Release `; it is reserved for version commits
-  and skips the auto-release.
+- Never start a subject with `Release `; it is reserved for manual version
+  commits and skips the auto-release.
 - Check author/committer metadata for private details before pushing.
 
 ## Verify
@@ -83,12 +83,15 @@ npm run dev      # Electron with React/CSS hot reload; restart after desktop or 
   must pass.
 - CI stamps non-tag builds with a `-ci.` version (`scripts/set-build-version.mjs`,
   ADR 0004). Do not change `version` in a PR.
-- Every push to `main` (except `Release ` commits) runs `auto-release.yml`: a
-  bot bumps the patch version, pushes a `Release x.y.z` commit and tag to `main`,
-  builds through `ci.yml` and publishes. Rebase onto `main` after each merge.
-  Merge only release-ready work.
-- Minor and major releases are manual: bump locally, push a branch and the
-  `v*` tag (`release.yml`).
+- Every push to `main` except `Release ` commits runs `auto-release.yml`: it builds the next patch from
+  the triggering commit, then creates the tag and publishes only after all four
+  platform jobs pass. It does not modify `main` or the source version. Rebase
+  onto `main` after each merge. Merge only release-ready work.
+- Minor and major releases are manual: bump the source version, then push the
+  matching `v*` tag (`release.yml`).
+- Retry an automatic release through its original workflow run. Its tag points
+  at source with the older committed version, so the strict manual tag workflow
+  cannot rebuild it. A publish retry reuses a tag only when its commit matches.
 - Local packaging: `npm run package` (Windows NSIS), `npm run package:mac`
   (DMG and ZIP), `npm run package:mac:dir` (app bundle, source-install route).
   Mac builds need Xcode Command Line Tools. Output goes to `release/`.

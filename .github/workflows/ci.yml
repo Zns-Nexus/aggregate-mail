@@ -12,6 +12,11 @@ on:
         required: false
         default: ""
         type: string
+      release_version:
+        description: Next stable patch version for the automatic release lane.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -63,6 +68,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -70,6 +76,7 @@ jobs:
       - name: Set build version
         env:
           EMC2_BUILD_REF: ${{ inputs.ref || github.ref }}
+          EMC2_RELEASE_VERSION: ${{ inputs.release_version }}
         run: node scripts/set-build-version.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm test
