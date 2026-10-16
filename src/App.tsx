@@ -796,6 +796,7 @@ export function App() {
               busy,
               onAddAccount: () => setConnecting("choose"),
               onCompose: () => startCompose(),
+              onDrafts: () => setDraftPicker(true),
               onSettings: () => setSettings(true),
               shortcut,
               syncing,
@@ -881,8 +882,6 @@ export function App() {
                   )}
                 </div>
                 <div className="pane-tools">
-                  <button disabled={navigationBlocked || busy || !state.accounts.length}
-                    onClick={() => setDraftPicker(true)}>Drafts</button>
                   <MailFilters
                     open={filtersOpen}
                     active={filtersActive}

@@ -35,6 +35,8 @@ Verification for the freshness/transparency change, 2026-10-14: based on `37002f
 
 The renderer uses macOS-style chrome in light or dark on every desktop platform: a themed window frame and sidebar, near-neutral mail/reader/sender panes, grouped Settings controls and rounded menus/dialogs. Native window-control spacing and IPC remain unchanged. `src/styles/tokens.css` defines every color, surface and radius token for both schemes. Pane and menu transitions are brief opacity/transform animations; there are no looping effects or wheel-event handlers. Scroll containers use native smooth programmatic scrolling and contained overscroll. New panes reset instantly, and reduced-motion preferences disable smooth scrolling and shorten animations.
 
+The mail sidebar places Drafts directly below New message. Settings is a labeled gear icon beside Sync in its footer. The theme picker grows with its previews and labels; the fixed 48px stacked-row height applies only to mail rows, so accent swatches stay below the theme choices.
+
 Mail date headings stick at `top: 0`; the removed history toolbar no longer reserves a 42px offset. List spacing uses 8px pane gutters, 6px row insets, 12px row padding and 1px vertical margins. Comfortable row heights are 48px, 34px and 28px for high, medium and low relevance; compact rows are 24px. The 150px sender column and 8px subject gap also set the 158px two-line preview indent. Filter/action padding and sender-panel padding are reduced to match the tighter list.
 
 Right-click mail rows or opened messages to use Mark as read without opening the message. Already-read mail disables that item. Explicit read and read-on-open both use `markMailRead` in `src/mail-ui.ts`, coalesce pending requests and call the existing read endpoint independently of other UI busy state. Requests wait behind server sync; failures keep unread state and can be retried from the menu or by reopening mail. Other context-menu provider writes remain disabled during sync.
@@ -92,6 +94,8 @@ clearing a true uncertainty flag or deleting it without confirmation return
 409. Creation refuses draft 101 without eviction. Account removal atomically
 purges that account's drafts, including uncertain drafts, alongside its cached
 mail and labels. Reconnecting an account does not remove its drafts.
+Settings, Accounts warns about permanent draft deletion, including uncertain
+sends, before Disconnect. Declining the confirmation leaves them intact.
 
 `src/compose/draft-session.ts` serializes writes per draft and retains local
 edits until a save is acknowledged. Create once, then use only the returned ID
@@ -114,7 +118,7 @@ because copying to Sent failed. Resending an uncertain draft requires explicit
 duplicate-risk confirmation. Manual discard also requires explicit confirmation.
 Editing cannot clear the marker. There is no receipt engine, outbox or retry.
 
-The Drafts button lists account-scoped summaries; opening one fetches its body
+Drafts sits directly below New message in the sidebar and lists account-scoped summaries; opening one fetches its body
 without sending. Privacy mode omits private summary subjects and recipients.
 Close, Escape and Keep draft wait for the latest save. Discard is separately
 confirmed. Save errors keep text open and protect unload. Saved text survives
@@ -488,7 +492,7 @@ node --import tsx --test src/compose-send.test.tsx server/send-provider.test.ts
 
 [Renderer regressions](../src/compose-send.test.tsx) execute the compose submission function, form event handlers and rendered status text. A loopback HTTP server records a submission and drops its response, then verifies canceled and confirmed resends. Tests cover uncertainty through edits, shared pointer/keyboard form handling, validation, close prompts, overlapping submissions and refresh failure. [Provider regressions](../server/send-provider.test.ts) run the real provider and shared send operation with synthetic SMTP and IMAP adapters. They cover accepted SMTP, Sent-copy and cleanup warnings, invalid input and SMTP failure without an IMAP connection. These tests do not drive a native window, verify browser event dispatch or prove real mail delivery.
 
-Attempt identifiers, persistent receipts, automatic recovery, automatic retries and a durable outbox are deferred. Send uncertainty exists only on the open in-memory draft. Sources: [compose](../src/compose/ComposePanel.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
+Attempt identifiers, persistent receipts, automatic retries and a durable outbox are deferred. The renderer persists send uncertainty with the encrypted draft before sending; reopening the draft retains the warning and never sends automatically. Sources: [compose](../src/compose/ComposePanel.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
 
 The provider fixture calls [closeStore](../server/store.ts) before deleting its temporary database directory. Windows cannot remove the directory while SQLite holds its files open.
 

@@ -236,7 +236,7 @@
 .row.unread time {
   color: var(--text);
 }
-.stacked {
+.row.stacked {
   height: 48px;
 }
 .stacked .row-text {

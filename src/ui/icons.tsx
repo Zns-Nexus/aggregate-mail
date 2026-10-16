@@ -59,7 +59,7 @@ export function Search(props: IconProps) {
 }
 
 export function Settings(props: IconProps) {
-  return <Outline {...props}><path d="M4 7h3m4 0h9M4 17h9m4 0h3" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></Outline>;
+  return <Outline {...props}><path d="m9 3-.6 2.4-2.1 1.2L4 6 2 9l1.8 1.8v2.4L2 15l2 3 2.3-.6 2.1 1.2L9 21h6l.6-2.4 2.1-1.2L20 18l2-3-1.8-1.8v-2.4L22 9l-2-3-2.3.6-2.1-1.2L15 3Z" /><circle cx="12" cy="12" r="3" /></Outline>;
 }
 
 export function Mail(props: IconProps) {

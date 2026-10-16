@@ -717,7 +717,13 @@ test("sidebar toggle hides the panel and the choice survives a restart", async (
 test("Settings replaces the mail sidebar with its sections and shows one at a time", async () => {
   const app = await mount();
   try {
-    await app.click(app.button("Settings"));
+    const settings = app.button("Settings");
+    const footer = settings.closest(".sidebar-footer");
+    assert.ok(footer, "Settings belongs beside Sync at the bottom of the sidebar");
+    assert.ok(footer.querySelector(".sync"));
+    assert.ok(settings.querySelector("svg"));
+    assert.equal(settings.textContent, "", "Settings is an accessible icon button");
+    await app.click(settings);
     assert.equal(app.container.querySelector('[aria-label="Mail views"]'), null);
     assert.ok(app.container.querySelector("[data-interaction-settings]"));
     await app.click(app.button("Appearance"));

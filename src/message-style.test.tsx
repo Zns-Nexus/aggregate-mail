@@ -5,11 +5,36 @@ import { JSDOM } from "jsdom";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MessageText } from "./mail/MessageContent";
 import { FormattedMail } from "./mail/FormattedMail";
+import { AppearanceSettings } from "./settings/AppearanceSettings";
+import { defaultAppearance } from "./appearance";
 
 // The stylesheet entry imports one file per area; jsdom does not follow @import.
 const stylesheet = () => readFileSync(new URL("./style.css", import.meta.url), "utf8")
   .match(/@import "[^"]+";/g)!
   .map((line) => readFileSync(new URL(line.slice(9, -2), import.meta.url), "utf8")).join("\n");
+
+test("theme choices grow above accent swatches without inheriting the mail-row height", () => {
+  const dom = new JSDOM("<!doctype html>");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  try {
+    const document = dom.window.document;
+    document.body.innerHTML = renderToStaticMarkup(<>
+      <AppearanceSettings value={defaultAppearance} scheme="dark" onChange={() => {}} />
+      <div className="row stacked" />
+    </>);
+    document.head.insertAdjacentHTML("beforeend", `<style>${stylesheet()}</style>`);
+    const height = (selector: string) => dom.window.getComputedStyle(document.querySelector(selector)!).height;
+    assert.ok(["", "auto"].includes(height(".settings-row.stacked")), "Theme rows must grow with their previews and labels");
+    assert.equal(height(".theme-preview"), "56px");
+    assert.equal(height(".accent-choices button"), "22px");
+    assert.equal(height(".row.stacked"), "48px", "Mail density is unchanged");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+    dom.window.close();
+  }
+});
 
 test("image status styles preserve body paragraph size, spacing and sender presentation", () => {
   const markup = renderToStaticMarkup(<section className="message-images">

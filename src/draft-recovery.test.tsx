@@ -118,6 +118,10 @@ test("mounted drafts use encrypted HTTP persistence, recover edits and guard unc
   try {
     await act(async () => root.render(<App />));
     await settle(() => !!container.querySelector(".row"));
+    const drafts = button("Drafts");
+    assert.equal(drafts.closest("aside")?.id, "sidebar");
+    assert.equal(button("New message").nextElementSibling, drafts);
+    assert.equal(container.querySelector(".pane-tools button")?.textContent === "Drafts", false);
     await click(button("New message"));
     await fill('input[type="email"]', "unfinished-recipient");
     await fill('.compose-form input:not([type="email"])', "SYNTHETIC-DRAFT-SUBJECT");
@@ -172,6 +176,7 @@ test("mounted drafts use encrypted HTTP persistence, recover edits and guard unc
     assert.match(container.textContent!, /Do not resend/);
 
     await click(container.querySelector<HTMLElement>(".row")!);
+    await settle(() => container.querySelector<HTMLButtonElement>('button[aria-label="Reply"]')?.disabled === false);
     await click(container.querySelector<HTMLElement>('button[aria-label="Reply"]')!);
     await fill("textarea", "SYNTHETIC reply content");
     await settle(() => /Draft saved/.test(container.textContent!));
