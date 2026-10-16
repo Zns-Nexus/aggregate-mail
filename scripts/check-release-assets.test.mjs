@@ -13,7 +13,7 @@ for (const [platform, suffix, manifestName] of [
 ]) test(`release check validates ${platform} output and rejects missing metadata and damaged bytes`, () => {
   const directory = mkdtempSync(path.join(tmpdir(), "emc2-release-check-"));
   const script = fileURLToPath(new URL("./check-release-assets.ts", import.meta.url));
-  const run = () => execFileSync(process.execPath, ["--import", fileURLToPath(import.meta.resolve("tsx")), script, platform],
+  const run = () => execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), script, platform],
     { cwd: directory, stdio: "pipe" });
   try {
     mkdirSync(path.join(directory, "release"));
