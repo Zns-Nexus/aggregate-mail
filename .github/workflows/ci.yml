@@ -74,7 +74,26 @@ jobs:
         timeout-minutes: 1
         run: npm run check:desktop -- --user-data-dir="${{ runner.temp }}/emc2-check"
       - name: Create installer
+        if: runner.os != 'macOS'
         run: npx --no-install electron-builder ${{ matrix.args }} --publish never
+      # hdiutil intermittently fails ("Resource busy" / create failed) on hosted macOS runners.
+      # Retry the DMG build up to 3 times, force-detaching stale volumes between attempts.
+      - name: Create installer (macOS, with hdiutil retry)
+        if: runner.os == 'macOS'
+        run: |
+          for attempt in 1 2 3; do
+            if npx --no-install electron-builder ${{ matrix.args }} --publish never; then
+              exit 0
+            fi
+            echo "::warning::electron-builder DMG attempt $attempt failed"
+            for volume in /Volumes/Emc*(N); do
+              hdiutil detach -force "$volume" || true
+            done
+            rm -f release/*.dmg(N) release/*.blockmap(N)
+            sleep $((attempt * 10))
+          done
+          echo "::error::electron-builder DMG failed after 3 attempts"
+          exit 1
       - name: Upload installer
         uses: actions/upload-artifact@v5
         with:

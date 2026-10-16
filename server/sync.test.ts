@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { google } from "googleapis";
 import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
@@ -33,7 +33,7 @@ const aiAnswer = () => new Response(JSON.stringify({ model: "synthetic", answers
 
 // The subprocess releases SQLite handles before the parent removes its profile.
 if (!process.env.EMC2_SYNC_TEST_CHILD) {
-  test("synthetic sync service regressions", () => {
+  test("synthetic sync service regressions", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "emc2-sync-"));
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, EMC2_SYNC_TEST_CHILD: "1", MAIL_DATA_DIR: directory,
@@ -41,12 +41,19 @@ if (!process.env.EMC2_SYNC_TEST_CHILD) {
         GOOGLE_CLIENT_ID: "synthetic-client", GOOGLE_CLIENT_SECRET: "synthetic-secret",
         TYPESAFE_API_KEY: "", OPENAI_API_KEY: "" };
       delete env.NODE_TEST_CONTEXT;
-      const result = spawnSync(process.execPath, ["--import", "tsx", "--test", fileURLToPath(import.meta.url)], {
-        env,
-        encoding: "utf8", timeout: 30000,
-      });
+      // Async spawn keeps the parent's event loop free, and the bound sits well inside --test-timeout=120000 so a
+      // cold tsx start on a loaded CI runner is not killed mid-run (the old 30s spawnSync bound was the flake).
+      const child = spawn(process.execPath, ["--import", "tsx", "--test", fileURLToPath(import.meta.url)], { env, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "", stderr = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+      child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+      const timer = setTimeout(() => child.kill("SIGKILL"), 100000);
+      const [status, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
+        child.once("error", reject).once("close", (code, sig) => resolve([code, sig]));
+      }).finally(() => clearTimeout(timer));
+      const result = { stdout, stderr, status, signal };
+      assert.equal(result.status, 0, `child exited with status ${result.status} signal ${result.signal}\n${result.stdout}\n${result.stderr}`);
       assert.match(result.stdout, /account connection, progress, coalescing and recovery/);
-      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
       console.log(result.stdout.trim());
     } finally {
       rmSync(directory, { recursive: true, force: true });
