@@ -1,4 +1,4 @@
-# ADR 0040: Create automatic release tags after builds
+# ADR 0041: Create automatic release tags after builds
 
 Date: 2026-10-16
 Status: Proposed
