@@ -69,7 +69,7 @@ function reader(opened = true, accountFilter = "a", selectedId: string | null = 
     HTMLElement: Element, Error, densityShortcut, filterMail, markMailRead, tabOf: () => "primary", search: { matches: () => true },
     interaction: defaults, interactionActions, matches, window: { desktop: { platform: "darwin" } },
     markRead: (_mail: Mail) => {}, openMail: (_mail: Mail) => {},
-    openReaderMail: (mail: Mail) => scope.openMail(mail), navigationBlocked: false,
+    openReaderMail: (mail: Mail) => scope.openMail(mail), navigationBlocked: false, settingsModal: false,
   };
   scope.markRead = handler("markRead", scope);
   scope.openMail = handler("openMail", scope);

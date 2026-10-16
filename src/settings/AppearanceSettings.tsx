@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   accents, modes, readingLayouts, supportsGlass, themes, transparencyChoices,
@@ -19,14 +19,20 @@ type ThemeDialog =
 const noPreview = () => {};
 
 /** Mode, theme, accent, transparency and reading layout, grouped as System Settings groups them. */
-export function AppearanceSettings({ value, scheme, onChange, onPreview = noPreview }: {
+export function AppearanceSettings({ value, scheme, onChange, onPreview = noPreview, onModalChange }: {
   value: Appearance;
   scheme: Scheme;
   onChange: (value: Appearance) => boolean;
   onPreview?: (preview: ThemePreview | null) => void;
+  onModalChange?: (open: boolean) => void;
 }) {
   const glass = supportsGlass();
   const [dialog, setDialog] = useState<ThemeDialog | null>(null);
+  const dialogOpen = !!dialog;
+  useEffect(() => {
+    onModalChange?.(dialogOpen);
+    return () => onModalChange?.(false);
+  }, [dialogOpen, onModalChange]);
   const [error, setError] = useState("");
   const selected = value.customThemes.find((theme) => theme.id === value.theme);
   const full = value.customThemes.length >= maxCustomThemes;

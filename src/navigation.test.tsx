@@ -191,6 +191,62 @@ const sampleTheme = (): CustomTheme => ({
   },
 });
 
+test("theme dialogs retain edits and block Back/Forward until closed", async () => {
+  const theme = sampleTheme();
+  const app = await mount(true, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: theme.id, customThemes: [theme] })));
+  try {
+    const document = app.window.document;
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(app.button("Accounts"));
+    await app.native("back");
+    for (const action of ["Create theme", "Edit theme", "Import theme", "Delete theme"]) {
+      await app.click(themeButton(app, action));
+      const dialog = document.querySelector('[role="dialog"]')!;
+      const color = dialog.querySelector<HTMLInputElement>('[aria-label="Background hex"]');
+      if (color) await app.input(color, "#123456");
+      for (const direction of ["back", "forward"] as const) {
+        await app.native(direction);
+        await app.key(direction === "back" ? "ArrowLeft" : "ArrowRight", { altKey: true });
+        assert.equal(dialog.isConnected, true, `${action} must survive ${direction}`);
+        assert.equal(app.container.querySelector(".settings h1")?.textContent, "Appearance");
+        if (color) assert.equal(color.value, "#123456");
+      }
+      await app.click(themeButton(app, "Cancel"));
+    }
+    await app.native("forward");
+    assert.equal(app.container.querySelector(".settings h1")?.textContent, "Accounts", "closing restores navigation");
+    await app.native("back");
+    assert.equal(app.container.querySelector(".settings h1")?.textContent, "Appearance");
+  } finally { await app.close(); }
+});
+
+for (const mac of [false, true]) test(`${mac ? "Cmd" : "Ctrl"}+K cannot stack Commands over a theme dialog`, async () => {
+  const theme = sampleTheme();
+  const app = await mount(!mac, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: theme.id, customThemes: [theme] })));
+  try {
+    const document = app.window.document;
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    for (const action of ["Create theme", "Edit theme", "Import theme", "Delete theme"]) {
+      await app.click(themeButton(app, action));
+      const dialog = document.querySelector('[role="dialog"]')!;
+      await app.key("k", mac ? { metaKey: true } : { ctrlKey: true });
+      assert.equal(document.querySelectorAll('[role="dialog"]').length, 1, action);
+      assert.equal(document.querySelector('[role="dialog"]'), dialog);
+      if (mac) {
+        await app.key("[", { metaKey: true });
+        await app.key("]", { metaKey: true });
+        assert.equal(dialog.isConnected, true);
+      }
+      await app.key("Escape");
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+    }
+    await app.key("k", mac ? { metaKey: true } : { ctrlKey: true });
+    assert.equal(document.querySelector('[role="dialog"]')?.getAttribute("aria-label"), "Commands", "closing restores Commands");
+  } finally { await app.close(); }
+});
+
 test("custom theme preview cancels without saving; both palettes persist through an App restart", async () => {
   const app = await mount();
   let saved = "";

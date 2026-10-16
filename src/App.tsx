@@ -104,8 +104,9 @@ export function App() {
   const [trashMail, setTrashMail] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
   const [palette, setPalette] = useState(false);
+  const [settingsModal, setSettingsModal] = useState(false);
   useEffect(() => { if (updateInstalling) setPalette(false); }, [updateInstalling]);
-  const navigationBlocked = !!(compose || draftPicker || teach || snooze || trashMail || shortcuts || labelMail || connecting || updateInstalling);
+  const navigationBlocked = !!(compose || draftPicker || teach || snooze || trashMail || shortcuts || labelMail || connecting || updateInstalling || settingsModal);
   const navigate = (patch: Partial<MailLocation>, search = false) => {
     if (navigationBlocked) return false;
     navigation.visit(patch, search);
@@ -599,7 +600,7 @@ export function App() {
   };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (updateInstalling || draftPicker || contextMenu || event.defaultPrevented || event.isComposing ||
+      if (settingsModal || updateInstalling || draftPicker || contextMenu || event.defaultPrevented || event.isComposing ||
         event.repeat && !["ArrowUp", "ArrowDown"].includes(event.key)) return;
       const target = event.target;
       if (event.key.toLowerCase() === "k" && !event.altKey && !event.shiftKey &&
@@ -932,6 +933,7 @@ export function App() {
                 return true;
               }}
               onThemePreview={setThemePreview}
+              onModalChange={setSettingsModal}
             />
           </div>
         ) : (

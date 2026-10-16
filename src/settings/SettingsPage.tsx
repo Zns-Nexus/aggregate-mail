@@ -41,6 +41,7 @@ export function SettingsPage({
   onAppearance,
   onComposePreferences,
   onThemePreview,
+  onModalChange,
 }: {
   state: State;
   busy: boolean;
@@ -59,6 +60,7 @@ export function SettingsPage({
   onAppearance: (value: Appearance) => boolean;
   onComposePreferences?: (value: ComposePreferences) => Promise<void>;
   onThemePreview?: (preview: ThemePreview | null) => void;
+  onModalChange?: (open: boolean) => void;
 }) {
   const { on: privacy, names } = useContext(PrivacyContext);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -248,7 +250,7 @@ export function SettingsPage({
         </section>}
         {section === "appearance" && <section>
           <h1>Appearance</h1>
-          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} onPreview={onThemePreview} />
+          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} onPreview={onThemePreview} onModalChange={onModalChange} />
           {window.desktop && window.desktop.platform !== "darwin" ? (
             <>
               <h2>Window controls</h2>
