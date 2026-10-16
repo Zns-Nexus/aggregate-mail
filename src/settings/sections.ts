@@ -1,8 +1,9 @@
-import { AtSign, Compose, Cpu, Image as ImageIcon, Info, Keyboard, Palette, Plug, Sort } from "../ui/icons";
+import { AtSign, Bell, Compose, Cpu, Image as ImageIcon, Info, Keyboard, Palette, Plug, Sort } from "../ui/icons";
 
 // Settings shows one section at a time, chosen from the sidebar.
 export const settingsSections = [
   { id: "interaction", label: "Interaction", Icon: Keyboard },
+  { id: "notifications", label: "Notifications", Icon: Bell },
   { id: "accounts", label: "Accounts", Icon: AtSign },
   { id: "compose", label: "Compose", Icon: Compose },
   { id: "sorting", label: "Sorting", Icon: Sort },

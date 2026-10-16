@@ -61,3 +61,50 @@ test("toasts queue without dropping errors, deduplicate, redact, pause expiry an
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });
+
+test("configured durations, no expiry, permanent errors and filtering survive preference changes", async (context) => {
+  const dom = new JSDOM('<div id="root"></div>');
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const { createRoot } = await import("react-dom/client");
+  const { notificationDefaults } = await import("./notifications");
+  const root = createRoot(document.getElementById("root")!);
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  let preferences = { ...notificationDefaults, duration: 3000 as typeof notificationDefaults.duration };
+  let notices!: ReturnType<typeof useToasts>;
+  function Harness() {
+    notices = useToasts(preferences);
+    return <ToastStack toasts={notices.toasts} onDismiss={notices.dismiss} position={preferences.position} />;
+  }
+  const render = async () => { await act(async () => root.render(<Harness />)); };
+  const tick = async (ms: number) => { await act(async () => context.mock.timers.tick(ms)); };
+  try {
+    await render();
+    await act(async () => notices.push("Three seconds", "success"));
+    await tick(1000);
+    preferences = { ...preferences, duration: 10000 }; await render();
+    await act(async () => notices.push("Ten seconds"));
+    await tick(1999); assert.equal(notices.toasts.length, 2);
+    await tick(1); assert.deepEqual(notices.toasts.map((toast) => toast.text), ["Ten seconds"]);
+    await tick(7999); assert.equal(notices.toasts.length, 1);
+    await tick(1); assert.equal(notices.toasts.length, 0);
+    preferences = { ...preferences, duration: 0, confirmations: false, newMail: false }; await render();
+    await act(async () => {
+      notices.push("Hidden arrival", "info", "arrival:1"); notices.push("Hidden success", "success");
+      notices.push("Preview"); notices.push("Delivery uncertain", "error");
+    });
+    assert.deepEqual(notices.toasts.map((toast) => toast.text), ["Preview", "Delivery uncertain"]);
+    preferences = { ...preferences, duration: 3000 }; await render();
+    await tick(100000);
+    assert.deepEqual(notices.toasts.map((toast) => toast.text), ["Preview", "Delivery uncertain"]);
+    await act(async () => notices.dismiss(notices.toasts[0].id));
+    await act(async () => notices.push("Ordinary info"));
+    await tick(3000);
+    assert.deepEqual(notices.toasts.map((toast) => toast.text), ["Delivery uncertain"]);
+    assert.equal(document.querySelector('[role="alert"]')?.textContent, "Delivery uncertain");
+  } finally {
+    await act(async () => root.unmount()); context.mock.timers.reset(); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});

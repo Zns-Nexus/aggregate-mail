@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { act } from "react";
 import { JSDOM } from "jsdom";
+import { notificationDefaults, notificationKey, readNotifications, saveNotifications } from "./notifications";
+import type { NotificationPreferences } from "./notifications";
 import type { Draft, Mail, State } from "../shared/types";
 
 function deferred<T>() {
@@ -10,7 +12,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function mount() {
+async function mount(preferences?: NotificationPreferences) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/" });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
@@ -25,6 +27,7 @@ async function mount() {
     [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals))
     Object.defineProperty(globalThis, key, { configurable: true, value });
+  if (preferences) localStorage.setItem(notificationKey, JSON.stringify(preferences));
   const makeMail = (accountId: string, uid: number): Mail => ({
     id: `${accountId}:1:${uid}`, remoteId: `1:${uid}`, accountId,
     sender: "Team", address: "sender@example.com", to: "Private Reader <reader@example.com>",
@@ -50,6 +53,8 @@ async function mount() {
   const previousFetch = globalThis.fetch;
   const mutations: { id: string; action: string }[] = [];
   const drafts = new Map<string, Draft>();
+  let actionGate: Promise<void> | undefined;
+  let rejectAction = false;
   let readGate: Promise<void> | undefined;
   let trashGate: Promise<void> | undefined;
   let stateGate: ReturnType<typeof deferred<State>> | undefined;
@@ -66,6 +71,10 @@ async function mount() {
       const id = decodeURIComponent(url.slice("/api/messages/".length));
       const { action, until } = JSON.parse(String(options.body)) as { action: string; until?: number };
       mutations.push({ id, action });
+      if (["archive", "snooze", "unsnooze"].includes(action)) {
+        await actionGate;
+        if (rejectAction) return { ok: false, json: async () => ({ error: "Synthetic action failure" }) } as Response;
+      }
       if (action === "read") await readGate;
       if (action === "trash") await trashGate;
       const failed = (action === "read" && rejectRead) || (action === "trash" && rejectTrash);
@@ -125,6 +134,8 @@ async function mount() {
       const event = await key("Enter", target);
       if (!event.defaultPrevented && !target.disabled) await click(target);
     },
+    holdAction: () => { const gate = deferred<void>(); actionGate = gate.promise; return gate; },
+    failAction: () => { rejectAction = true; },
     holdRead: () => { const gate = deferred<void>(); readGate = gate.promise; return gate; },
     holdTrash: () => { const gate = deferred<void>(); trashGate = gate.promise; return gate; },
     holdState: () => { stateGate = deferred<State>(); return stateGate; },
@@ -209,11 +220,14 @@ test("pointer Snooze and keyboard Return to inbox use the local message action",
     await app.click(app.button("Snooze", app.toolbar()));
     await app.activate(app.button("In one hour", app.dialog()));
     assert.deepEqual(app.mutations, [{ id: "b:1:5", action: "snooze" }]);
+    assert.equal(app.container.querySelector(".toast-success .toast-text")?.textContent,
+      `Email snoozed until ${new Date(app.state.messages.find((mail) => mail.id === "b:1:5")!.snoozedUntil!).toLocaleString()}.`);
     assert.equal(app.row("b:1:5"), null);
     assert.equal(app.state.messages.find((mail) => mail.id === "a:1:5")!.snoozedUntil, null);
     await app.click(app.button("Snoozed1"));
     await app.activate(app.button("Return to inbox", app.toolbar()));
     assert.deepEqual(app.mutations.at(-1), { id: "b:1:5", action: "unsnooze" });
+    assert.ok([...app.container.querySelectorAll(".toast-success")].some((toast) => toast.textContent?.includes("Email returned to inbox.")));
     assert.equal(app.state.messages.find((mail) => mail.id === "b:1:5")!.snoozedUntil, null);
     await app.click(app.button("Inbox3"));
     await app.key("s");
@@ -258,6 +272,7 @@ test("Trash confirmation is private, cancelable and keyboard accessible; success
     await app.finish(gate);
     assert.equal(app.dialog(), null);
     assert.equal(app.row(), null);
+    assert.equal(app.container.querySelector(".toast-success .toast-text")?.textContent, "Email moved to Trash.");
     assert.ok(app.row("a:1:6"));
     assert.ok(app.row("b:1:5"));
     assert.match([...app.container.querySelectorAll(".toast-text")].at(-1)!.textContent!, /moved to Trash.*refresh failed/);
@@ -413,4 +428,145 @@ test("saved Compose settings reach new drafts, templates and account signatures 
     await app.key("k", body, { ctrlKey: true });
     assert.equal(app.dialog().getAttribute("aria-label"), "New message", "palette cannot replace a draft");
   } finally { await app.close(); }
+});
+
+test("archive reports confirmed success even when inbox refresh fails", async () => {
+  const app = await mount();
+  try {
+    await app.click(app.row());
+    app.failRefresh(true);
+    await app.click(app.button("Archive", app.toolbar()));
+    assert.equal(app.container.querySelector(".toast-success .toast-text")?.textContent, "Email archived.");
+    assert.match(app.container.querySelector(".toast-error")?.textContent || "", /Email archived\. Inbox refresh failed/);
+  } finally { await app.close(); }
+});
+
+test("dialog and context menu Return to inbox confirm the local action", async () => {
+  for (const entry of ["dialog", "context"] as const) {
+    const app = await mount();
+    try {
+      app.state.messages[0].snoozedUntil = Date.now() + 3600000;
+      await app.refresh();
+      await app.click(app.button("Snoozed1"));
+      if (entry === "dialog") {
+        await app.click(app.row());
+        await app.key("s");
+        await app.click(app.button("Return to inbox now", app.dialog()));
+      } else {
+        await act(async () => app.row().dispatchEvent(new app.container.ownerDocument.defaultView!.MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("Return to inbox"));
+        assert.ok(item); await app.click(item);
+      }
+      assert.equal(app.state.messages[0].snoozedUntil, null);
+      assert.equal(app.container.querySelector(".toast-success .toast-text")?.textContent, "Email returned to inbox.");
+    } finally { await app.close(); }
+  }
+});
+
+test("pending and failed mail actions never publish success", async () => {
+  for (const action of ["archive", "snooze", "unsnooze"] as const) {
+    const app = await mount();
+    try {
+      if (action === "unsnooze") {
+        app.state.messages[0].snoozedUntil = Date.now() + 3600000;
+        await app.refresh(); await app.click(app.button("Snoozed1"));
+      }
+      await app.click(app.row());
+      const gate = app.holdAction(); app.failAction();
+      await app.click(app.button(action === "archive" ? "Archive" : action === "snooze" ? "Snooze" : "Return to inbox", app.toolbar()));
+      if (action === "snooze") await app.click(app.button("In one hour", app.dialog()));
+      assert.equal(app.container.querySelector(".toast-success"), null);
+      await app.finish(gate);
+      assert.equal(app.container.querySelector(".toast-success"), null);
+      assert.match(app.container.querySelector(".toast-error")?.textContent || "", /Synthetic action failure/);
+    } finally { await app.close(); }
+  }
+});
+
+test("notification preferences validate stored fields and handle unavailable storage", async () => {
+  const app = await mount();
+  try {
+    for (const stored of ["{", "null", "[]", '"other"']) {
+      localStorage.setItem(notificationKey, stored);
+      assert.deepEqual(readNotifications(), notificationDefaults);
+    }
+    localStorage.setItem(notificationKey, JSON.stringify({ newMail: false, confirmations: "false", position: "left", duration: -1, extra: "ignored" }));
+    assert.deepEqual(readNotifications(), { ...notificationDefaults, newMail: false });
+    for (const duration of [0, 3000, 6000, 10000] as const) {
+      const value = { ...notificationDefaults, duration, position: "bottom-center" as const, confirmations: false };
+      assert.equal(saveNotifications(value), true); assert.deepEqual(readNotifications(), value);
+    }
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new Error("Unavailable"); } });
+    assert.deepEqual(readNotifications(), notificationDefaults);
+    assert.equal(saveNotifications(notificationDefaults), false);
+  } finally { await app.close(); }
+});
+
+test("mounted Notifications settings honor persisted choices, preview, changes, reset and write failure", async () => {
+  const app = await mount({ newMail: false, confirmations: false, position: "top-right", duration: 0 });
+  try {
+    assert.ok(app.container.querySelector(".toast-stack-top-right"));
+    app.state.unreadArrivals = 2; await app.refresh();
+    assert.equal(app.container.querySelector(".toast"), null);
+    await app.click(app.row()); await app.click(app.button("Archive", app.toolbar()));
+    assert.equal(app.container.querySelector(".toast-success"), null);
+    await app.click(app.button("Settings")); await app.click(app.button("Notifications"));
+    let settings = app.container.querySelector<HTMLElement>('[aria-label="Notification settings"]')!;
+    let switches = settings.querySelectorAll<HTMLInputElement>('input[role="switch"]');
+    assert.deepEqual([...switches].map((input) => input.checked), [false, false]);
+    const selects = settings.querySelectorAll("select");
+    assert.deepEqual([...selects].map((select) => select.value), ["top-right", "0"]);
+    assert.match(settings.textContent!, /Errors and delivery warnings remain until dismissed/);
+    await app.click(app.button("Preview notification", settings));
+    assert.equal(app.container.querySelector(".toast-info .toast-text")?.textContent, "This is a sample in-app notification.");
+    await act(async () => { selects[0].value = "bottom-center"; selects[0].dispatchEvent(new window.Event("change", { bubbles: true })); });
+    await act(async () => { selects[1].value = "3000"; selects[1].dispatchEvent(new window.Event("change", { bubbles: true })); });
+    assert.ok(app.container.querySelector(".toast-stack-bottom-center"));
+    assert.deepEqual(readNotifications(), { newMail: false, confirmations: false, position: "bottom-center", duration: 3000 });
+    await app.click(switches[0]); await app.click(switches[1]);
+    assert.equal(readNotifications().newMail, true); assert.equal(readNotifications().confirmations, true);
+    await app.click(app.button("Reset notification defaults", settings));
+    assert.deepEqual(readNotifications(), notificationDefaults);
+    assert.ok(app.container.querySelector(".toast-stack-bottom-right"));
+    await app.click(app.button("Close settings"));
+    app.state.unreadArrivals = 3; await app.refresh();
+    assert.ok([...app.container.querySelectorAll(".toast-info")].some((toast) => toast.textContent?.includes("1 new unread email.")));
+    for (const dismiss of [...app.container.querySelectorAll<HTMLButtonElement>(".toast-info button")]) await app.click(dismiss);
+    await app.click(app.button("Settings"));
+    settings = app.container.querySelector<HTMLElement>('[aria-label="Notification settings"]')!;
+    switches = settings.querySelectorAll<HTMLInputElement>('input[role="switch"]');
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { setItem() { throw new Error("Storage full"); } } });
+    await app.click(switches[0]);
+    assert.equal(switches[0].checked, false, "failed save retains in-memory selection");
+    assert.match(app.container.querySelector(".toast-error")?.textContent || "", /Notification settings could not be saved/);
+    await app.click(app.button("Close settings"));
+    app.state.unreadArrivals = 4; await app.refresh();
+    assert.equal([...app.container.querySelectorAll(".toast-info")].some((toast) => toast.textContent?.includes("new unread")), false);
+    await app.click(app.row("a:1:6")); await app.click(app.button("Archive", app.toolbar()));
+    assert.ok(app.container.querySelector(".toast-success"), "reset re-enabled action confirmations");
+  } finally { await app.close(); }
+});
+
+test("App routes persisted and changed durations to mounted preview notices", async (context) => {
+  const app = await mount({ ...notificationDefaults, confirmations: false, newMail: false, duration: 3000 });
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const tick = async (ms: number) => { await act(async () => context.mock.timers.tick(ms)); };
+  try {
+    await app.click(app.button("Settings")); await app.click(app.button("Notifications"));
+    await app.click(app.button("Preview notification"));
+    await tick(2999); assert.ok(app.container.querySelector(".toast-info"));
+    await tick(1); assert.equal(app.container.querySelector(".toast-info"), null);
+    const duration = app.container.querySelectorAll<HTMLSelectElement>('[aria-label="Notification settings"] select')[1];
+    const changeDuration = async (value: string) => {
+      await act(async () => { duration.value = value; duration.dispatchEvent(new window.Event("change", { bubbles: true })); });
+    };
+    await changeDuration("10000");
+    await app.click(app.button("Preview notification"));
+    await tick(9999); assert.ok(app.container.querySelector(".toast-info"));
+    await tick(1); assert.equal(app.container.querySelector(".toast-info"), null);
+    await changeDuration("0"); await app.click(app.button("Preview notification"));
+    await tick(100000); assert.ok(app.container.querySelector(".toast-info"));
+    await app.click(app.button("Dismiss notification"));
+    assert.equal(app.container.querySelector(".toast-info"), null);
+  } finally { await app.close(); context.mock.timers.reset(); }
 });

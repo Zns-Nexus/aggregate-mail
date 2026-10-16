@@ -1,3 +1,5 @@
+import { notificationDefaults, type NotificationPreferences } from "../notifications";
+import { NotificationSettings } from "./NotificationSettings";
 import { Fragment, useContext, useId, useState } from "react";
 import type { Account, State } from "../../shared/types";
 import { emptyComposePreferences, type ComposePreferences } from "../../shared/mail-features";
@@ -42,7 +44,13 @@ export function SettingsPage({
   onComposePreferences,
   onThemePreview,
   onModalChange,
+  notifications = notificationDefaults,
+  onNotifications,
+  onNotificationPreview,
 }: {
+  notifications?: NotificationPreferences;
+  onNotifications?: (value: NotificationPreferences) => void;
+  onNotificationPreview?: () => void;
   state: State;
   busy: boolean;
   perform: Perform;
@@ -71,6 +79,9 @@ export function SettingsPage({
         {section === "interaction" && <section>
           <h1>Interaction</h1>
           <InteractionSettings value={interaction} onChange={onInteraction} />
+        </section>}
+        {section === "notifications" && <section><h1>Notifications</h1>
+          <NotificationSettings value={notifications} onChange={(value) => onNotifications?.(value)} onPreview={() => onNotificationPreview?.()} />
         </section>}
         {section === "accounts" && <section>
           <h1>Accounts</h1>

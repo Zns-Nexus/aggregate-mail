@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add customizable floating notifications in Settings: separate new-mail and action switches, position, duration, preview and reset. Confirm Snooze with its return time, Return to inbox, Archive and Trash; preserve confirmed outcomes when inbox refresh fails. Errors and uncertain-send warnings remain until dismissed.
+
 - Keep the release-validator test loader as a file URL so Node can import it on Windows.
 
 - Keep theme dialogs inside the app's navigation and shortcut guards so Back/Forward cannot discard unsaved edits and Commands cannot open a second modal. Restore navigation and commands when the theme dialog closes.
