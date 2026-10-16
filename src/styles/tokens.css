@@ -128,8 +128,8 @@
   --surface: #fdfefd;
 }
 
-/* Transparency: the OS material shows through the window frame and sidebar,
-   tinted by the theme. Working panes stay opaque, as in macOS Mail. */
+/* Transparency: the OS material shows through the window frame, sidebar and
+   working panes, tinted by the theme. */
 :root[data-glass],
 :root[data-glass] body {
   background: transparent;
@@ -140,9 +140,21 @@
 :root[data-glass] .sidebar {
   background: color-mix(in srgb, var(--bg) 20%, transparent);
 }
+:root[data-glass] .list-pane,
+:root[data-glass] .reader-pane,
+:root[data-glass] .settings-pane,
+:root[data-glass] .context {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
 :root[data-glass][data-scheme="light"] .app {
   background: color-mix(in srgb, var(--bg) 40%, transparent);
 }
 :root[data-glass][data-scheme="light"] .sidebar {
   background: color-mix(in srgb, var(--bg) 30%, transparent);
+}
+:root[data-glass][data-scheme="light"] .list-pane,
+:root[data-glass][data-scheme="light"] .reader-pane,
+:root[data-glass][data-scheme="light"] .settings-pane,
+:root[data-glass][data-scheme="light"] .context {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
 }
