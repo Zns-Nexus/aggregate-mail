@@ -64,6 +64,8 @@ jobs:
           node-version: 24
           cache: npm
       - name: Set build version
+        env:
+          EMC2_BUILD_REF: ${{ inputs.ref || github.ref }}
         run: node scripts/set-build-version.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm test

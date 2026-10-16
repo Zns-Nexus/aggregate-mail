@@ -240,7 +240,7 @@
 .row.unread time {
   color: var(--text);
 }
-.stacked {
+.row.stacked {
   height: calc(var(--mail-row-high) - 2px);
 }
 .stacked .row-text {

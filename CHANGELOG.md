@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stamp reusable release builds from the checked-out tag so published installers keep the stable version; reject tags that disagree with the package version.
+
 - Stack the mail features on the Linux fallback, keeping its protection warning separate from the update icon and retaining draft and account-privacy guards.
 
 - On Linux without system credential encryption, start fresh profiles with a local 0600 mail key and show a persistent weaker-protection warning instead of failing. Profiles protected by the system keyring still stop, now with a clear keyring/reset message instead of a raw decrypt error. macOS and Windows still stop when encryption is unavailable. See ADR 0027.
@@ -11,6 +13,10 @@
 - Keep disabled row Trash buttons hidden until hover or keyboard focus so they cannot overlap mail timestamps during sync. Preserve always-visible actions on touch devices.
 - Add custom themes in Settings, Appearance with light and dark palettes, background/accent generation, advanced color controls and live preview. Create, edit, duplicate, export and import Emc² JSON themes; confirm deletion and restore the previous appearance on Cancel. Save the theme library and selection together on this device, retaining the editor if storage fails.
 - Extend window transparency through the mail list, reader, sender panel and Settings, with a stronger neutral tint in light mode. Keep foreground text sharp and Off opaque.
+- Put Drafts directly below New message in the sidebar and Settings beside Sync as a gear icon.
+- Keep the theme picker above the accent swatches by limiting the fixed stacked-row height to mail rows.
+
+- Autosave compose and reply text to encrypted local drafts, with visible save status and recovery from the Drafts button. Closing compose keeps the draft; discarding is a separate confirmed action. Reconcile lost save responses without overwriting newer revisions. Save a durable uncertainty marker before sending, require confirmation before resending an uncertain draft and treat accepted-send cleanup failures as warnings. Draft writes remain available during sync and stop during updater quiescence. Disconnect explicitly warns before permanently deleting the account's local drafts, including uncertain sends.
 
 - Rebase the sidebar redesign onto current main, preserving macOS key migration and test timeouts. Reconcile contributor guidance, component links and ADR numbering.
 

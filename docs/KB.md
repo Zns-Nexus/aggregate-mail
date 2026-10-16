@@ -45,6 +45,8 @@ Windows offers Off, Subtle (Mica) and Glass (Acrylic); macOS offers Off and Glas
 
 The renderer uses macOS-style chrome in light or dark on every desktop platform: a themed window frame and sidebar, near-neutral mail/reader/sender panes, grouped Settings controls and rounded menus/dialogs. `src/styles/tokens.css` defines every color, surface and radius token for both schemes. Pane and menu transitions are brief opacity/transform animations; there are no looping effects or wheel-event handlers. Scroll containers use native smooth programmatic scrolling and contained overscroll. New panes reset instantly, and reduced-motion preferences disable smooth scrolling and shorten animations.
 
+The mail sidebar places Drafts directly below New message. Settings is a labeled gear icon beside Sync in its footer. The theme picker grows with its previews and labels; the fixed 48px stacked-row height applies only to mail rows, so accent swatches stay below the theme choices.
+
 Mail date headings stick at `top: 0`; the removed history toolbar no longer reserves a 42px offset. List spacing uses 8px pane gutters, 6px row insets, 12px row padding and 1px vertical margins. Comfortable row heights are 48px, 34px and 28px for high, medium and low relevance; compact rows are 24px. The 150px sender column and 8px subject gap also set the 158px two-line preview indent. Filter/action padding and sender-panel padding are reduced to match the tighter list.
 
 Right-click mail rows or opened messages to use Mark as read without opening the message. Already-read mail disables that item. Explicit read and read-on-open both use `markMailRead` in `src/mail-ui.ts`, coalesce pending requests and call the existing read endpoint independently of other UI busy state. Requests wait behind server sync; failures keep unread state and can be retried from the menu or by reopening mail. Other context-menu provider writes remain disabled during sync.
@@ -73,6 +75,104 @@ Ctrl plus/minus dispatch precedes the closed-filter combobox guard, preserving e
 
 Synthetic mounted-App tests cover combined controls, empty-result reset, privacy-safe account labels, account-specific compose, setup entry, keyboard ownership, read-on-open, history, section folding and collapse focus. They do not prove actual account connections or native appearance.
 
+## Encrypted local draft API
+
+`server/drafts.ts` stores local compose/reply snapshots as encrypted `draft`
+records using the existing data key. Draft recovery never invokes a provider.
+The renderer uses these routes for autosave and explicit recovery. See
+[ADR 0037](adr/0037-encrypted-local-drafts.md) for persistence and
+[ADR 0038](adr/0038-compose-autosave-and-recovery.md) for caller coordination.
+
+All draft routes are under `/api/accounts/:accountId/drafts` and inherit the
+Host, origin, desktop-session, CSRF and `Cache-Control: no-store` guards.
+The routes allow writes during sync. Updater quiescence rejects their writes
+with 503; reads remain available. Synchronous transactions finish before a
+quiesce can begin, so they cannot leave admitted asynchronous draft work.
+
+| Method and suffix | Request | Result |
+| --- | --- | --- |
+| GET `/` | No body | At most 100 summaries, newest first with ID ties |
+| POST `/` | Draft content | 201 with a new server-generated UUID, revision 1 and full snapshot |
+| GET `/:id` | No body | Full snapshot |
+| PUT `/:id` | Draft content plus current `revision` | Full snapshot with revision increased by one |
+| DELETE `/:id` | Current `revision`, plus `confirmUnknown: true` when needed | `{ ok: true }` |
+
+Draft content requires `to`, `subject` and `body` strings, including empty or
+unfinished values. Optional fields are `inReplyTo`, `threadId`, `references`
+and `sendUnknown`. Limits are 10,000 UTF-16 code units for `to`, 998 for subject
+and reply/reference strings, 100 for thread ID, 100 references and 1,000,000
+for body. The existing 2 MB HTTP JSON limit also applies. Unknown body fields
+and invalid revisions are rejected with 400. Sending retains its separate,
+stricter validation. PUT replaces the content snapshot; omitted optional reply
+fields are removed. Omitted `sendUnknown` preserves a stored true value.
+
+Every snapshot includes `id`, `accountId`, `revision`, `updatedAt` and a boolean
+`sendUnknown`. Summaries contain those fields plus `to` and `subject`; bodies
+and reply metadata require GET by ID. Missing accounts/drafts and another
+account's draft IDs return 404. Revision conflicts, capacity exhaustion,
+clearing a true uncertainty flag or deleting it without confirmation return
+409. Creation refuses draft 101 without eviction. Account removal atomically
+purges that account's drafts, including uncertain drafts, alongside its cached
+mail and labels. Reconnecting an account does not remove its drafts.
+Settings, Accounts warns about permanent draft deletion, including uncertain
+sends, before Disconnect. Declining the confirmation leaves them intact.
+
+`src/compose/draft-session.ts` serializes writes per draft and retains local
+edits until a save is acknowledged. Create once, then use only the returned ID
+and latest acknowledged revision for PUT. A lost create response pauses saves;
+Retry never repeats POST. Save separate copy requires confirmation and retains
+the possible original. A lost PUT response requires GET and exact revision and
+snapshot reconciliation before another save. A conflict never adopts a newer
+revision to overwrite it. Explicit deletion stops queued autosaves. PUT never
+creates a missing record, so delayed saves cannot restore a deleted ID.
+
+Before sending, the renderer freezes editing, drains autosaves, saves the exact
+snapshot with `sendUnknown: true`, and await its acknowledgement. If that save
+is unacknowledged, do not send. Only then call the existing `/api/send` once.
+An acknowledged `ok: true`, including a Sent-copy warning, proves provider
+acceptance only, never recipient delivery. The caller may then DELETE the exact
+frozen revision with `confirmUnknown: true`. A dropped send response, crash,
+or unacknowledged deletion retains uncertainty until the caller reads current
+state. Never infer an unsent message from a recovered draft or retry a send
+because copying to Sent failed. Resending an uncertain draft requires explicit
+duplicate-risk confirmation. Manual discard also requires explicit confirmation.
+Editing cannot clear the marker. There is no receipt engine, outbox or retry.
+
+Drafts sits directly below New message in the sidebar and lists account-scoped summaries; opening one fetches its body
+without sending. Privacy mode omits private summary subjects and recipients.
+Close, Escape and Keep draft wait for the latest save. Discard is separately
+confirmed. Save errors keep text open and protect unload. Saved text survives
+ordinary close; the native prompt warns before closing with unsaved changes or
+an uncertain send. Changing From retains a saved original and confirms a copy
+in the selected account. The existing renderer updater drain also waits for
+draft actions and the current save. MCP send callers remain unchanged and do
+not use this draft lifecycle. Unacknowledged edits cannot be guaranteed.
+SQLite uses WAL with explicit FULL synchronization; acknowledged saves survive
+the tested process restart/crash with the same key. This does not prove device
+power-loss behavior or disk survival. Native interactive close/crash behavior
+requires separate installed-app acceptance.
+
+Focused synthetic service and subprocess verification:
+
+```sh
+node --import tsx --test --test-timeout=30000 server/drafts.test.ts
+node --import tsx --test --test-timeout=30000 src/draft-session.test.tsx src/draft-recovery.test.tsx src/compose-send.test.tsx src/update-lifecycle.test.tsx
+npm run build
+```
+
+The tests inspect DB/WAL bytes for synthetic draft plaintext, reopen in fresh
+processes, hard-kill a writer after committed saves/deletion and verify recovery
+with the original key. They cover account isolation/removal, capacity, strict
+validation, authentication, conflicting saves/deletes, sticky uncertainty and
+sync/updater guards. They use temporary stores and no real accounts or sends.
+Mounted synthetic renderer tests use the authenticated HTTP routes and encrypted
+store to cover rapid edits, pending-save close protection, remount recovery,
+lost create responses, failed updates, explicit copies, account switching, private
+summaries, send preparation and frozen fields, persistent uncertainty, confirmed
+resend, accepted-send cleanup, Keep and Discard. These use a simulated DOM and
+fake sync/send boundaries. Full-suite and isolated desktop verification remain
+separate checks.
+
 ## Desktop targets
 
 ### App updates
@@ -81,7 +181,7 @@ Synthetic mounted-App tests cover combined controls, empty-result reset, privacy
 
 `electron-updater` is pinned to 6.8.10. Its provider uses the validated candidate; the renderer cannot supply a URL, path or executable arguments. IPC accepts only the current window's main frame at the application origin. Automatic download, install on ordinary quit, prereleases, downgrades, web installers and differential downloads are disabled. Packaged updater configuration supplies the library cache location and any configured Windows publisher check. The app preserves that signature check; SHA512 verification establishes file integrity against the selected release metadata, not an independent publisher identity.
 
-The update icon at the top right of the window opens dismissible details without issuing a command. Capture-phase Escape closes details and restores icon focus without closing Search or the reader. Right-side window controls retain their corner placement. The details panel's Download, install and restart action downloads, verifies the cached regular nonsymlink file, pauses admission of mail work, drains queued sync/mutations and active renderer/MCP sends, and waits for the renderer's send result. Native close still honors draft and unknown-send protection. Keep editing resumes mail without invoking the installer. Accepted close is followed by another file hash check and the platform library handoff. Drain, verification and launch failures resume mail; if the window already closed, the app opens it again. A normal quit never installs a downloaded update.
+The update icon at the top right of the window opens dismissible details without issuing a command. Capture-phase Escape closes details and restores icon focus without closing Search or the reader. Right-side window controls retain their corner placement. The details panel's Download, install and restart action downloads, verifies the cached regular nonsymlink file, pauses admission of mail work, drains queued sync/mutations and active renderer/MCP sends, and waits for renderer send results and draft saves. Native close still honors draft and unknown-send protection. Keep editing resumes mail without invoking the installer. Accepted close is followed by another file hash check and the platform library handoff. Drain, verification and launch failures resume mail; if the window already closed, the app opens it again. A normal quit never installs a downloaded update.
 
 The download stream checks the candidate's byte limit before hashing or file output, even without Content-Length. An oversized chunk stops the stream and aborts the request; cancellation also aborts a request still waiting for headers. SHA512 and configured Windows publisher checks remain active.
 
@@ -435,7 +535,7 @@ node --import tsx --test src/compose-send.test.tsx server/send-provider.test.ts
 
 [Renderer regressions](../src/compose-send.test.tsx) execute the compose submission function, form event handlers and rendered status text. A loopback HTTP server records a submission and drops its response, then verifies canceled and confirmed resends. Tests cover uncertainty through edits, shared pointer/keyboard form handling, validation, close prompts, overlapping submissions and refresh failure. [Provider regressions](../server/send-provider.test.ts) run the real provider and shared send operation with synthetic SMTP and IMAP adapters. They cover accepted SMTP, Sent-copy and cleanup warnings, invalid input and SMTP failure without an IMAP connection. These tests do not drive a native window, verify browser event dispatch or prove real mail delivery.
 
-Attempt identifiers, persistent receipts, automatic recovery, automatic retries and a durable outbox are deferred. Send uncertainty exists only on the open in-memory draft. Sources: [compose](../src/compose/ComposePanel.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
+Attempt identifiers, persistent receipts, automatic retries and a durable outbox are deferred. The renderer persists send uncertainty with the encrypted draft before sending; reopening the draft retains the warning and never sends automatically. Sources: [compose](../src/compose/ComposePanel.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
 
 The provider fixture calls [closeStore](../server/store.ts) before deleting its temporary database directory. Windows cannot remove the directory while SQLite holds its files open.
 
@@ -456,7 +556,7 @@ Keep credentials, personal contact details, absolute machine paths, private host
 
 Download `installer-<platform>` from the workflow run's Artifacts section. Each artifact expires after one day. Reruns replace artifacts for rebuilt platforms; successful platform jobs that are not rerun retain their earlier artifacts. Missing installer files fail the job. Superseded runs are canceled, and each job has a 20-minute limit.
 
-[The build-version step](../scripts/set-build-version.mjs) gives non-tag runs the version `<release>-ci.<GITHUB_RUN_ID>.<GITHUB_RUN_ATTEMPT>`. It updates `package.json` and both root lockfile versions only in the runner checkout. Each new run or rerun has a distinct application version and installer filename. The macOS bundle build version and Windows file version use the workflow run number and attempt. Tagged builds keep the exact release version and reject a mismatched tag. Bump and commit the source release version before each new release tag. See [ADR 0004](adr/0004-ci-build-versions.md).
+[The build-version step](../scripts/set-build-version.mjs) gives non-tag runs the version `<release>-ci.<GITHUB_RUN_ID>.<GITHUB_RUN_ATTEMPT>`. It updates `package.json` and both root lockfile versions only in the runner checkout. Each new run or rerun has a distinct application version and installer filename. The macOS bundle build version and Windows file version use the workflow run number and attempt. The workflow passes the checked-out ref as `EMC2_BUILD_REF`; it takes precedence over the caller's `GITHUB_REF`. Both bare `vX.Y.Z` tags from the auto-release workflow and `refs/tags/vX.Y.Z` keep the exact release version and reject a mismatched tag. Branch and commit builds retain the CI suffix. Bump and commit the source release version before each new release tag. See [ADR 0004](adr/0004-ci-build-versions.md).
 
 The repository is public. Standard GitHub-hosted runner execution is free under [GitHub's Actions billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions). Artifact storage shares the owner's plan allowance with GitHub Packages; excess artifact storage is billed at $0.25 USD per GB-month. npm cache storage has a separate 10 GB included allowance per repository. One-day artifact retention limits storage use but does not set an account spending cap. Recheck billing before making the repository private or selecting larger runners.
 

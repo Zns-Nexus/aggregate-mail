@@ -58,6 +58,7 @@ export function Sidebar({
     busy: boolean;
     onAddAccount: () => void;
     onCompose: () => void;
+    onDrafts: () => void;
     onSettings: () => void;
     onCommands?: () => void;
     shortcut: (action: "compose" | "settings") => string;
@@ -128,10 +129,9 @@ export function Sidebar({
               <ComposeIcon color="currentColor" size={16} />
               New message
             </button>
-            <button aria-label="Settings" aria-pressed={false} title={`Settings (${mail.shortcut("settings")})`}
-              onClick={mail.onSettings}>
-              <Settings color="currentColor" size={16} />
-              Settings
+            <button disabled={mail.blocked || mail.busy || !mail.accounts.length} onClick={mail.onDrafts}>
+              <MailIcon color="currentColor" size={16} />
+              Drafts
             </button>
           </SlidingNav>
           {mail.onCommands && <div className="sidebar-group sidebar-primary">
@@ -209,6 +209,10 @@ export function Sidebar({
                 : mail.lastSync
                   ? `Synced ${relative(mail.lastSync)}`
                   : "Not synced"}
+            </button>
+            <button className="icon" aria-label="Settings" title={`Settings (${mail.shortcut("settings")})`}
+              onClick={mail.onSettings}>
+              <Settings color="currentColor" size={16} />
             </button>
           </div>
         </div>

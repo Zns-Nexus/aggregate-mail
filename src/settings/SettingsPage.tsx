@@ -107,7 +107,7 @@ export function SettingsPage({
                   onClick={() => {
                     if (
                       confirm(
-                        `Disconnect ${privacy ? redactPrivateText(a.email, names) : a.email}? This removes its local mail cache. Your provider mailbox stays intact.`,
+                        `Disconnect ${privacy ? redactPrivateText(a.email, names) : a.email}? This permanently deletes its local drafts, including messages that may already have been sent, and removes its local mail cache. Your provider mailbox stays intact.`,
                       )
                     )
                       void perform(
@@ -302,8 +302,9 @@ export function SettingsPage({
             for recovery. Closing the desktop window keeps it
             running in the tray; use Quit in the tray menu to exit. New unread
             mail shows a desktop notification. Archive moves mail out of your
-            provider's inbox. Snooze is local to this client. Disconnect removes the
-            local account and cache without changing your mailbox.
+            provider's inbox. Snooze is local to this client. Disconnect permanently deletes
+            all local drafts for that account, including messages that may already have been sent,
+            and removes the local account and cache without changing your mailbox.
           </p>
         </section>}
       </div>

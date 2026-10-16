@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { act } from "react";
 import { JSDOM } from "jsdom";
-import type { State } from "../shared/types";
+import type { Draft, DraftContent, State } from "../shared/types";
 import type { UpdateBridge, UpdateState } from "../shared/updates";
 
 test("mounted App drains its send promise and retains the real unload guard for an unknown draft", async () => {
@@ -30,11 +30,21 @@ test("mounted App drains its send promise and retains the real unload guard for 
   const send = new Promise<Response>((_resolve, reject) => { rejectSend = reject; });
   const oldFetch = globalThis.fetch;
   let sends = 0;
-  globalThis.fetch = async (input) => {
+  let saved: Draft | undefined;
+  globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url === "/api/state") return new Response(JSON.stringify({ ...state, csrf: "synthetic-csrf" }));
     if (url === "/api/sync") return new Response(JSON.stringify({ errors: [] }));
-    if (url === "/api/send") { sends++; return send; }
+    if (url.startsWith("/api/accounts/a/drafts")) {
+      const content = JSON.parse(String(init?.body)) as DraftContent;
+      saved = { ...content, id: "synthetic-draft", accountId: "a", revision: (saved?.revision || 0) + 1,
+        updatedAt: Date.now(), sendUnknown: !!content.sendUnknown };
+      return new Response(JSON.stringify(saved));
+    }
+    if (url === "/api/send") {
+      assert.equal(saved?.sendUnknown, true, "Uncertainty must be saved before send admission");
+      sends++; return send;
+    }
     throw new Error("Unexpected synthetic request");
   };
   const { createRoot } = await import("react-dom/client");
@@ -77,7 +87,7 @@ test("mounted App drains its send promise and retains the real unload guard for 
     assert.equal(unload(), false, "An empty composer has no discard guard");
     const to = form.querySelector<HTMLInputElement>('input[type="email"]')!, body = form.querySelector<HTMLTextAreaElement>("textarea")!;
     await fill(to, "recipient@example.test"); await fill(body, "Synthetic message");
-    assert.equal(unload(), true, "The real App unload listener sees the draft");
+    assert.equal(unload(), false, "The latest acknowledged ordinary draft is safe to recover after close");
     await act(async () => {
       form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
       form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));

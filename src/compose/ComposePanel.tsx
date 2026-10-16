@@ -3,25 +3,19 @@ import type { Account } from "../../shared/types";
 import { emptyComposePreferences, type ComposePreferences } from "../../shared/mail-features";
 import { Dialog } from "../ui/Dialog";
 import { changeComposeAccount, ComposePreferenceControls } from "./ComposePreferences";
+import type { Compose, DraftProgress } from "./draft-session";
 
-export type Compose = {
-  accountId: string;
-  to: string;
-  subject: string;
-  body: string;
-  inReplyTo?: string;
-  threadId?: string;
-  references?: string[];
-  sendUnknown?: boolean;
-};
+export type { Compose } from "./draft-session";
 export const unknownSendNotice =
   "Send status unknown. This message may already have been sent. Sending again may send a duplicate.";
 
 export async function sendCompose(
   draft: Compose,
-  { lock, send, reload, setDraft, setBusy, setNotice, confirm }: {
+  { lock, prepare, send, complete, reload, setDraft, setBusy, setNotice, confirm }: {
     lock: { current: boolean };
-    send: (draft: Compose) => Promise<{ warning?: string }>;
+    prepare: () => Promise<void>;
+    send: (draft: Compose) => Promise<{ ok?: boolean; warning?: string }>;
+    complete: () => Promise<void>;
     reload: () => Promise<unknown>;
     setDraft: Dispatch<SetStateAction<Compose | null>>;
     setBusy: (busy: boolean) => void;
@@ -38,20 +32,35 @@ export async function sendCompose(
   lock.current = true;
   setBusy(true);
   try {
-    const result = await send(draft);
+    try {
+      await prepare();
+    } catch {
+      setNotice("Draft save could not be confirmed. No send was attempted. Keep this window open and check the draft save status.");
+      return;
+    }
+    let result: { warning?: string };
+    try {
+      const accepted = await send(draft);
+      if (accepted.ok !== true) throw new Error("Unconfirmed send");
+      result = accepted;
+    } catch {
+      setDraft((current) => current ? { ...current, sendUnknown: true } : current);
+      setNotice(unknownSendNotice);
+      return;
+    }
+    let sentNotice = result.warning || "Email sent.";
+    try {
+      await complete();
+    } catch {
+      sentNotice += "\nSaved draft cleanup could not be confirmed. A recovered copy may remain. Do not resend.";
+    }
     setDraft(null);
-    const sentNotice = result.warning || "Email sent.";
     setNotice(sentNotice);
     try {
       await reload();
     } catch {
       setNotice(`${sentNotice}\nInbox refresh failed. Refresh the inbox separately.`);
     }
-  } catch {
-    setDraft((current) =>
-      current ? { ...current, sendUnknown: true } : current,
-    );
-    setNotice(unknownSendNotice);
   } finally {
     lock.current = false;
     setBusy(false);
@@ -63,6 +72,10 @@ export function ComposePanel({
   accounts,
   busy,
   onClose,
+  onDiscard,
+  onRetry,
+  onSaveCopy,
+  progress,
   onSend,
   preferences = emptyComposePreferences,
 }: {
@@ -71,21 +84,17 @@ export function ComposePanel({
   accounts: Account[];
   busy: boolean;
   onClose: () => void;
+  onDiscard: () => void;
+  onRetry: () => void;
+  onSaveCopy: () => void;
+  progress: DraftProgress;
   onSend: () => void;
   preferences?: ComposePreferences;
 }) {
   return (
     <Dialog
       title={draft.inReplyTo ? "Reply" : "New message"}
-      onClose={() => {
-        if (busy) return;
-        if (
-          draft.sendUnknown
-            ? confirm("Discard this draft? This message may already have been sent.")
-            : !(draft.body || draft.to || draft.subject) || confirm("Discard this unsent draft?")
-        )
-          onClose();
-      }}
+      onClose={() => { if (!busy) onClose(); }}
     >
       <form
         className="compose-form"
@@ -99,6 +108,7 @@ export function ComposePanel({
           From
           <select
             value={draft.accountId}
+            disabled={busy || progress.phase === "saving" || progress.phase === "error"}
             onChange={(e) =>
               setDraft(changeComposeAccount(draft, e.target.value, preferences))
             }
@@ -115,6 +125,8 @@ export function ComposePanel({
           <input
             type="email"
             required
+            disabled={busy}
+            maxLength={10000}
             value={draft.to}
             onChange={(e) => setDraft({ ...draft, to: e.target.value })}
           />
@@ -122,6 +134,7 @@ export function ComposePanel({
         <label>
           Subject
           <input
+            disabled={busy}
             value={draft.subject}
             maxLength={998}
             onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
@@ -131,12 +144,21 @@ export function ComposePanel({
           aria-label="Message body"
           placeholder="Write your message"
           required
+          disabled={busy}
+          maxLength={1000000}
           value={draft.body}
           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
         />
         <ComposePreferenceControls draft={draft} preferences={preferences} busy={busy} onChange={setDraft} />
         {draft.sendUnknown && (
           <p className="dialog-copy" role="status">{unknownSendNotice}</p>
+        )}
+        <p className="dialog-copy" role="status">{progress.message}</p>
+        {progress.phase === "error" && (
+          <div className="draft-recovery-actions">
+            <button type="button" disabled={busy} onClick={onRetry}>Retry save</button>
+            <button type="button" disabled={busy} onClick={onSaveCopy}>Save separate copy</button>
+          </div>
         )}
         <div className="form-actions">
           <span>
@@ -145,9 +167,17 @@ export function ComposePanel({
               ? "Reply from the original account"
               : "Send from the selected account"}
           </span>
-          <button className="button" disabled={busy} type="submit">
-            {busy ? "Sending" : "Send"}
+          <button className="button" disabled={busy || progress.phase === "error"} type="submit">
+            {busy ? "Please wait" : "Send"}
           </button>
+        </div>
+        <div className="draft-recovery-actions">
+          <button type="button" disabled={busy} onClick={onClose}>Keep draft</button>
+          <button type="button" disabled={busy} onClick={() => {
+            if (confirm(draft.sendUnknown
+              ? "Discard this saved draft? This message may already have been sent."
+              : "Discard this draft from this device?")) onDiscard();
+          }}>Discard draft</button>
         </div>
       </form>
     </Dialog>

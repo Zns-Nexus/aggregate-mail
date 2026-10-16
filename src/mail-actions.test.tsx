@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { act } from "react";
 import { JSDOM } from "jsdom";
-import type { Mail, State } from "../shared/types";
+import type { Draft, Mail, State } from "../shared/types";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -49,6 +49,7 @@ async function mount() {
   };
   const previousFetch = globalThis.fetch;
   const mutations: { id: string; action: string }[] = [];
+  const drafts = new Map<string, Draft>();
   let readGate: Promise<void> | undefined;
   let trashGate: Promise<void> | undefined;
   let stateGate: ReturnType<typeof deferred<State>> | undefined;
@@ -83,6 +84,13 @@ async function mount() {
     } else if (url === "/api/compose-preferences" && options?.method === "PUT") {
       state.composePreferences = JSON.parse(String(options.body));
       data = state.composePreferences;
+    } else if (url.includes("/drafts") && ["POST", "PUT"].includes(options?.method || "")) {
+      const id = options?.method === "POST" ? `synthetic-draft-${drafts.size + 1}` : url.split("/")[5];
+      const content = JSON.parse(String(options?.body));
+      const draft: Draft = { ...content, id, accountId: url.split("/")[3],
+        revision: (drafts.get(id)?.revision || 0) + 1, updatedAt: 1, sendUnknown: !!content.sendUnknown };
+      drafts.set(id, draft);
+      data = draft;
     } else throw new Error(`Unexpected synthetic request: ${url}`);
     return { ok: true, json: async () => data } as Response;
   };
@@ -108,7 +116,7 @@ async function mount() {
   const toolbar = () => container.querySelector<HTMLElement>(".mail-actions")!;
   const dialog = () => container.querySelector<HTMLElement>('[role="dialog"]')!;
   return {
-    state, container, button, click, key, row, trash, toolbar, dialog, mutations,
+    state, container, button, click, key, row, trash, toolbar, dialog, mutations, drafts,
     refresh: async () => { await act(async () => changed?.()); },
     open: async (id = "a:1:5") => { await click(row(id)); await key("Enter", row(id)); },
     // JSDOM has no native button default action; model Enter after dispatching the key.
@@ -396,6 +404,10 @@ test("saved Compose settings reach new drafts, templates and account signatures 
     const from = dialog.querySelector<HTMLSelectElement>("select")!;
     await act(async () => { from.value = "b"; from.dispatchEvent(new app.container.ownerDocument.defaultView!.Event("change", { bubbles: true })); });
     assert.equal(body.value, "Template body\n\n-- \nPersonal signature");
+    assert.deepEqual([...app.drafts.values()].map((draft) => [draft.accountId, draft.body]), [
+      ["a", "Template body\n\n-- \nWork signature"],
+      ["b", "Template body\n\n-- \nPersonal signature"],
+    ], "Changing account retains the acknowledged original and saves a copy");
     assert.equal(app.mutations.length, 0);
     assert.equal((await app.key("ArrowDown", body)).defaultPrevented, false);
     await app.key("k", body, { ctrlKey: true });

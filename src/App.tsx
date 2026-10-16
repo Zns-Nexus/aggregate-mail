@@ -9,13 +9,15 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { inboxTab, inboxTabs, type InboxTab } from "../shared/inbox-tabs";
-import type { Mail, State } from "../shared/types";
+import type { Draft, Mail, State } from "../shared/types";
 import { emptyComposePreferences, type ComposePreferences } from "../shared/mail-features";
 import { initialCompose } from "./compose/ComposePreferences";
-import { coalesceReload } from "./api";
+import { ApiError, coalesceReload } from "./api";
 import { applyAppearance, hexColor, readAppearance, resolveScheme, saveAppearance } from "./appearance";
 import type { ThemePreview } from "./themes";
 import { ComposePanel, sendCompose, type Compose } from "./compose/ComposePanel";
+import { DraftPicker } from "./compose/DraftPicker";
+import { DraftSession, type DraftProgress } from "./compose/draft-session";
 import { ConnectDialog, ProviderChoices, type ImapProvider } from "./dialogs/ConnectDialog";
 import { LabelForm } from "./dialogs/LabelForm";
 import { ShortcutsDialog } from "./dialogs/ShortcutsDialog";
@@ -90,6 +92,11 @@ export function App() {
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const [connecting, setConnecting] = useState<ImapProvider | "choose" | null>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
+  const [draftPicker, setDraftPicker] = useState(false);
+  const [draftProgress, setDraftProgress] = useState<DraftProgress>({ phase: "idle", message: "Draft saves on this device as you type." });
+  const draftSession = useRef<DraftSession | null>(null);
+  const draftLock = useRef(false);
+  const draftTask = useRef<Promise<void> | undefined>(undefined);
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const sendTask = useRef<Promise<void> | undefined>(undefined);
   const [teach, setTeach] = useState<Mail | null>(null);
@@ -98,7 +105,7 @@ export function App() {
   const [shortcuts, setShortcuts] = useState(false);
   const [palette, setPalette] = useState(false);
   useEffect(() => { if (updateInstalling) setPalette(false); }, [updateInstalling]);
-  const navigationBlocked = !!(compose || teach || snooze || trashMail || shortcuts || labelMail || connecting || updateInstalling);
+  const navigationBlocked = !!(compose || draftPicker || teach || snooze || trashMail || shortcuts || labelMail || connecting || updateInstalling);
   const navigate = (patch: Partial<MailLocation>, search = false) => {
     if (navigationBlocked) return false;
     navigation.visit(patch, search);
@@ -242,11 +249,49 @@ export function App() {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const data = (await res.json()) as T & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Request failed. Try again.");
+      if (!res.ok) throw new ApiError(res.status, data.error || "Request failed. Try again.");
       return data;
     },
     [],
   );
+  const openCompose = (value: Compose | Draft) => {
+    const session = new DraftSession(api, value, (progress) => {
+      if (draftSession.current === session) {
+        setDraftProgress(progress);
+        setCompose(session.content);
+      }
+    });
+    draftSession.current = session;
+    setCompose(session.content);
+    setDraftProgress({ phase: "idle", message: "Draft saves on this device as you type." });
+    session.change(session.content);
+  };
+  const editCompose = (value: Compose) => {
+    const session = draftSession.current;
+    if (!session || sendLock.current || draftLock.current || updateInstalling) return;
+    if (value.accountId !== session.content.accountId) {
+      if (session.dirty) return;
+      if (session.stored && !confirm("Keep the existing draft and start a copy from the selected account?")) return;
+      openCompose(value);
+    } else {
+      session.change(value);
+      setCompose(session.content);
+    }
+  };
+  const runDraftAction = (task: (session: DraftSession) => Promise<void>) => {
+    const session = draftSession.current;
+    if (!session || busy || sendLock.current || draftLock.current || updateInstalling) return;
+    draftLock.current = true;
+    setBusy(true);
+    draftTask.current = task(session).catch(() => {
+      setNotice("Draft action could not be confirmed. Your text is still open. Check the draft save status before closing.");
+    }).finally(() => { draftLock.current = false; setBusy(false); });
+  };
+  const closeCompose = () => runDraftAction(async (session) => {
+    await session.flush();
+    draftSession.current = null;
+    setCompose(null);
+  });
   const reload = useMemo(() => coalesceReload(async () => {
     const revision = ++loadRevision.current;
     const data = await api<State & { csrf: string }>("/state");
@@ -334,6 +379,8 @@ export function App() {
   );
   useEffect(() => window.desktop?.updates?.onDrain(async () => {
     await sendTask.current;
+    await draftTask.current;
+    await draftSession.current?.flush();
     // Let the send result update the draft/unload guard before native close.
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }), []);
@@ -487,10 +534,10 @@ export function App() {
       setConnecting("choose");
       return;
     }
-    if (compose) return;
+    if (compose || draftPicker || updateInstalling) return;
     const accountId = reply?.accountId ||
       (accountFilter !== "all" ? accountFilter : state.accounts[0].id);
-    setCompose(initialCompose(accountId, state.composePreferences ?? emptyComposePreferences, {
+    openCompose(initialCompose(accountId, state.composePreferences ?? emptyComposePreferences, {
       accountId:
         reply?.accountId ||
         (accountFilter !== "all" ? accountFilter : state.accounts[0].id),
@@ -552,7 +599,7 @@ export function App() {
   };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (updateInstalling || contextMenu || event.defaultPrevented || event.isComposing ||
+      if (updateInstalling || draftPicker || contextMenu || event.defaultPrevented || event.isComposing ||
         event.repeat && !["ArrowUp", "ArrowDown"].includes(event.key)) return;
       const target = event.target;
       if (event.key.toLowerCase() === "k" && !event.altKey && !event.shiftKey &&
@@ -630,7 +677,7 @@ export function App() {
   });
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
-      if (sendLock.current || compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
+      if (sendLock.current || draftLock.current || draftSession.current?.dirty || compose?.sendUnknown)
         e.preventDefault();
     };
     window.addEventListener("beforeunload", handle);
@@ -828,6 +875,7 @@ export function App() {
               busy,
               onAddAccount: () => setConnecting("choose"),
               onCompose: () => startCompose(),
+              onDrafts: () => setDraftPicker(true),
               onSettings: () => setSettings(true),
               onCommands: () => { if (!navigationBlocked) setPalette(true); },
               shortcut,
@@ -1073,24 +1121,54 @@ export function App() {
             }}
           />
         )}
+        {draftPicker && (
+          <DraftPicker accounts={state.accounts} api={api}
+            onClose={() => setDraftPicker(false)}
+            onOpen={(draft) => { setDraftPicker(false); openCompose(draft); }} />
+        )}
         {compose && (
           <ComposePanel
             draft={compose}
-            setDraft={setCompose}
+            setDraft={editCompose}
             accounts={state.accounts}
             preferences={state.composePreferences ?? emptyComposePreferences}
             busy={busy || updateInstalling}
-            onClose={() => setCompose(null)}
+            progress={draftProgress}
+            onClose={closeCompose}
+            onDiscard={() => runDraftAction(async (session) => {
+              await session.discard();
+              draftSession.current = null;
+              setCompose(null);
+            })}
+            onRetry={() => runDraftAction(async (session) => {
+              await session.retry();
+              setCompose(session.content);
+            })}
+            onSaveCopy={() => {
+              if (busy || sendLock.current || draftLock.current || updateInstalling) return;
+              if (confirm("Save a separate copy? The previous saved draft may still exist. Neither copy will be sent automatically.")) openCompose(draftSession.current?.content || compose);
+            }}
             onSend={() => {
-              if (busy || sendLock.current || updateInstalling) return;
-              sendTask.current = sendCompose(compose, {
+              const session = draftSession.current;
+              if (!session || busy || draftLock.current || sendLock.current || updateInstalling) return;
+              const snapshot = session.content;
+              sendTask.current = sendCompose(snapshot, {
                 lock: sendLock,
+                prepare: async () => {
+                  session.change({ ...snapshot, sendUnknown: true });
+                  setCompose(session.content);
+                  await session.flush();
+                },
                 send: (draft) => {
                   pushToast("Sending email…", "info");
                   return api("/send", "POST", draft);
                 },
+                complete: () => session.discard(),
                 reload,
-                setDraft: setCompose,
+                setDraft: (value) => {
+                  if (value === null) draftSession.current = null;
+                  setCompose(value);
+                },
                 setBusy,
                 setNotice: (text) => pushToast(text, text === "Email sent." ? "success" : "error"),
                 confirm: (message) => confirm(message),

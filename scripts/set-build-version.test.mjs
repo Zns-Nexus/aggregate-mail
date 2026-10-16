@@ -18,22 +18,33 @@ test("CI versions change with each run and rerun; releases match their tag", () 
   assert.throws(() => ciVersion("0.1.3", { ...env, GITHUB_RUN_ATTEMPT: "0" }));
 });
 
+test("reusable release builds use the checked-out tag instead of the caller's branch", () => {
+  for (const EMC2_BUILD_REF of ["v0.1.3", "refs/tags/v0.1.3"])
+    assert.equal(ciVersion("0.1.3", { ...env, EMC2_BUILD_REF }), "0.1.3");
+  for (const EMC2_BUILD_REF of ["v0.1.2", "refs/tags/v0.1.2"])
+    assert.throws(() => ciVersion("0.1.3", { ...env, EMC2_BUILD_REF }), /Release tag must match/);
+  for (const EMC2_BUILD_REF of ["refs/heads/main", "1234567890abcdef"])
+    assert.equal(ciVersion("0.1.3", { ...env, GITHUB_REF: "refs/tags/v0.1.2", EMC2_BUILD_REF }), "0.1.3-ci.100.1");
+});
+
 test("CLI updates both lockfile versions and native build metadata without changing dependencies", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "emc2-version-"));
   try {
-    const dependencies = { example: "1.0.0" };
-    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ version: "0.1.3", build: {}, dependencies }));
-    writeFileSync(path.join(dir, "package-lock.json"), JSON.stringify({ version: "0.1.3", packages: { "": { version: "0.1.3", dependencies } } }));
-    execFileSync(process.execPath, [fileURLToPath(new URL("./set-build-version.mjs", import.meta.url))], { cwd: dir, env: { ...process.env, ...env } });
-    const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
-    const lock = JSON.parse(readFileSync(path.join(dir, "package-lock.json"), "utf8"));
-    assert.equal(pkg.version, "0.1.3-ci.100.1");
-    assert.equal(lock.version, pkg.version);
-    assert.equal(lock.packages[""].version, pkg.version);
-    assert.deepEqual(pkg.dependencies, dependencies);
-    assert.deepEqual(lock.packages[""].dependencies, dependencies);
-    assert.equal(pkg.build.buildNumber, "7");
-    assert.equal(pkg.build.buildVersion, "7.1");
+    for (const [EMC2_BUILD_REF, expected] of [["", "0.1.3-ci.100.1"], ["v0.1.3", "0.1.3"], ["refs/tags/v0.1.3", "0.1.3"]]) {
+      const dependencies = { example: "1.0.0" };
+      writeFileSync(path.join(dir, "package.json"), JSON.stringify({ version: "0.1.3", build: {}, dependencies }));
+      writeFileSync(path.join(dir, "package-lock.json"), JSON.stringify({ version: "0.1.3", packages: { "": { version: "0.1.3", dependencies } } }));
+      execFileSync(process.execPath, [fileURLToPath(new URL("./set-build-version.mjs", import.meta.url))], { cwd: dir, env: { ...process.env, ...env, EMC2_BUILD_REF } });
+      const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+      const lock = JSON.parse(readFileSync(path.join(dir, "package-lock.json"), "utf8"));
+      assert.equal(pkg.version, expected);
+      assert.equal(lock.version, pkg.version);
+      assert.equal(lock.packages[""].version, pkg.version);
+      assert.deepEqual(pkg.dependencies, dependencies);
+      assert.deepEqual(lock.packages[""].dependencies, dependencies);
+      assert.equal(pkg.build.buildNumber, "7");
+      assert.equal(pkg.build.buildVersion, "7.1");
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

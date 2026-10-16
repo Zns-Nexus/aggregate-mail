@@ -15,6 +15,7 @@ function client(
   send: Parameters<typeof sendCompose>[1]["send"],
   reload: () => Promise<unknown> = async () => {},
   initialDraft = initial,
+  lifecycle: Partial<Pick<Parameters<typeof sendCompose>[1], "prepare" | "complete">> = {},
 ) {
   let draft: Compose | null = { ...initialDraft };
   let busy = false;
@@ -31,7 +32,8 @@ function client(
     notices, prompts, setDraft,
     approve: () => { confirmed = true; },
     submit: () => sendCompose(draft!, {
-      lock, send, reload, setDraft,
+      lock, send: async (draft) => ({ ok: true, ...await send(draft) }), reload, setDraft,
+      prepare: async () => {}, complete: async () => {}, ...lifecycle,
       setBusy: (value) => { busy = value; },
       setNotice: (value) => { notices.push(value); },
       confirm: (message) => { prompts.push(message); return confirmed; },
@@ -41,7 +43,8 @@ function client(
 
 const panel = (draft: Compose, onSend: () => void, setDraft = (_draft: Compose) => {}, onClose = () => {}) =>
   ComposePanel({
-    draft, onSend, setDraft, onClose, busy: false,
+    draft, onSend, setDraft, onClose, onDiscard: onClose, onRetry() {}, onSaveCopy() {},
+    progress: { phase: "saved", message: "Draft saved." }, busy: false,
     accounts: [{ id: "synthetic", email: "sender@example.com", provider: "imap" }],
   });
 
@@ -100,7 +103,7 @@ test("click and Enter form submissions share the unknown-send confirmation", asy
   const c = client(async () => { requests++; return {}; }, undefined, { ...initial, sendUnknown: true });
   let pending: Promise<void> | undefined;
   const form = panel(c.draft!, () => { pending = c.submit(); }).props.children;
-  const actions = form.props.children.at(-1);
+  const actions = form.props.children.find((child: { props?: { className?: string } }) => child?.props?.className === "form-actions");
   const button = actions.props.children[1];
   assert.equal(button.props.type, "submit");
   assert.equal(button.props.onClick, undefined);
@@ -144,7 +147,7 @@ test("pre-submission form validation never calls send", () => {
   assert.equal(sends, 0);
 });
 
-test("closing an unknown draft warns about possible delivery without calling it unsent", (t) => {
+test("explicitly discarding an unknown draft warns about possible delivery without calling it unsent", (t) => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "confirm");
   const prompts: string[] = [];
   let approved = false;
@@ -157,12 +160,13 @@ test("closing an unknown draft warns about possible delivery without calling it 
   });
   let closes = 0;
   const dialog = panel({ ...initial, to: "", subject: "", body: "", sendUnknown: true }, () => {}, undefined, () => { closes++; });
-  dialog.props.onClose();
+  const discard = dialog.props.children.props.children.at(-1).props.children[1];
+  discard.props.onClick();
   assert.equal(closes, 0);
   assert.match(prompts[0], /already.*sent/);
   assert.doesNotMatch(prompts[0], /unsent/);
   approved = true;
-  dialog.props.onClose();
+  discard.props.onClick();
   assert.equal(closes, 1);
 });
 
@@ -196,9 +200,50 @@ test("a failure retains edits made while the send was pending and hides error de
   const c = client(() => new Promise((_resolve, fail) => { reject = fail; }));
   const pending = c.submit();
   c.setDraft({ ...initial, body: "Edited while waiting" });
+  await Promise.resolve();
   reject(new Error("Synthetic provider error for private@example.com"));
   await pending;
   assert.equal(c.draft?.body, "Edited while waiting");
   assert.equal(c.draft?.sendUnknown, true);
   assert.doesNotMatch(c.notices.at(-1)!, /private@example.com|Synthetic provider/);
+});
+
+
+test("an unacknowledged draft save blocks sending and cleanup", async () => {
+  let sends = 0, cleanups = 0;
+  const c = client(async () => { sends++; return {}; }, undefined, initial, {
+    prepare: async () => { throw new Error("Synthetic save failure"); },
+    complete: async () => { cleanups++; },
+  });
+  await c.submit();
+  assert.equal(sends, 0);
+  assert.equal(cleanups, 0);
+  assert.equal(c.draft?.body, initial.body);
+  assert.equal(c.busy, false);
+  assert.match(c.notices.at(-1)!, /No send was attempted/);
+});
+
+test("accepted send cleanup failure never becomes a send failure or retry", async () => {
+  const order: string[] = [];
+  const c = client(async () => { order.push("send"); return {}; }, undefined, initial, {
+    prepare: async () => { order.push("persist uncertainty"); },
+    complete: async () => { order.push("cleanup"); throw new Error("Synthetic cleanup failure"); },
+  });
+  await c.submit();
+  assert.deepEqual(order, ["persist uncertainty", "send", "cleanup"]);
+  assert.equal(c.draft, null);
+  assert.match(c.notices.at(-1)!, /Email sent/);
+  assert.match(c.notices.at(-1)!, /Do not resend/);
+  assert.doesNotMatch(c.notices.at(-1)!, /Send status unknown/);
+});
+
+test("a response without provider acceptance preserves uncertainty and skips cleanup", async () => {
+  let cleanups = 0;
+  const c = client(async () => ({ ok: false }), undefined, initial, {
+    complete: async () => { cleanups++; },
+  });
+  await c.submit();
+  assert.equal(cleanups, 0);
+  assert.equal(c.draft?.sendUnknown, true);
+  assert.match(c.notices.at(-1)!, /Send status unknown/);
 });
