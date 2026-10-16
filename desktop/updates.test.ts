@@ -17,7 +17,7 @@ const bytes = Buffer.from("synthetic updater installer, never executable");
 const digest = createHash("sha512").update(bytes).digest("base64");
 const root = "https://github.com/screen-devs/aggregate-mail/releases/download/v0.1.7/";
 const asset = (name: string, size = bytes.length) => ({ name, size, browser_download_url: root + encodeURIComponent(name) });
-const name = "Emc²-0.1.7-win-x64.exe";
+const name = "Emc2-0.1.7-win-x64.exe";
 const release = () => ({ draft: false, prerelease: false, tag_name: "v0.1.7", assets: [asset(name), asset("latest.yml", 300)] });
 const manifest = (overrides: Record<string, unknown> = {}) => JSON.stringify({ version: "0.1.7",
   files: [{ url: name, size: bytes.length, sha512: digest }], releaseDate: "2026-10-13T00:00:00Z", ...overrides });
@@ -44,12 +44,23 @@ test("release preflight rejects foreign URLs, CI filenames, missing metadata and
     { ...release(), assets: [asset(name, -1), asset("latest.yml")] },
     { ...release(), assets: [asset(name, 2 ** 31), asset("latest.yml")] },
     { ...release(), assets: [{ ...asset(name), browser_download_url: "https://example.test/update.exe" }, asset("latest.yml")] },
-    { ...release(), assets: [asset("Emc²-0.1.7-ci.38281422233.1-win-x64.exe"), asset("latest.yml")] },
-    { ...release(), assets: [asset("Emc²-0.1.7-win-arm64.exe"), asset("latest.yml")] },
+    { ...release(), assets: [asset("Emc2-0.1.7-ci.38281422233.1-win-x64.exe"), asset("latest.yml")] },
+    { ...release(), assets: [asset("Emc2-0.1.7-win-arm64.exe"), asset("latest.yml")] },
     { ...release(), assets: [asset(name), asset(name), asset("latest.yml")] },
     { ...release(), assets: [asset(name), asset("Other-0.1.7-win-x64.exe"), asset("latest.yml")] },
     { ...release(), assets: [asset(name)] },
   ]) assert.throws(() => releaseAssets(invalid, target));
+});
+
+test("release filenames survive GitHub upload and match builder architecture names", () => {
+  for (const [platform, filename, manifestName] of [
+    ["win32", "Emc2-0.1.7-win-x64.exe", "latest.yml"],
+    ["linux", "Emc2-0.1.7-linux-x86_64.AppImage", "latest-linux.yml"],
+  ]) {
+    const assets = [asset(filename), asset(manifestName, 300)];
+    const found = releaseAssets({ ...release(), assets }, { ...target, platform, appImage: "/synthetic/Emc.AppImage" });
+    assert.equal(found?.asset.name, filename);
+  }
 });
 
 test("manifest identity, size, digest, source and unsupported metadata are checked before library download", () => {
@@ -74,8 +85,8 @@ test("running app architecture wins, and ad-hoc macOS/development/non-AppImage i
   assert.equal(unsupportedReason({ ...target, platform: "linux" }), "appimage");
   assert.equal(unsupportedReason({ ...target, arch: "ia32" }), "platform");
   const linux = { ...target, platform: "linux", appImage: "/synthetic/Emc.AppImage" };
-  const input = { ...release(), assets: [asset("Emc²-0.1.7-linux-x64.AppImage"), asset("latest-linux.yml")] };
-  assert.equal(releaseAssets(input, linux)?.asset.name, "Emc²-0.1.7-linux-x64.AppImage");
+  const input = { ...release(), assets: [asset("Emc2-0.1.7-linux-x86_64.AppImage"), asset("latest-linux.yml")] };
+  assert.equal(releaseAssets(input, linux)?.asset.name, "Emc2-0.1.7-linux-x86_64.AppImage");
   assert.throws(() => releaseAssets(input, { ...linux, arch: "arm64" }));
 });
 
@@ -270,9 +281,9 @@ test("actual downloadUpdate rejects oversized regular and symlink caches before 
       const f = await libraryFixture();
       try {
         const selected = platform === "win32" ? candidate() : validateCandidate(releaseAssets({ ...release(),
-          assets: [asset("Emc²-0.1.7-linux-x64.AppImage"), asset("latest-linux.yml", 300)] },
+          assets: [asset("Emc2-0.1.7-linux-x86_64.AppImage"), asset("latest-linux.yml", 300)] },
         { ...target, platform, appImage: "/synthetic/Emc.AppImage" })!, manifest({ files: [
-          { url: "Emc²-0.1.7-linux-x64.AppImage", size: bytes.length, sha512: digest } ] }));
+          { url: "Emc2-0.1.7-linux-x86_64.AppImage", size: bytes.length, sha512: digest } ] }));
         const { updater, file } = await cachedUpdater(f, selected, platform);
         if (kind === "oversized") await writeFile(file, Buffer.alloc(4096, 7));
         else {
@@ -423,13 +434,13 @@ test("the actual pinned library disables automatic/downgrade paths and checks wi
 
 test("actual AppImage replacement preserves both names and bytes before failure recovery, without retry or quit", async (t) => {
   const { actual, directory, spy, cleanup } = await libraryFixture();
-  const linuxName = "Emc²-0.1.7-linux-x64.AppImage";
+  const linuxName = "Emc2-0.1.7-linux-x86_64.AppImage";
   const originalBytes = Buffer.from("original synthetic image, never executable");
   const destinationBytes = Buffer.from("prior destination synthetic image, never executable");
   const linuxRelease = { ...release(), assets: [asset(linuxName), asset("latest-linux.yml", 300)] };
   const linuxManifest = manifest({ files: [{ url: linuxName, size: bytes.length, sha512: digest }] });
   try {
-    for (const originalName of ["Emc.AppImage", linuxName, "Emc²-0.1.6-linux-x64.AppImage"]) {
+    for (const originalName of ["Emc.AppImage", linuxName, "Emc2-0.1.6-linux-x86_64.AppImage"]) {
       for (const failure of ["move", "launch", "success"] as const) {
         for (const collision of originalName.includes("0.1.6") ? [false, true] : [false]) {
           await t.test(`${originalName}/${failure}/collision=${collision}`, async () => {

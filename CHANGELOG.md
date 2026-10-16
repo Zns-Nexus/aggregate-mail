@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Publish GitHub-safe `Emc2-` installer filenames and Windows/Linux updater manifests with release checksums. Match Linux AppImage `x86_64` filenames and verify packaged metadata, size and SHA512 before upload. The application remains Emc² with the update icon and existing signing policy.
+
 - Stamp reusable release builds from the checked-out tag so published installers keep the stable version; reject tags that disagree with the package version.
 
 - Stack the mail features on the Linux fallback, keeping its protection warning separate from the update icon and retaining draft and account-privacy guards.

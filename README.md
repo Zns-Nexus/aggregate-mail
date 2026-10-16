@@ -21,7 +21,7 @@ An installable desktop email client for Windows, with a macOS build target, base
 
 ## Install
 
-Download the newest published Windows setup installer from [Releases](https://github.com/screen-devs/aggregate-mail/releases), named `Emc²-<version>-win-x64.exe`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
+Download the newest published Windows setup installer from [Releases](https://github.com/screen-devs/aggregate-mail/releases), named `Emc2-<version>-win-x64.exe` in new releases. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
 
 To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Emc².exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
@@ -245,7 +245,9 @@ AI contributors must also read the project instructions in [AGENTS.md](AGENTS.md
 
 ## Releasing
 
-GitHub hosts CI and release downloads. Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls the CI build jobs and attaches the Windows setup installer, both macOS DMGs, the Linux AppImage and `SHA256SUMS.txt` to the GitHub release after all jobs pass. The tag must match `package.json`. Manual workflow runs create build artifacts; only version-tag runs publish releases.
+GitHub hosts CI and release downloads. Each non-release push to `main` runs `auto-release.yml`, which bumps the patch version and builds the matching tag. Pushing a `v*` tag also has a release route in `.github/workflows/release.yml`. Both reuse the CI build jobs and publish the Windows setup installer, both macOS DMGs, the Linux AppImage, `latest.yml`, `latest-linux.yml` and `SHA256SUMS.txt` after all jobs pass. The tag must match `package.json`. Manual CI runs create build artifacts without publishing releases.
+
+New installer filenames use the GitHub-safe `Emc2-` prefix; the application name stays Emc². Linux x64 installers end in `linux-x86_64.AppImage`. CI validates the Windows/Linux manifest version, filename, size and SHA512 against the packaged installer before upload. See [ADR 0039](docs/adr/0039-release-update-assets.md).
 
 To cut a Windows build locally:
 
@@ -255,7 +257,7 @@ node scripts/release.mjs --patch
 
 That bumps the version, packages, prints the installer's SHA-256, and uploads it to the GitHub release when a GitHub remote exists. Delete the superseded installers in `release/`, which is ignored by git, so nothing there reaches either host.
 
-The installer is unsigned, so Windows SmartScreen warns on first run. There is no auto-updater; installing a newer version over an older one keeps your mail and settings.
+The installer is unsigned, so Windows SmartScreen can warn on first run. Compatible Windows and Linux AppImage builds offer updates through the update icon when a newer stable release supplies verified metadata. Installation requires an explicit action and waits for mail operations and draft saves. macOS automatic installation remains unsupported. Installing a newer version over an older one keeps your mail and settings. Native update/restart acceptance requires separate testing.
 
 ## Verification
 

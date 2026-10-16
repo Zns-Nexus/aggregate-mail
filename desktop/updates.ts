@@ -75,8 +75,9 @@ export function releaseAssets(value: unknown, target: Target) {
   }
   const os = target.platform === "win32" ? "win" : "linux";
   const extension = target.platform === "win32" ? "exe" : "AppImage";
-  const name = `Emc²-${version}-${os}-${target.arch}.${extension}`;
-  const matching = assets.filter((asset) => asset.name.endsWith(`-${os}-${target.arch}.${extension}`));
+  const arch = target.platform === "linux" && target.arch === "x64" ? "x86_64" : target.arch;
+  const name = `Emc2-${version}-${os}-${arch}.${extension}`;
+  const matching = assets.filter((asset) => asset.name.endsWith(`-${os}-${arch}.${extension}`));
   if (matching.length !== 1 || matching[0].name !== name || matching[0].size > maxInstallerSize) return fail("candidate");
   const manifestName = target.platform === "win32" ? "latest.yml" : `latest-linux${target.arch === "x64" ? "" : `-${target.arch}`}.yml`;
   const manifest = assets.find((asset) => asset.name === manifestName);
