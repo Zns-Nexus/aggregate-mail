@@ -8,7 +8,8 @@ import path from "node:path";
 import express from "express";
 import { google } from "googleapis";
 import { z } from "zod";
-import { all, put, putBatch, remove, account, type StoredAccount } from "./store.js";
+import { all, put, putBatch, remove, account, transaction, type StoredAccount } from "./store.js";
+import { mountDrafts } from "./drafts.js";
 import { oauth, providers, presets, validateImap, listGmailLabels, syncError } from "./providers.js";
 import { ImapWatch, sameImapAccount, type ImapWatchFactory } from "./imap-watch.js";
 import { GmailWatch } from "./gmail-watch.js";
@@ -29,6 +30,7 @@ import { classify, sortMail, SortingUnavailable } from "./sorting.js";
 import { companyLogo } from "./avatars.js";
 import { companySvg, isFreeMail, normalizeDomain, syncLogos } from "./logos.js";
 import { jevProviderOf, type Provider, type Mail, type SyncFailure } from "../shared/types.js";
+import { emptyComposePreferences } from "../shared/mail-features.js";
 
 const configPath = process.env.MAIL_CONFIG_PATH || ".env";
 if (existsSync(configPath)) loadEnvFile(configPath);
@@ -44,6 +46,7 @@ const allowedOrigins = new Set([
 ]);
 const csrf = randomBytes(32).toString("hex");
 let syncing = false;
+let unreadArrivals = 0;
 let syncRun: Promise<string[]> | undefined;
 let wakeSync: (() => void) | undefined;
 let imapWatch: ImapWatch | undefined;
@@ -94,9 +97,11 @@ app.use("/api", (req, res, next) => {
   if (
     syncing &&
     !["GET", "HEAD"].includes(req.method) &&
+    !/^\/accounts\/[^/]+\/drafts(?:\/[^/]+)?\/?$/.test(req.path) &&
     !req.path.startsWith("/send") &&
     req.path !== "/mcp" &&
-    !(req.method === "PATCH" && /^\/messages\/[^/]+$/.test(req.path) && req.body?.action === "read") &&
+    !(req.method === "PATCH" && /^\/accounts\/[^/]+$/.test(req.path)) &&
+    !(req.method === "PATCH" && /^\/messages\/[^/]+$/.test(req.path) && ["read", "pin", "unpin"].includes(req.body?.action)) &&
     !(req.method === "POST" && (["/accounts/imap", "/sync"].includes(req.path) || /^\/accounts\/[^/]+\/reconnect$/.test(req.path)))
   )
     return res
@@ -104,8 +109,11 @@ app.use("/api", (req, res, next) => {
       .json({ error: "Wait for the current sync to finish, then try again." });
   next();
 });
+mountDrafts(app);
 app.get("/api/state", (_req, res) => {
   res.json({
+    composePreferences: all("compose")[0] ?? emptyComposePreferences,
+    unreadArrivals,
     csrf,
     accounts: all("account").map(({ credentials: _credentials, ...a }) => ({ ...a, syncStatus: accountSyncStatus(a.id) })),
     messages: all("mail"),
@@ -121,6 +129,27 @@ app.get("/api/state", (_req, res) => {
     lastSync: all("meta")[0]?.lastSync || null,
     syncing,
   });
+});
+app.get("/api/compose-preferences", (_req, res) => {
+  res.json(all("compose")[0] ?? emptyComposePreferences);
+});
+app.put("/api/compose-preferences", (req, res) => {
+  const input = z.object({
+    templates: z.array(z.object({
+      id: z.string().min(1).max(80),
+      name: z.string().trim().min(1).max(80),
+      subject: z.string().max(998).refine((value) => !/[\r\n]/.test(value)),
+      body: z.string().max(50000),
+    }).strict()).max(50),
+    signatures: z.record(z.string().min(1).max(200), z.string().max(10000)),
+  }).strict().parse(req.body);
+  if (new Set(input.templates.map((template) => template.id)).size !== input.templates.length)
+    return res.status(400).json({ error: "Template identifiers must be unique." });
+  const ids = new Set(all("account").map((a) => a.id));
+  if (Object.keys(input.signatures).some((id) => !ids.has(id)))
+    return res.status(400).json({ error: "Choose a connected account for each signature." });
+  put("compose", "preferences", input);
+  res.json(input);
 });
 app.post("/api/config", (req, res) => {
   const value = z
@@ -270,6 +299,7 @@ app.get("/api/oauth/google/callback", mailRequest(async (req, res) => {
       );
     const id = old?.id || randomUUID();
     put("account", id, {
+      ...old,
       id,
       email,
       provider: "gmail",
@@ -345,12 +375,22 @@ app.post("/api/accounts/imap", mailRequest(async (req, res) => {
   // Validation awaits the network; another connection can finish meanwhile.
   const current = existingAccount(input.email, input.provider);
   a.id = current?.id || id;
-  a.hasSynced = current?.hasSynced;
-  put("account", a.id, a);
+  put("account", a.id, { ...current, ...a });
   if (!mailIsQuiesced()) imapWatch?.reconcile(all("account"));
   void requestSync([a.id], true);
   res.json({ ok: true });
 }));
+app.patch("/api/accounts/:id", (req, res) => {
+  const { name } = z.object({
+    name: z.string()
+      .refine((value) => !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value), "Use a single-line name without control characters.")
+      .trim().max(80),
+  }).strict().parse(req.body);
+  const current = all("account").find((a) => a.id === req.params.id);
+  if (!current) return res.status(404).json({ error: "Account not found." });
+  put("account", current.id, { ...current, name: name || undefined });
+  res.json({ ok: true });
+});
 app.post("/api/accounts/:id/reconnect", (req, res) => {
   const a = all("account").find((a) => a.id === req.params.id);
   if (!a) return res.status(404).json({ error: "Account not found." });
@@ -362,14 +402,24 @@ app.post("/api/accounts/:id/reconnect", (req, res) => {
   res.status(202).json({ status: accountSyncStatus(a.id), error: a.error, syncFailure: a.syncFailure });
 });
 app.delete("/api/accounts/:id", (req, res) => {
-  account(req.params.id);
-  remove("account", req.params.id);
+  transaction(() => {
+    account(req.params.id);
+    remove("account", req.params.id);
+    const preferences = all("compose")[0];
+    if (preferences && Object.hasOwn(preferences.signatures, req.params.id)) {
+      const signatures = { ...preferences.signatures };
+      delete signatures[req.params.id];
+      put("compose", "preferences", { ...preferences, signatures });
+    }
+    for (const draft of all("draft").filter((draft) => draft.accountId === req.params.id))
+      remove("draft", draft.id);
+    for (const m of all("mail").filter((m) => m.accountId === req.params.id))
+      remove("mail", m.id);
+    for (const label of all("label").filter((label) => label.accountId === req.params.id))
+      remove("label", `${label.accountId}:${label.id}`);
+  });
   imapWatch?.reconcile(all("account"));
   gmailWatch?.reconcile(all("account"));
-  for (const m of all("mail").filter((m) => m.accountId === req.params.id))
-    remove("mail", m.id);
-  for (const label of all("label").filter((label) => label.accountId === req.params.id))
-    remove("label", `${label.accountId}:${label.id}`);
   res.json({ ok: true });
 });
 app.post("/api/sync", async (_req, res) => {
@@ -431,6 +481,7 @@ function requestSync(ids: string[], reconnect = false): Promise<string[]> {
       syncing = false;
       syncRun = undefined;
       scheduledAccounts.clear();
+      unreadArrivals += newUnread;
       desktopEvents.emit("mail-changed");
       if (newUnread) desktopEvents.emit("new-mail", newUnread);
     }
@@ -465,6 +516,7 @@ async function syncAccount(
           : sortMail(m, rules)),
         archived: false,
         snoozedUntil: previous?.snoozedUntil || null,
+        ...(previous?.pinned ? { pinned: true } : {}),
       };
       if (!isDeepStrictEqual(previous, saved)) changed.push([m.id, saved]);
     }

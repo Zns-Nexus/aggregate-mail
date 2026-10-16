@@ -36,7 +36,9 @@ jobs:
             runner: windows-latest
             shell: pwsh
             args: --win nsis --x64
-            artifact: release/*.exe
+            artifact: |
+              release/*.exe
+              release/latest.yml
           - platform: macos-arm64
             runner: macos-15
             shell: zsh -e {0}
@@ -51,7 +53,9 @@ jobs:
             runner: ubuntu-24.04
             shell: bash
             args: --linux AppImage --x64
-            artifact: release/*.AppImage
+            artifact: |
+              release/*.AppImage
+              release/latest-linux.yml
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
@@ -64,6 +68,8 @@ jobs:
           node-version: 24
           cache: npm
       - name: Set build version
+        env:
+          EMC2_BUILD_REF: ${{ inputs.ref || github.ref }}
         run: node scripts/set-build-version.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm test
@@ -74,7 +80,29 @@ jobs:
         timeout-minutes: 1
         run: npm run check:desktop -- --user-data-dir="${{ runner.temp }}/emc2-check"
       - name: Create installer
+        if: runner.os != 'macOS'
         run: npx --no-install electron-builder ${{ matrix.args }} --publish never
+      # hdiutil intermittently fails ("Resource busy" / create failed) on hosted macOS runners.
+      # Retry the DMG build up to 3 times, force-detaching stale volumes between attempts.
+      - name: Create installer (macOS, with hdiutil retry)
+        if: runner.os == 'macOS'
+        run: |
+          for attempt in 1 2 3; do
+            if npx --no-install electron-builder ${{ matrix.args }} --publish never; then
+              exit 0
+            fi
+            echo "::warning::electron-builder DMG attempt $attempt failed"
+            for volume in /Volumes/Emc*(N); do
+              hdiutil detach -force "$volume" || true
+            done
+            rm -f release/*.dmg(N) release/*.blockmap(N)
+            sleep $((attempt * 10))
+          done
+          echo "::error::electron-builder DMG failed after 3 attempts"
+          exit 1
+      - name: Verify updater metadata and installer integrity
+        if: runner.os != 'macOS'
+        run: node --import tsx scripts/check-release-assets.ts ${{ matrix.platform }}
       - name: Upload installer
         uses: actions/upload-artifact@v5
         with:

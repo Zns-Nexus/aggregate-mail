@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { appPasswordHelp, providerNames, type Provider } from "../../shared/types";
+import { credentialStorageFooter } from "../shell/CredentialFallbackNotice";
 import { ProviderIcon } from "../mail/Avatar";
 import { Dialog } from "../ui/Dialog";
 import { Redact } from "../ui/Privacy";
@@ -154,7 +155,7 @@ export function ConnectDialog({
         )}
         {error && <p className="attention" role="alert"><Redact text={error} /></p>}
         <div className="form-actions">
-          <span>Encrypted on this computer.</span>
+          <span>{credentialStorageFooter(globalThis.window?.desktop?.credentialFallback)}</span>
           {onBack && <button className="link" type="button" disabled={unavailable} onClick={onBack}>Back</button>}
           <button className="button" disabled={unavailable}>
             {pending ? "Checking connection" : busy ? "Wait for the current action" : "Connect"}

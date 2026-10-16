@@ -1,6 +1,13 @@
 import type { MailLocation } from "./navigation";
-import type { GmailLabel, Mail } from "../shared/types";
+import { providerNames, type Account, type GmailLabel, type Mail } from "../shared/types";
 import { inboxTab, type InboxTab } from "../shared/inbox-tabs";
+import { redactPrivateText } from "./privacy";
+import { compileMailSearch } from "./mail-search";
+
+export function accountLabel(account: Account, index: number, privacy: boolean) {
+  if (account.name) return privacy ? redactPrivateText(account.name) : account.name;
+  return privacy ? `Account ${index + 1} · ${providerNames[account.provider]}` : account.email;
+}
 
 export function densityShortcut(event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "altKey" | "metaKey">) {
   if (!event.ctrlKey || event.altKey || event.metaKey) return null;
@@ -36,8 +43,9 @@ export async function markMailRead(mail: Mail, pending: Set<string>, update: () 
 // Search spans every Inbox tab; otherwise Inbox shows the chosen tab only.
 export function filterMail(messages: Mail[], location: Pick<MailLocation,
   "view" | "tab" | "accountFilter" | "query" | "readFilter" | "relevanceFilter" | "sort">,
-  label?: GmailLabel, now = Date.now(), readerId?: string, tabOf: (mail: Mail) => InboxTab = (mail) => inboxTab(mail)) {
-  const query = location.query.toLowerCase();
+  label?: GmailLabel, now = Date.now(), readerId?: string, tabOf: (mail: Mail) => InboxTab = (mail) => inboxTab(mail),
+  matchesSearch = compileMailSearch(location.query).matches) {
+  const query = location.query.trim();
   return messages.filter((mail) => {
     // The open reader stays an ordering anchor after read-on-open removes it from the list.
     if (mail.id === readerId) return true;
@@ -48,7 +56,7 @@ export function filterMail(messages: Mail[], location: Pick<MailLocation,
     const snoozed = mail.snoozedUntil !== null && mail.snoozedUntil > now;
     if (location.view === "archive" ? !mail.archived : location.view === "snoozed"
       ? mail.archived || !snoozed : mail.archived || snoozed || (!query && tabOf(mail) !== location.tab)) return false;
-    return `${mail.sender} ${mail.address} ${mail.subject} ${mail.body}`.toLowerCase().includes(query);
+    return matchesSearch(mail);
   }).sort((a, b) => {
     const relevance = location.sort === "relevance" ? b.relevance - a.relevance : 0;
     const date = location.sort === "oldest" ? a.date - b.date : b.date - a.date;

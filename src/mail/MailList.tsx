@@ -1,12 +1,13 @@
-import { useContext, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
+import { useContext, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import type { Account, Mail } from "../../shared/types";
 import type { InteractionPreferences } from "../interaction";
+import { MailListWindow } from "../MailListWindow";
 import type { MailLocation } from "../navigation";
 import { collectPrivateNames, redactPrivateText } from "../privacy";
 import { MailPrivacy, PrivacyContext, Redact } from "../ui/Privacy";
-import { Trash } from "../ui/icons";
+import { Pin, Trash } from "../ui/icons";
 import { Avatar } from "./Avatar";
-import { dayGroup, relative, shortLabel } from "./format";
+import { relative, shortLabel } from "./format";
 
 type RowLayout = "inline" | "stacked" | "brief" | "card";
 
@@ -17,10 +18,12 @@ type RowLayout = "inline" | "stacked" | "brief" | "card";
  * preview for medium and high relevance.
  */
 export function MailList({
-  messages, selectedId, density, narrow, sort, opening, accounts, disabled,
+  messages, selectedId, density, narrow, sort, opening, accounts, disabled, listRef, focusSelection,
   onOpen, onSelect, onMenu, onMenuKey, onTrash, trashUnavailable,
 }: {
   messages: Mail[];
+  listRef: RefObject<HTMLElement | null>;
+  focusSelection: boolean;
   selectedId: string | undefined;
   density: "comfortable" | "compact";
   narrow: boolean;
@@ -37,9 +40,8 @@ export function MailList({
 }) {
   const { on: privacy } = useContext(PrivacyContext);
   const provider = (mail: Mail) => accounts.find((account) => account.id === mail.accountId)?.provider;
-  return messages.map((m, i) => {
-    const group = dayGroup(m.date);
-    const showGroup = sort !== "relevance" && (i === 0 || dayGroup(messages[i - 1].date) !== group);
+  return <MailListWindow messages={messages} selectedId={selectedId} focusSelection={focusSelection}
+    density={density} sort={sort} listRef={listRef} narrow={narrow} touchActions={false}>{(m) => {
     const layout: RowLayout = narrow
       ? "card"
       : density === "compact" || m.relevance === 2
@@ -50,7 +52,7 @@ export function MailList({
     const current = m.id === selectedId;
     const names = privacy ? collectPrivateNames(accounts, m) : [];
     const reason = privacy ? redactPrivateText(m.reason, names) : m.reason;
-    const label = `${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`;
+    const label = `${m.pinned ? "Pinned: " : ""}${m.unread ? "Unread: " : ""}${m.sender}, ${m.subject}`;
     const reasonLabel = m.relevance === 3 && reason && (
       <span className="row-label" title={reason}>
         <Redact text={shortLabel(reason)} />
@@ -60,7 +62,6 @@ export function MailList({
     const unavailable = trashUnavailable(m);
     return (
       <MailPrivacy key={m.id} mail={m}>
-        {showGroup && <h3 className="group">{group}</h3>}
         <div className="mail-row">
           <button
             id={`mail-${m.id}`}
@@ -73,9 +74,9 @@ export function MailList({
             aria-haspopup="menu"
             aria-label={privacy ? redactPrivateText(label, names) : label}
             aria-current={current ? "true" : undefined}
-            style={{ "--i": Math.min(i, 6) } as CSSProperties}
           >
             {m.unread && <i className="unread-dot" aria-hidden="true" />}
+            {m.pinned && <span className="row-pin" aria-hidden="true"><Pin size={12} /></span>}
             <Avatar mail={m} provider={provider(m)} />
             {layout === "card" ? (
               <span className="row-text">
@@ -119,5 +120,5 @@ export function MailList({
         </div>
       </MailPrivacy>
     );
-  });
+  }}</MailListWindow>;
 }

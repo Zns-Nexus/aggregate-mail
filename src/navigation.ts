@@ -1,10 +1,12 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type SetStateAction } from "react";
 import type { InboxTab } from "../shared/inbox-tabs";
+import type { SettingsSection } from "./settings/sections";
 
 export type MailLocation = {
+  page: "mail" | "settings";
   view: "inbox" | "snoozed" | "archive";
-  // The Inbox category tab; Snoozed and Archive ignore it.
   tab: InboxTab;
+  settingsSection: SettingsSection;
   accountFilter: string;
   labelFilter: string;
   query: string;
@@ -17,15 +19,19 @@ export type MailLocation = {
 
 export function useMailNavigation() {
   const [location, update] = useState<MailLocation>({
-    view: "inbox", tab: "primary", accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest", selectedId: null, opened: false,
+    page: "mail", view: "inbox", tab: "primary", settingsSection: "interaction", accountFilter: "all", labelFilter: "all", query: "", readFilter: "all", relevanceFilter: "all", sort: "newest", selectedId: null, opened: false,
   });
-  // Keep message IDs and search text in memory, never in URLs or storage.
-  const history = useRef({ entries: [location], index: 0, editingSearch: false });
+  // Menu history stays in memory. Reader selection is not a visit.
+  const history = useRef({ entries: [location], index: 0, editingSearch: false, reader: null as MailLocation | null });
   const visit = (patch: Partial<MailLocation>, search = false) => {
     const next = { ...location, ...patch };
-    if (Object.keys(next).every((key) =>
-      next[key as keyof MailLocation] === location[key as keyof MailLocation])) return;
+    const menuKeys = ["page", "settingsSection", "view", "tab", "accountFilter", "labelFilter", "query", "readFilter", "relevanceFilter", "sort"] as const;
+    if (menuKeys.every((key) => next[key] === location[key])) {
+      update(next);
+      return;
+    }
     const current = history.current;
+    current.reader = null;
     current.entries[current.index] = location;
     current.entries = current.entries.slice(0, current.index + 1);
     if (search && current.editingSearch) current.entries[current.index] = next;
@@ -38,16 +44,32 @@ export function useMailNavigation() {
   };
   const travel = (direction: -1 | 1, resolve: (location: MailLocation) => MailLocation) => {
     const current = history.current;
+    if (direction === -1 && location.opened) {
+      current.reader = location;
+      update(resolve({ ...location, opened: false }));
+      return;
+    }
+    if (direction === 1 && current.reader && !location.opened) {
+      const reader = current.reader;
+      current.reader = null;
+      update(resolve(reader));
+      return;
+    }
     const index = current.index + direction;
     if (index < 0 || index >= current.entries.length) return;
+    current.reader = null;
     current.entries[current.index] = location;
     current.index = index;
     current.editingSearch = false;
-    update(resolve(current.entries[index]));
+    update(resolve({ ...current.entries[index], selectedId: null, opened: false }));
   };
   return {
-    location, update, visit, travel,
-    canBack: history.current.index > 0,
-    canForward: history.current.index < history.current.entries.length - 1,
+    location, visit, travel,
+    update: (next: SetStateAction<MailLocation>) => {
+      history.current.reader = null;
+      update(next);
+    },
+    canBack: location.opened || history.current.index > 0,
+    canForward: (!location.opened && history.current.reader !== null) || history.current.index < history.current.entries.length - 1,
   };
 }

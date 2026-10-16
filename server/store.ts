@@ -2,7 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
-import type { Account, Mail, Rule, McpSettings, GmailLabel } from "../shared/types.js";
+import type { Account, Mail, Rule, McpSettings, GmailLabel, Draft } from "../shared/types.js";
+import type { ComposePreferences } from "../shared/mail-features.js";
 
 const dataPath = process.env.MAIL_DATA_DIR || ".data";
 mkdirSync(dataPath, { recursive: true, mode: 0o700 });
@@ -14,7 +15,7 @@ const key = process.env.MAIL_DATA_KEY
   : readFileSync(keyPath);
 const db = new DatabaseSync(path.join(dataPath, "mail.sqlite"));
 db.exec(
-  "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, value TEXT NOT NULL, PRIMARY KEY(kind,id))",
+  "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, value TEXT NOT NULL, PRIMARY KEY(kind,id))",
 );
 
 // Account secrets and message content are encrypted with a local installation key.
@@ -38,12 +39,14 @@ function decrypt(value: string): unknown {
   );
 }
 type Records = {
+  compose: ComposePreferences;
   account: StoredAccount;
   mail: Mail;
   label: GmailLabel;
   rule: Rule;
   meta: { lastSync: number };
   mcp: McpSettings;
+  draft: Draft;
 };
 export type StoredAccount = Account & {
   hasSynced?: boolean;
@@ -62,6 +65,22 @@ export function all<K extends keyof Records>(kind: K): Records[K][] {
     .prepare("SELECT value FROM records WHERE kind=?")
     .all(kind)
     .map((row) => decrypt(String(row.value)) as Records[K]);
+}
+export function get<K extends keyof Records>(kind: K, id: string): Records[K] | undefined {
+  const row = db.prepare("SELECT value FROM records WHERE kind=? AND id=?").get(kind, id);
+  return row ? decrypt(String(row.value)) as Records[K] : undefined;
+}
+// Keep revision checks and writes under the same SQLite writer lock.
+export function transaction<T>(work: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 export function put<K extends keyof Records>(
   kind: K,

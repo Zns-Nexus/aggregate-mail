@@ -68,3 +68,18 @@ test("isolated startup checks omit the updater bridge and perform no updater IPC
   });
   assert.equal(bridge.updates, undefined);
 });
+
+test("preload exposes credential fallback mode only for the exact main-process flag", () => {
+  for (const [argv, expected] of [
+    [["--emc2-credential-fallback=linux-local"], "linux-local"],
+    [["--emc2-credential-fallback=other"], undefined],
+    [[], undefined],
+  ] as const) {
+    let bridge!: NonNullable<Window["desktop"]>;
+    const code = transformSync(readFileSync(new URL("./preload.ts", import.meta.url), "utf8"), { loader: "ts", format: "cjs" }).code;
+    runInNewContext(code, { exports: {}, module: { exports: {} }, process: { platform: "linux", argv },
+      require: () => ({ ipcRenderer: new EventEmitter(), contextBridge: { exposeInMainWorld: (_name: string, value: typeof bridge) => { bridge = value; } } }),
+    });
+    assert.equal(bridge.credentialFallback, expected);
+  }
+});

@@ -55,7 +55,9 @@ test("cached Gmail uses paginated inbox/unread lists without metadata gets, keep
 });
 
 test("Gmail token, list and raw read timeouts abort actual transport and do not retry", async (t) => {
-  async function checkTransport(phase: "token" | "list" | "raw", dropAbort = false) {
+  // Positive cases get a generous closure bound: on loaded CI runners (macOS especially) socket teardown after an
+  // abort can exceed 1s. The negative control keeps a short bound because its socket must never close on its own.
+  async function checkTransport(phase: "token" | "list" | "raw", dropAbort = false, closeBoundMs = dropAbort ? 1000 : 10000) {
     const timeouts: AbortController[] = [];
     const cleanup = new AbortController();
     const reason = new DOMException("Synthetic private timeout details", "TimeoutError");
@@ -66,7 +68,9 @@ test("Gmail token, list and raw read timeouts abort actual transport and do not 
     const server = createServer((req, res) => {
       arrivals++;
       req.resume();
+      // Observe both the response and the underlying socket so a teardown is never missed.
       res.on("close", () => { if (!res.writableEnded) aborted(); });
+      req.socket.once("close", () => aborted());
       // Fire the timeout only after the real transport reaches the server.
       arrived();
       timeouts.forEach((timeout) => timeout.abort(reason));
@@ -130,7 +134,7 @@ test("Gmail token, list and raw read timeouts abort actual transport and do not 
       await withinBound(Promise.all([active, rejected]), "Transport did not arrive or time out", 30000);
       assert.equal(arrivals, 1);
       assert.equal(stalledCalls, 1);
-      await withinBound(closed, "Transport did not close");
+      await withinBound(closed, "Transport did not close", closeBoundMs);
       assert.equal(stalledCalls, 1);
       assert.equal(arrivals, 1);
       console.log(`synthetic Gmail ${phase}: 1 request arrived, transport closed after abort, 1 attempt`);

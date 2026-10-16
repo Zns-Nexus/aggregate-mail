@@ -27,19 +27,37 @@ with "System credential encryption is unavailable. Your mail store was not
 opened." Native startup, Windows/macOS behavior, live providers and downloaded
 app acceptance remain unverified by this integration check.
 
+## Custom themes
+
+Settings, Appearance includes a device-local library of up to 32 custom themes. [The theme model](../src/themes.ts) validates names, identifiers and complete light/dark palettes using Zod. [The editor](../src/settings/ThemeEditor.tsx) generates a palette from background/accent colors or edits 12 individual color roles. It previews through App state and the existing appearance application path, including the native scheme and caption colors. Closing, Cancel and Escape clear the preview; saving returns to the user's Mode. Existing themes open in Advanced to avoid regenerating hand-tuned colors. Built-in themes and their accent choices remain available.
+
+Theme create/edit, import and delete dialogs report their open state to App's shared navigation and shortcut guards. Back/Forward cannot unmount a dialog or discard its edits; Cmd/Ctrl+K cannot stack Commands over it. Closing clears the guard and restores navigation and commands.
+
+`emc2.appearance.v1` now stores `customThemes` together with the selected theme, mode and existing appearance preferences in one localStorage write. Old saves without a library still load. A missing or invalid selected custom theme falls back to Black/White; invalid libraries are ignored. Storage failure preserves the prior saved value and keeps an editor draft available for retry. Duplicate and import assign fresh local IDs, and duplicate names receive a numbered suffix. Deletion requires confirmation and selects Black/White.
+
+Import accepts files or pasted JSON in the Emc² version 1 format: `format: "emc2-theme"`, `version: 1`, `name`, and `palettes.dark`/`palettes.light`. Each palette contains `canvas`, `surface`, `raised`, `text`, `secondaryText`, `mutedText`, `accent`, `link`, `border`, `danger`, `reason` and `veil`. Only opaque `#RGB`/`#RRGGBB` colors are accepted; imports are limited to 64 KiB and reject unknown fields. Export includes both palettes without a device ID. This adapts T3 Code's library/editor/preview concepts; it does not import T3 Code or VS Code files. No theme CSS, remote resources, dependencies, provider operations or mail-content parsing changes are introduced. See [ADR 0036](adr/0036-custom-theme-library.md).
+
+Synthetic tests cover file validation, library limits, persistence/restart, resolved palettes, preview/cancel, editor save failures, editing, duplication, rename conflicts, confirmed deletion and export/import. Native rendering and file dialogs require separate acceptance; the product's live-browser-testing restriction remains in force.
+
 ## Client appearance and read actions
 
-Windows transparency uses Mica, which incorporates the wallpaper, rather than live Acrylic. macOS vibrancy remains unchanged. Open menus/notices use 12px CSS blur and dialogs 16px. `src/mail-state.ts` reuses unchanged snapshot records; stable privacy contexts and memoized text/avatars reduce selection and refresh work. Changed content, recipient/privacy data, images and record order remain observable. Desktop cache-change IPC drives visible windows, with catch-up on show/restore; hidden windows avoid cache-notification redraws. The desktop's duplicate renderer sync and progress-poll timers are disabled. See [ADR 0023](adr/0023-mail-freshness-and-render-cost.md) for the matched synthetic benchmark and native limits. Run `npx tsx scripts/benchmark-mail-ui.tsx` to repeat the 1,800-message React/DOM benchmark without saved accounts or browser automation.
+With transparency enabled, `src/styles/tokens.css` lets the native material show through `.list-pane`, `.reader-pane`, `.settings-pane` and `.context`. Their neutral `--surface` background mixes with transparent at 55% in dark mode and 72% in light mode. These layers sit over the existing window-frame tint. The existing `data-glass` gate keeps Off and unsupported platforms opaque. Text opacity, privacy masks, sticky date headings and Settings control groups are unchanged; scrolling panes gain no CSS blur. See [ADR 0035](adr/0035-frosted-working-panes.md). Native appearance, contrast over desktop content and movement smoothness still need target-platform verification.
 
-Verification for the freshness/transparency change, 2026-10-14: based on `37002f0` with local changes, `npm test` passed 343 tests; the final focused Gmail/state/navigation/reload run passed 28 tests after the last type and snapshot-guard corrections. Strict `npm run build` passed. An isolated Windows x64 `npm run check:desktop` reported `startup: passed` and exited successfully, covering encrypted storage, renderer loading, authenticated API isolation and background close. `node scripts/check-mcp.mjs` passed using an empty temporary store. Documentation links and diff checks passed. Native frame rate, macOS appearance/lifecycle and live-provider delivery were not verified.
+Windows offers Off, Subtle (Mica) and Glass (Acrylic); macOS offers Off and Glass using native vibrancy. Glass is the default and may cost more while the window moves. Open menus/notices use 12px CSS blur and dialogs 16px. `src/mail-state.ts` reuses unchanged snapshot records; stable privacy contexts and memoized text/avatars reduce selection and refresh work. Changed content, recipient/privacy data, images and record order remain observable. Desktop cache-change IPC drives visible windows, with catch-up on show/restore; hidden windows avoid cache-notification redraws. The desktop's duplicate renderer sync and progress-poll timers are disabled. See [ADR 0023](adr/0023-mail-freshness-and-render-cost.md) for the matched synthetic benchmark and native limits. Run `npx tsx scripts/benchmark-mail-ui.tsx` to repeat the 1,800-message React/DOM benchmark without saved accounts or browser automation.
 
-The renderer uses macOS-style chrome in light or dark on every desktop platform: a themed window frame and sidebar, near-neutral mail/reader/sender panes, grouped Settings controls and rounded menus/dialogs. Native window-control spacing and IPC remain unchanged. `src/styles/tokens.css` defines every color, surface and radius token for both schemes. Pane and menu transitions are brief opacity/transform animations; there are no looping effects or wheel-event handlers. Scroll containers use native smooth programmatic scrolling and contained overscroll. New panes reset instantly, and reduced-motion preferences disable smooth scrolling and shorten animations.
+The renderer uses macOS-style chrome in light or dark on every desktop platform: a themed window frame and sidebar, near-neutral mail/reader/sender panes, grouped Settings controls and rounded menus/dialogs. `src/styles/tokens.css` defines every color, surface and radius token for both schemes. Pane and menu transitions are brief opacity/transform animations; there are no looping effects or wheel-event handlers. Scroll containers use native smooth programmatic scrolling and contained overscroll. New panes reset instantly, and reduced-motion preferences disable smooth scrolling and shorten animations.
+
+The mail sidebar places Drafts directly below New message. Settings is a labeled gear icon beside Sync in its footer. The theme picker grows with its previews and labels; the fixed 48px stacked-row height applies only to mail rows, so accent swatches stay below the theme choices.
 
 Mail date headings stick at `top: 0`; the removed history toolbar no longer reserves a 42px offset. List spacing uses 8px pane gutters, 6px row insets, 12px row padding and 1px vertical margins. Comfortable row heights are 48px, 34px and 28px for high, medium and low relevance; compact rows are 24px. The 150px sender column and 8px subject gap also set the 158px two-line preview indent. Filter/action padding and sender-panel padding are reduced to match the tighter list.
 
 Right-click mail rows or opened messages to use Mark as read without opening the message. Already-read mail disables that item. Explicit read and read-on-open both use `markMailRead` in `src/mail-ui.ts`, coalesce pending requests and call the existing read endpoint independently of other UI busy state. Requests wait behind server sync; failures keep unread state and can be retried from the menu or by reopening mail. Other context-menu provider writes remain disabled during sync.
 
-The visible mail-action group offers the same read, reply, archive and snooze paths for selected and opened mail. Archive is the displayed name for the existing `done` shortcut ID, preserving saved bindings. Trash is a sibling icon button inside each `.mail-row`, revealed by hover or focus within the row; it targets that row without selecting, opening or marking mail read. Non-hover devices keep the icon visible. Opened mail retains Trash in its context menu. Archived IMAP mail without Message-ID disables the icon with an accessible description and tooltip. Pending reads have a visible status. A successful read invalidates earlier state snapshots and updates only the matching message/account/provider identity before refreshing the inbox. Refresh failure reports the already-confirmed outcome separately. Back/Forward buttons are absent from the mail pane; keyboard shortcuts and mouse side buttons retain history navigation.
+The visible mail-action group offers the same read, reply, archive and snooze paths for selected and opened mail. Archive is the displayed name for the existing `done` shortcut ID, preserving saved bindings. Trash is a sibling icon button inside each `.mail-row`, revealed by hover or focus within the row; it targets that row without selecting, opening or marking mail read. Non-hover devices keep the icon visible. Opened mail retains Trash in its context menu. Archived IMAP mail without Message-ID disables the icon with an accessible description and tooltip. Pending reads have a visible status. A successful read invalidates earlier state snapshots and updates only the matching message/account/provider identity before refreshing the inbox. Refresh failure reports the already-confirmed outcome separately. Back/Forward controls stay in the mail and Settings headers, alongside keyboard shortcuts and mouse side buttons.
+
+The viewport window retains the complete filtered array, bounds mounted rows with overscan, keeps selected/focused rows reachable and restores reader-return selection without focusing or snapping during ordinary scrolling. Both wide rows and side-by-side cards share CSS geometry tokens, including margins and date headers. Synthetic DOM limits do not prove native latency.
+
+Row Trash actions use visibility for hover/focus disclosure. The shared disabled-button opacity cannot reveal an idle action over its timestamp while sync disables the buttons. Devices without hover retain visible actions and timestamp spacing.
 
 Move to Trash uses the existing authenticated message action route and serialized mail-work queue. Gmail uses `messages.trash`. IMAP requires native MOVE support (including active IMAP4rev2) and exactly one server-declared Trash folder; it does not use ImapFlow's COPY/Deleted/EXPUNGE fallback. Inbox actions validate UIDVALIDITY and UID, plus Message-ID when available. Folder checks compare raw server flags case-insensitively, reject mixed-case duplicate declarations and exclude name-based guesses. Archived mail is resolved through a unique server-declared archive folder and an exact Message-ID match. The encrypted cache entry is removed only after provider success. Confirmed IMAP moves remain successful if connection cleanup throws. Missing folders, unsupported MOVE and unsafe identities fail without a mailbox mutation. See [ADR 0017](adr/0017-safe-trash-and-visible-mail-actions.md).
 
@@ -47,11 +65,115 @@ The [public-feedback report](ux-feedback-2026-10-12.md) records 13 inspected rep
 
 ## Account selection and cached-mail controls
 
-Multiple IMAP accounts use the existing account store and provider setup. The top-bar Add account button reopens that setup, and the account picker shows all accounts or one account. Privacy mode uses account numbers and provider names instead of names, email addresses or raw errors. Choosing an account also resets its Gmail label filter; composing uses the selected account as From.
+Multiple IMAP accounts use the existing account store and provider setup. Optional account names are stored in the existing encrypted account records. Settings Rename uses the authenticated, CSRF-protected name-only PATCH route, which trims, limits names to 80 characters and rejects control characters. Clearing a name restores the email label. Sync and reconnect preserve the latest label without changing credentials or connection identity. Privacy keeps custom account labels visible in Sidebar and Settings while masking addresses inside them. The unfocused rename input stays hidden; focus allows editing. Save confirms the name without requiring privacy to be disabled. See [ADR 0033](adr/0033-sidebar-menu-history-and-account-names.md) and its current overrides in [ADR 0034](adr/0034-reader-return-and-visible-account-labels.md).
 
-`src/mail-ui.ts` filters the cached messages by view, account, Gmail label, search, unread status and relevance, then applies newest, oldest or relevance ordering with date and message-ID ties. These controls do not fetch additional provider history. `src/navigation.ts` keeps their state in window memory and restores it on Back/Forward. Explicit control changes close the reader; automatic read-on-open updates retain its message. Reset clears all controls within the current view. Reader j/k navigation temporarily includes the opened message as a sorting anchor when automatic read removes it from the filtered results; the rendered Unread list still excludes read mail.
+The sidebar Add account button reopens that setup, and account rows select all accounts or one account. Privacy mode uses custom labels with masked addresses, falling back to account numbers and provider names for unnamed accounts. Raw errors stay private. Choosing an account also resets its Gmail label filter; composing uses the selected account as From.
 
-Synthetic mounted-App tests cover combined controls, empty-result reset, privacy-safe account labels, account-specific compose, setup entry, keyboard ownership, read-on-open and history. They do not prove actual account connections or native appearance.
+`src/mail-ui.ts` filters the cached messages by view, account, Gmail label, search, unread status and relevance, then applies newest, oldest or relevance ordering with date and message-ID ties. These controls do not fetch additional provider history. `src/navigation.ts` keeps menu state in window memory. Back/Forward restores Settings, views, account and filter/search contexts to a list. Back from an opened reader returns to its list and Immediate Forward restores the latest reader only if its message and account still exist. A second Back continues menu traversal. Selecting, opening, closing or traversing email does not create menu entries; a new reader action clears the transient return. Explicit control changes close the reader; automatic read-on-open updates retain its message. Reset clears all controls within the current view. Reader j/k navigation temporarily includes the opened message as a sorting anchor when automatic read removes it from the filtered results; the rendered Unread list still excludes read mail.
+
+The complete interface from [PR #48](https://github.com/screen-devs/aggregate-mail/pull/48), source commit `6cd5122b2ff2d9b748242c385eba12691f23992c`, is integrated into the newer local candidate. `src/shell/Sidebar.tsx` and `src/styles/sidebar.css` implement its full-height source list and Settings navigation. Its themes, category tabs, compact toolbar, reading pane, native materials and Gmail revision polling are retained. Newer Keychain, updater, account-label, reader-return and windowing corrections take precedence where source behavior differs. See [ADR 0031](adr/0031-full-sidebar-branch-integration.md).
+
+Ctrl plus/minus dispatch precedes the closed-filter combobox guard, preserving editable-field and dialog ownership. `src/MailListWindow.tsx` uses density/relevance size tokens shared with CSS, date offsets, resize observation and bounded row mounts. Synthetic component tests reach all 3,000 messages and select within 25,624; mounted App tests cover tail reachability, reader return, filters, sorting and focus. These prove DOM bounds, not native latency.
+
+Synthetic mounted-App tests cover combined controls, empty-result reset, privacy-safe account labels, account-specific compose, setup entry, keyboard ownership, read-on-open, history, section folding and collapse focus. They do not prove actual account connections or native appearance.
+
+## Encrypted local draft API
+
+`server/drafts.ts` stores local compose/reply snapshots as encrypted `draft`
+records using the existing data key. Draft recovery never invokes a provider.
+The renderer uses these routes for autosave and explicit recovery. See
+[ADR 0037](adr/0037-encrypted-local-drafts.md) for persistence and
+[ADR 0038](adr/0038-compose-autosave-and-recovery.md) for caller coordination.
+
+All draft routes are under `/api/accounts/:accountId/drafts` and inherit the
+Host, origin, desktop-session, CSRF and `Cache-Control: no-store` guards.
+The routes allow writes during sync. Updater quiescence rejects their writes
+with 503; reads remain available. Synchronous transactions finish before a
+quiesce can begin, so they cannot leave admitted asynchronous draft work.
+
+| Method and suffix | Request | Result |
+| --- | --- | --- |
+| GET `/` | No body | At most 100 summaries, newest first with ID ties |
+| POST `/` | Draft content | 201 with a new server-generated UUID, revision 1 and full snapshot |
+| GET `/:id` | No body | Full snapshot |
+| PUT `/:id` | Draft content plus current `revision` | Full snapshot with revision increased by one |
+| DELETE `/:id` | Current `revision`, plus `confirmUnknown: true` when needed | `{ ok: true }` |
+
+Draft content requires `to`, `subject` and `body` strings, including empty or
+unfinished values. Optional fields are `inReplyTo`, `threadId`, `references`
+and `sendUnknown`. Limits are 10,000 UTF-16 code units for `to`, 998 for subject
+and reply/reference strings, 100 for thread ID, 100 references and 1,000,000
+for body. The existing 2 MB HTTP JSON limit also applies. Unknown body fields
+and invalid revisions are rejected with 400. Sending retains its separate,
+stricter validation. PUT replaces the content snapshot; omitted optional reply
+fields are removed. Omitted `sendUnknown` preserves a stored true value.
+
+Every snapshot includes `id`, `accountId`, `revision`, `updatedAt` and a boolean
+`sendUnknown`. Summaries contain those fields plus `to` and `subject`; bodies
+and reply metadata require GET by ID. Missing accounts/drafts and another
+account's draft IDs return 404. Revision conflicts, capacity exhaustion,
+clearing a true uncertainty flag or deleting it without confirmation return
+409. Creation refuses draft 101 without eviction. Account removal atomically
+purges that account's drafts, including uncertain drafts, alongside its cached
+mail and labels. Reconnecting an account does not remove its drafts.
+Settings, Accounts warns about permanent draft deletion, including uncertain
+sends, before Disconnect. Declining the confirmation leaves them intact.
+
+`src/compose/draft-session.ts` serializes writes per draft and retains local
+edits until a save is acknowledged. Create once, then use only the returned ID
+and latest acknowledged revision for PUT. A lost create response pauses saves;
+Retry never repeats POST. Save separate copy requires confirmation and retains
+the possible original. A lost PUT response requires GET and exact revision and
+snapshot reconciliation before another save. A conflict never adopts a newer
+revision to overwrite it. Explicit deletion stops queued autosaves. PUT never
+creates a missing record, so delayed saves cannot restore a deleted ID.
+
+Before sending, the renderer freezes editing, drains autosaves, saves the exact
+snapshot with `sendUnknown: true`, and await its acknowledgement. If that save
+is unacknowledged, do not send. Only then call the existing `/api/send` once.
+An acknowledged `ok: true`, including a Sent-copy warning, proves provider
+acceptance only, never recipient delivery. The caller may then DELETE the exact
+frozen revision with `confirmUnknown: true`. A dropped send response, crash,
+or unacknowledged deletion retains uncertainty until the caller reads current
+state. Never infer an unsent message from a recovered draft or retry a send
+because copying to Sent failed. Resending an uncertain draft requires explicit
+duplicate-risk confirmation. Manual discard also requires explicit confirmation.
+Editing cannot clear the marker. There is no receipt engine, outbox or retry.
+
+Drafts sits directly below New message in the sidebar and lists account-scoped summaries; opening one fetches its body
+without sending. Privacy mode omits private summary subjects and recipients.
+Close, Escape and Keep draft wait for the latest save. Discard is separately
+confirmed. Save errors keep text open and protect unload. Saved text survives
+ordinary close; the native prompt warns before closing with unsaved changes or
+an uncertain send. Changing From retains a saved original and confirms a copy
+in the selected account. The existing renderer updater drain also waits for
+draft actions and the current save. MCP send callers remain unchanged and do
+not use this draft lifecycle. Unacknowledged edits cannot be guaranteed.
+SQLite uses WAL with explicit FULL synchronization; acknowledged saves survive
+the tested process restart/crash with the same key. This does not prove device
+power-loss behavior or disk survival. Native interactive close/crash behavior
+requires separate installed-app acceptance.
+
+Focused synthetic service and subprocess verification:
+
+```sh
+node --import tsx --test --test-timeout=30000 server/drafts.test.ts
+node --import tsx --test --test-timeout=30000 src/draft-session.test.tsx src/draft-recovery.test.tsx src/compose-send.test.tsx src/update-lifecycle.test.tsx
+npm run build
+```
+
+The tests inspect DB/WAL bytes for synthetic draft plaintext, reopen in fresh
+processes, hard-kill a writer after committed saves/deletion and verify recovery
+with the original key. They cover account isolation/removal, capacity, strict
+validation, authentication, conflicting saves/deletes, sticky uncertainty and
+sync/updater guards. They use temporary stores and no real accounts or sends.
+Mounted synthetic renderer tests use the authenticated HTTP routes and encrypted
+store to cover rapid edits, pending-save close protection, remount recovery,
+lost create responses, failed updates, explicit copies, account switching, private
+summaries, send preparation and frozen fields, persistent uncertainty, confirmed
+resend, accepted-send cleanup, Keep and Discard. These use a simulated DOM and
+fake sync/send boundaries. Full-suite and isolated desktop verification remain
+separate checks.
 
 ## Desktop targets
 
@@ -61,7 +183,7 @@ Synthetic mounted-App tests cover combined controls, empty-result reset, privacy
 
 `electron-updater` is pinned to 6.8.10. Its provider uses the validated candidate; the renderer cannot supply a URL, path or executable arguments. IPC accepts only the current window's main frame at the application origin. Automatic download, install on ordinary quit, prereleases, downgrades, web installers and differential downloads are disabled. Packaged updater configuration supplies the library cache location and any configured Windows publisher check. The app preserves that signature check; SHA512 verification establishes file integrity against the selected release metadata, not an independent publisher identity.
 
-The notice is mounted twice: in Settings, About with every state, and as a banner below the top bar that renders only for available, downloading, ready and installing states and for non-network errors. The banner instance reports the installing state that makes the window inert. The notice's Download, install and restart action downloads, verifies the cached regular nonsymlink file, pauses admission of mail work, drains queued sync/mutations and active renderer/MCP sends, and waits for the renderer's send result. Native close still honors draft and unknown-send protection. Keep editing resumes mail without invoking the installer. Accepted close is followed by another file hash check and the platform library handoff. Drain, verification and launch failures resume mail; if the window already closed, the app opens it again. A normal quit never installs a downloaded update.
+The update icon at the top right of the window opens dismissible details without issuing a command. Capture-phase Escape closes details and restores icon focus without closing Search or the reader. Right-side window controls retain their corner placement. The details panel's Download, install and restart action downloads, verifies the cached regular nonsymlink file, pauses admission of mail work, drains queued sync/mutations and active renderer/MCP sends, and waits for renderer send results and draft saves. Native close still honors draft and unknown-send protection. Keep editing resumes mail without invoking the installer. Accepted close is followed by another file hash check and the platform library handoff. Drain, verification and launch failures resume mail; if the window already closed, the app opens it again. A normal quit never installs a downloaded update.
 
 The download stream checks the candidate's byte limit before hashing or file output, even without Content-Length. An oversized chunk stops the stream and aborts the request; cancellation also aborts a request still waiting for headers. SHA512 and configured Windows publisher checks remain active.
 
@@ -69,7 +191,7 @@ Cache validation uses the candidate's canonical filename and ignores filenames i
 
 Before the library replaces an AppImage, the app copies the installed image and any existing destination into a temporary directory beside the installed image. A replacement or launch failure restores their names, bytes and permissions before restoring the window and resuming mail. Failed handoffs do not quit or retry automatically. Successful handoff or rollback removes the backup directory; failed rollback retains any remaining backup copies for recovery. This protects handled failures, not power loss or a process crash during replacement.
 
-Current published assets lack compatible updater manifests, and the observed stable release carries CI-suffixed installers. The approved macOS ad-hoc signature has no supported automatic installation route here. These conditions remain explicit unavailable/unsupported states. This application change does not publish metadata, change release workflows or signing, or prove a native two-version update. See [ADR 0019](adr/0019-app-update-prompt.md).
+Release v0.1.9 lacks compatible updater manifests and carries CI-suffixed installers. New release builds use the checked-out stable tag, GitHub-safe `Emc2-` installer filenames and the Linux builder's `x86_64` suffix for x64 processes. CI generates `latest.yml` and `latest-linux.yml`, then runs `node --import tsx scripts/check-release-assets.ts windows-x64` or `linux-x64` to validate manifest identity, size and SHA512 against the installer with the updater's own helpers. Both release workflows publish these manifests and include them in `SHA256SUMS.txt`. Explicit GitHub publisher configuration generates metadata even with `--publish never`; CI packaging does not publish. See [ADR 0039](adr/0039-release-update-assets.md). macOS ad-hoc signing and its unsupported automatic installation state remain unchanged. Published output and native two-version updates require separate verification. See [ADR 0019](adr/0019-app-update-prompt.md).
 
 Synthetic tests exercise candidate rejection, pinned-library options and Windows launch arguments, checksum changes, duplicate commands, download bounds, authenticated IPC, actual service drain/resume, mounted notice behavior and the renderer's unknown-send unload guard. Tests of the pinned AppImage library use temporary files and synthetic process adapters to check replacement/launch failure, filename preservation and destination collisions. The Electron download adapter receives synthetic streams to check headerless overflow, exact size, checksum failures and preheader cancellation. Actual library download tests cover unsafe cache files, cache growth, valid reuse, changed hashes, untrusted metadata paths, and stalled-read timeout, cancellation and stop. The Windows publisher callback test is synthetic. Startup checks disable update traffic and cannot prove download/install/restart. Native installation requires separate disposable two-version fixtures on each supported platform; macOS installation remains unsupported.
 
@@ -103,6 +225,15 @@ Gmail API accounts now use [GmailWatch](../server/gmail-watch.ts) alongside the 
 The existing scheduler keeps at most two account syncs active and serializes mail actions. Events during an active account sync request one pending follow-up. Watch identity includes account, provider, email and credentials; replacement/removal stops the old connection and prevents stale sync batches from overwriting current data. Disconnects allow five automatic reconnect attempts with exponential delays; manual or periodic sync can start a new recovery window. Server close removes watcher listeners and timers and closes its clients.
 
 The first complete import enables later arrival notifications. A partial first import saves fetched mail but keeps that notification boundary closed. Existing caches without a stored boundary retain migration compatibility. See [ADR 0018](adr/0018-imap-inbox-events.md). Synthetic service tests cover events through cache refresh and the existing new-mail callback, account isolation, bursts, read serialization, partial failures, credential replacement/removal and shutdown. They do not prove live-provider event behavior or native notification delivery.
+
+### Linux local-key fallback
+
+When `safeStorage` encryption is unavailable on Linux, a fresh profile stores its
+database key in `mail/key.local` (0600) and the renderer shows a persistent
+warning (`MAIL_CREDENTIAL_FALLBACK=linux-local`). Fallback profiles keep the
+local key even if a keyring appears later. Profiles with `key.protected` never
+fall back; they stop with a keyring/reset message. macOS and Windows still stop.
+See [ADR 0027](adr/0027-linux-local-key-fallback.md). The warning uses its own styles in mail and Settings, separate from the update icon and its dismissible details.
 
 ### Protected mail keys on macOS
 
@@ -354,6 +485,20 @@ including a queued refresh after rejection; they do not mount Settings.
 These checks use synthetic accounts and mail. They do not prove real Gmail or Workspace authentication, real mailbox
 latency, native UI behavior, deployment or release readiness.
 
+### Cached-mail tools
+
+`src/mail-search.ts` compiles a query once per query/accounts change. `filterMail` applies it with the existing view, account, Gmail-label, read and relevance filters. An empty query creates no body search strings. Recognized invalid operators, dates and unmatched quotes return a generic error without echoing the query. Unknown prefixes remain literal text. Dates use UTC start-of-day boundaries.
+
+`src/dialogs/CommandPalette.tsx` consumes existing action callbacks from App. The modal uses the shared Dialog focus trap; the underlying frame is inert. The updater closes the palette before installation. The fixed Command/Control+K binding and list Up/Down behavior leave saved j/k preferences intact.
+
+`shared/mail-features.ts` defines compose preferences. Authenticated `GET/PUT /api/compose-preferences` reads/writes one encrypted `compose` record. PUT validates bounded templates, unique IDs and signatures for connected account IDs. `GET /api/state` includes the preferences; unchanged values keep renderer identity stable. Account deletion removes its saved signature. This adds a record kind without changing the mail key, database schema or encryption format.
+
+`pin` and `unpin` message actions run through the existing mail queue and never call a provider mutation. Pins live in the encrypted mail record, survive provider refresh, and clear with the cached mail. They do not reorder results or change Inbox categories.
+
+The service increments an in-memory `unreadArrivals` count only for arrivals already accepted by its existing sync notification rules. App suppresses its initial snapshot and reports count increases on later reloads. Repeated state reads do not repeat a notice; the service counter resets on restart. Each observed arrival batch gets a distinct event ID so equal-sized batches keep separate notices. `src/ui/Toasts.tsx` retains queued outcomes, renders four at a time, masks text with Redact and pauses informational expiry during hover/focus. Errors and delivery warnings remain until dismissed. This supplements native notifications; it does not introduce another sync loop.
+
+Focused source checks are `node --import tsx --test server/mail-features.test.ts src/mail-search.test.tsx src/command-palette.test.tsx src/compose-preferences.test.tsx src/toasts.test.tsx src/mail-actions.test.tsx src/mail-state.test.tsx`. They cover synthetic HTTP/storage, restart persistence, component controls and mounted App selection/pin/arrival behavior. They do not prove native physical input, provider delivery or installed-app behavior. Full application checks remain `npm test` and `npm run build`.
+
 ### Desktop startup
 
 Run `npm test` and `npm run build` before packaging. The desktop startup check opens the encrypted database, loads the renderer, requires the desktop token for API access, checks native menu roles on macOS and closes the window to confirm the tray and the hidden service survive. Use a temporary user-data directory so checks cannot open a maintainer's accounts:
@@ -392,7 +537,7 @@ node --import tsx --test src/compose-send.test.tsx server/send-provider.test.ts
 
 [Renderer regressions](../src/compose-send.test.tsx) execute the compose submission function, form event handlers and rendered status text. A loopback HTTP server records a submission and drops its response, then verifies canceled and confirmed resends. Tests cover uncertainty through edits, shared pointer/keyboard form handling, validation, close prompts, overlapping submissions and refresh failure. [Provider regressions](../server/send-provider.test.ts) run the real provider and shared send operation with synthetic SMTP and IMAP adapters. They cover accepted SMTP, Sent-copy and cleanup warnings, invalid input and SMTP failure without an IMAP connection. These tests do not drive a native window, verify browser event dispatch or prove real mail delivery.
 
-Attempt identifiers, persistent receipts, automatic recovery, automatic retries and a durable outbox are deferred. Send uncertainty exists only on the open in-memory draft. Sources: [compose](../src/compose/ComposePanel.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
+Attempt identifiers, persistent receipts, automatic retries and a durable outbox are deferred. The renderer persists send uncertainty with the encrypted draft before sending; reopening the draft retains the warning and never sends automatically. Sources: [compose](../src/compose/ComposePanel.tsx), [providers](../server/providers.ts), [shared send operation](../server/mail-actions.ts) and [interface behavior](../DESIGN.md).
 
 The provider fixture calls [closeStore](../server/store.ts) before deleting its temporary database directory. Windows cannot remove the directory while SQLite holds its files open.
 
@@ -413,11 +558,11 @@ Keep credentials, personal contact details, absolute machine paths, private host
 
 Download `installer-<platform>` from the workflow run's Artifacts section. Each artifact expires after one day. Reruns replace artifacts for rebuilt platforms; successful platform jobs that are not rerun retain their earlier artifacts. Missing installer files fail the job. Superseded runs are canceled, and each job has a 20-minute limit.
 
-[The build-version step](../scripts/set-build-version.mjs) gives non-tag runs the version `<release>-ci.<GITHUB_RUN_ID>.<GITHUB_RUN_ATTEMPT>`. It updates `package.json` and both root lockfile versions only in the runner checkout. Each new run or rerun has a distinct application version and installer filename. The macOS bundle build version and Windows file version use the workflow run number and attempt. Tagged builds keep the exact release version and reject a mismatched tag. Bump and commit the source release version before each new release tag. See [ADR 0004](adr/0004-ci-build-versions.md).
+[The build-version step](../scripts/set-build-version.mjs) gives non-tag runs the version `<release>-ci.<GITHUB_RUN_ID>.<GITHUB_RUN_ATTEMPT>`. It updates `package.json` and both root lockfile versions only in the runner checkout. Each new run or rerun has a distinct application version and installer filename. The macOS bundle build version and Windows file version use the workflow run number and attempt. The workflow passes the checked-out ref as `EMC2_BUILD_REF`; it takes precedence over the caller's `GITHUB_REF`. Both bare `vX.Y.Z` tags from the auto-release workflow and `refs/tags/vX.Y.Z` keep the exact release version and reject a mismatched tag. Branch and commit builds retain the CI suffix. Bump and commit the source release version before each new release tag. See [ADR 0004](adr/0004-ci-build-versions.md).
 
 The repository is public. Standard GitHub-hosted runner execution is free under [GitHub's Actions billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions). Artifact storage shares the owner's plan allowance with GitHub Packages; excess artifact storage is billed at $0.25 USD per GB-month. npm cache storage has a separate 10 GB included allowance per repository. One-day artifact retention limits storage use but does not set an account spending cap. Recheck billing before making the repository private or selecting larger runners.
 
-CI has read-only repository permissions, disables signing-certificate discovery, and passes `--publish never` to packaging. It needs no mail-provider keys or signing credentials. Installer creation proves packaging; it does not prove native launch, account sign-in, OS trust acceptance or mail delivery. Windows installers are unsigned; macOS apps use local ad-hoc signatures, while DMGs stay unsigned and not notarized. The [release workflow](../.github/workflows/release.yml) publishes all four installers and SHA-256 checksums only after every build job passes. The version tag must match `package.json`. Only its publishing job has repository write permission.
+CI has read-only repository permissions, disables signing-certificate discovery, and passes `--publish never` to packaging. It needs no mail-provider keys or signing credentials. Installer creation proves packaging; it does not prove native launch, account sign-in, OS trust acceptance or mail delivery. Windows installers are unsigned; macOS apps use local ad-hoc signatures, while DMGs stay unsigned and not notarized. The [tag-release workflow](../.github/workflows/release.yml) and [automatic patch-release workflow](../.github/workflows/auto-release.yml) publish four installers, Windows/Linux updater manifests and SHA-256 checksums only after every build job passes. The version tag must match `package.json`. The automatic route creates the patch-version commit and tag; CI build jobs retain read-only repository permissions.
 
 See [README](../README.md#ci) for usage and [ADR 0002](adr/0002-cross-platform-ci.md) for the decision.
 
@@ -439,13 +584,12 @@ Sources: [message rendering](../src/mail/MessageContent.tsx), [navigation policy
 
 ### Back and Forward
 
-The [navigation hook](../src/navigation.ts) keeps visited view, account, Gmail label filter, search,
-selection and reader state in memory. [App](../src/App.tsx) records view and
-account changes, search edits and intentional message opens. Selecting a row
-does not add a visit. Consecutive search edits share one visit. Back and Forward
-restore context and request read status when reopening unread mail. A new
-visit after Back removes the forward branch. Missing messages return to the
-list; missing account filters return to All. Drafts and dialogs block traversal.
+The [navigation hook](../src/navigation.ts) keeps visited menus, views, accounts,
+Gmail label filters, search and sort controls in memory. [App](../src/App.tsx)
+records explicit changes to those controls and Settings. Opening, closing,
+selecting or traversing mail does not add a visit or clear Forward. Consecutive
+search edits share one visit. Back from an open reader returns to the list; immediate Forward reopens the latest reader only while its account and message still exist. Otherwise Back and Forward restore the menu or list. A new menu visit after Back removes the forward branch.
+Missing account filters return to All. Drafts and dialogs block traversal.
 Escape retains the existing close-email, close-dialog and draft-confirmation
 behavior. Closing or changing the reader clears remote-image consent.
 
@@ -457,8 +601,9 @@ twice. Elsewhere, DOM mouse button 3 means Back and button 4 means Forward;
 only mouseup traverses, while mousedown and auxclick suppress defaults.
 
 Synthetic mounted [App tests](../src/navigation.test.tsx) exercise traversal,
-mail-to-mail visits, filter/search restoration, forward truncation, missing or
-changed mail, consent reset, guards, source selection and listener cleanup.
+menu-only history, filter/search restoration, forward retention during mail
+operations, forward truncation after menu changes, consent reset, guards,
+source selection and listener cleanup.
 The [preload test](../desktop/preload.test.ts) checks direction validation and
 unsubscribe behavior. Run `npm test`, `npm run build` and the isolated
 `npm run check:desktop` recipe above for desktop changes. DOM and bridge tests
@@ -533,7 +678,7 @@ Sources: [reader](../src/mail/Reader.tsx), [styles](../src/styles/reader.css),
 
 [Inbox tabs](../shared/inbox-tabs.ts) are derived on the client from Teach rules, personal-mail patterns, Gmail `CATEGORY_*` labels, the sorter's reason and sender/subject patterns; nothing new is stored, and the server's `important`/`other` category still drives MCP, relevance and Teach. The selected tab is part of the in-memory navigation location. The sidebar open state is stored as `sidebar` (`open` or `closed`) in localStorage, beside `window-controls`, and the sender panel as `sender-panel`. There is no rail or top bar; each pane has its own header. A closed sidebar stays mounted with `inert` so it can animate. [App](../src/App.tsx) decides which panes are on screen with [`useMedia`](../src/ui/useMedia.ts) (the sidebar needs 760px, the reader beside the list 980px, the sender panel 1180px, or 1440px beside the reader) and gives the window controls to the header in each corner through [`PaneHeader`](../src/shell/PaneHeader.tsx); without `matchMedia` (the renderer tests) every pane counts as present. [Appearance](../src/appearance.ts) stores mode (`system`, `light` or `dark`; dark by default), theme, accent, transparency (`off`, `subtle` or `glass`; an earlier boolean `glass` is migrated) and reading layout (`split` or `full`) under `emc2.appearance.v1`. It applies them as `data-scheme`, `data-theme`, `--accent` (a deeper shade in light mode) and `data-glass` on the document root; System follows `prefers-color-scheme`. The preload exposes `desktop.materials`, true on macOS and on Windows build 22621 or later; `desktop.setMaterial`, which sends `window-material` (`none`, `mica` or `acrylic`), accepted only from the app window and only on Windows; and `desktop.setScheme`, which sends `window-scheme` and sets `nativeTheme.themeSource` so materials, native menus and System follow the mode. The main process starts dark until the renderer reports its mode. [ADR 0022](adr/0022-window-materials-and-themes.md) records the window material decision and [ADR 0025](adr/0025-light-mode-and-reading-pane.md) the modes and reading layout.
 
-Window chrome outside macOS ([ADR 0026](adr/0026-native-window-chrome.md)): the main process reads `window.json` (`{"controls":"mac"|"windows"}`) from the app data folder when it creates the window; anything unreadable means the drawn lights. Windows style creates the window with `titleBarOverlay` and passes `--emc2-window-controls=windows` to the preload, which exposes `desktop.windowControls`. `window-controls` (from the app window only) saves the choice and, if it changed, opens a new window at the old bounds and destroys the old one; the renderer refuses while a draft is open or sending. `window-overlay` sets the caption colors (validated `#rrggbb`) from the renderer's `--surface` and `--text`. Mail rows call `desktop.mailMenu`, which sends `mail-menu` to `ipcMain.handle`; [window-chrome](../desktop/window-chrome.ts) checks item ids, labels, enabled flags, display-only accelerators and position, and the main process pops a native menu and returns the chosen id (or null after the menu closes). Without the bridge the drawn menu is used. Folded sidebar sections are stored as `sidebar-folded` in localStorage.
+Window chrome outside macOS ([ADR 0026](adr/0026-native-window-chrome.md)): the main process reads `window.json` (`{"controls":"mac"|"windows"}`) from the app data folder when it creates the window; anything unreadable means the drawn lights. Windows style creates the window with `titleBarOverlay` and passes `--emc2-window-controls=windows` to the preload, which exposes `desktop.windowControls`. `window-controls` (from the current window main frame at the app origin only) saves the choice and, if it changed, closes through the native draft guard and, only after accepted closure, opens a new window at the old bounds; the renderer refuses while a draft is open or sending. `window-overlay` sets the caption colors (validated `#rrggbb`) from the renderer's `--surface` and `--text`. Mail rows call `desktop.mailMenu`, which sends `mail-menu` to `ipcMain.handle`; [window-chrome](../desktop/window-chrome.ts) checks item ids, labels, enabled flags, display-only accelerators and position, and the main process pops a native menu and returns the chosen id (or null after the menu closes). Without the bridge the drawn menu is used. Folded sidebar sections are stored as `sidebar-folded` in localStorage.
 
 The renderer is split by area: [`App.tsx`](../src/App.tsx) holds state, handlers and pane layout (the reader keyboard test parses its `markRead`, `openMail` and keydown `handler` declarations, so they stay there); `src/mail/` holds the list, reader, filters, tabs and sender panel; `src/shell/` the sidebar, pane headers and update notice; `src/settings/`, `src/dialogs/` and `src/compose/` their screens; `src/ui/` shared controls, icons, privacy bars and window controls. [`style.css`](../src/style.css) imports one stylesheet per area from `src/styles/` in cascade order, starting with the tokens; the stylesheet test reads them through those imports.
 
@@ -576,7 +721,7 @@ deployment. Browser and live deployment verification remain separate from these 
 
 ## Application rename
 
-Version 0.1.4 publishes the application as Emc². `desktop/migrate.ts` moves `mail`, `settings.env` and `Local State` from the pre-rename app-data folder into the new one on first launch and writes `.renamed-to-emc2` so the step never repeats. `desktop/migrate.test.ts` covers the carry, the single run, the no-overwrite case and the two no-op cases; run it with `npm test`. Installers are named `Emc²-<version>-<os>-<arch>.<ext>`. The Windows application id stays `dev.screen.aggregate-mail`, and the local MCP server is named `emc2`.
+Version 0.1.4 publishes the application as Emc². `desktop/migrate.ts` moves `mail`, `settings.env` and `Local State` from the pre-rename app-data folder into the new one on first launch and writes `.renamed-to-emc2` so the step never repeats. `desktop/migrate.test.ts` covers the carry, the single run, the no-overwrite case and the two no-op cases; run it with `npm test`. New installers are named `Emc2-<version>-<os>-<arch>.<ext>`; Linux x64 uses `x86_64`. The product name remains Emc². The Windows application id stays `dev.screen.aggregate-mail`, and the local MCP server is named `emc2`.
 
 ## Gmail labels, density and read-on-open
 
@@ -589,3 +734,9 @@ Ctrl+Plus, Ctrl+Equals and numpad Plus choose comfortable density; Ctrl+Minus an
 `server/gmail.test.ts` uses mocked Gmail API methods with a temporary encrypted store to cover catalog refresh, message label sync, account isolation, custom label edits, provider failures, sync/read ordering, idempotent reads and disconnect cleanup. `server/imap-read.test.ts` covers inbox UID validation and exact archive Message-ID verification without a connection, including substring false positives and preservation of cached unread state on failure. The store holds SQLite open until process exit, so these tests leave synthetic files in the system temporary directory for the host or CI runner to clean up. `src/mail-ui.test.tsx` covers key recognition, account-scoped filters, label rendering/privacy and duplicate/retry read requests. `src/reader-keyboard.test.tsx` executes the App keyboard and open handlers with synthetic state to cover reader navigation, account changes, coalescing, retry and input guards. These tests do not mount the interface, authenticate real accounts or drive a browser.
 
 Snooze retains its message-specific privacy context. Rejected formatted trees and wrappers without readable text or supported images use the same readable text and consent-controlled gallery. Supported image-only mail keeps its inline image presentation. Image status styles do not override body paragraph sizing.
+
+Filters stay outside scrolling mail content. Compact reader up/down buttons reuse the filtered order and Unread anchor; traversal restores reader focus and resets image consent. See [ADR 0032](adr/0032-mail-control-placement.md). Synthetic mounted tests cover these paths and the selected sidebar folding/collapse behavior. Native layout and physical input remain separate checks.
+
+## Encryption research
+
+[Database and E2E encryption research](encryption-research.md) traces current record-value AES-256-GCM protection, SQLite metadata exposure, OS key protection and Linux's missing explicit `basic_text` rejection. It compares a SQLCipher binding spike with the current store and compares OpenPGP/PGP-MIME with S/MIME recipient support. No encryption or migration implementation was added. No standard guarantees all recipient clients; packaged platform tests and actual cross-client encrypted exchanges remain required before compatibility claims.

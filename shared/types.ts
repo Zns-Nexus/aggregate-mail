@@ -13,6 +13,8 @@ export const appPasswordHelp: Partial<Record<Provider, string>> = {
   fastmail: "https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords",
   yahoo: "https://help.yahoo.com/kb/SLN15241.html",
 };
+import type { ComposePreferences } from "./mail-features";
+
 export type SyncFailure = {
   kind: "auth" | "access" | "transient" | "message" | "unknown";
   phase: "auth" | "connect" | "list" | "read" | "parse" | "sync" | "cleanup";
@@ -22,6 +24,7 @@ export type SyncFailure = {
 export type Account = {
   id: string;
   email: string;
+  name?: string;
   provider: Provider;
   error?: string;
   syncFailure?: SyncFailure;
@@ -29,6 +32,25 @@ export type Account = {
   syncStatus?: "queued" | "running";
 };
 export type Category = "important" | "other";
+export type DraftContent = {
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+  threadId?: string;
+  references?: string[];
+  sendUnknown?: boolean;
+};
+export type Draft = DraftContent & {
+  id: string;
+  accountId: string;
+  revision: number;
+  updatedAt: number;
+  sendUnknown: boolean;
+};
+export type DraftSummary = Pick<Draft, "id" | "accountId" | "revision" | "updatedAt" | "to" | "subject" | "sendUnknown">;
+export type DraftSave = DraftContent & { revision: number };
+export type DraftDelete = { revision: number; confirmUnknown?: boolean };
 // Every System One style decision provider speaks the same request and answer
 // shapes; only the URL, the model id and the key differ.
 export type JevProvider = "typesafe" | "vercel" | "openrouter";
@@ -110,6 +132,7 @@ export type Mail = {
   html?: string | null;
   date: number;
   unread: boolean;
+  pinned?: boolean;
   labelIds?: string[];
   category: Category;
   relevance: 1 | 2 | 3;
@@ -130,6 +153,8 @@ export type Rule = {
   relevance: 1 | 2 | 3;
 };
 export type State = {
+  composePreferences?: ComposePreferences;
+  unreadArrivals?: number;
   accounts: Account[];
   messages: Mail[];
   labels: GmailLabel[];

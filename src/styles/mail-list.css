@@ -5,12 +5,16 @@
   display: flex;
   align-items: center;
 }
+.mail-window { position: relative; overflow-anchor: none; }
+.mail-window-row { position: absolute; left: 0; width: 100%; display: flow-root; }
+.mail-window-date { position: absolute; left: 0; width: 100%; pointer-events: none; }
+.mail-window-date .group { top: 0; margin: 0; height: var(--mail-group-height); }
 .row {
   position: relative;
   width: calc(100% - 12px);
   margin: 1px 6px;
   border-radius: var(--radius-control);
-  height: 34px;
+  height: calc(var(--mail-row-medium) - 2px);
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -29,12 +33,12 @@
   height: 26px;
   justify-content: center;
   border-radius: var(--radius-control);
-  opacity: 0;
+  visibility: hidden;
   pointer-events: none;
 }
 .mail-row:hover .row-trash,
 .mail-row:focus-within .row-trash {
-  opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 .mail-row:hover .row-trash:disabled,
@@ -51,7 +55,7 @@
 }
 @media (hover: none) {
   .row-trash {
-    opacity: 1;
+    visibility: visible;
     pointer-events: auto;
   }
   .row time {
@@ -236,17 +240,17 @@
 .row.unread time {
   color: var(--text);
 }
-.stacked {
-  height: 48px;
+.row.stacked {
+  height: calc(var(--mail-row-high) - 2px);
 }
 .stacked .row-text {
   gap: 2px;
 }
 .brief {
-  height: 28px;
+  height: calc(var(--mail-row-low) - 2px);
 }
 .compact .row {
-  height: 24px;
+  height: calc(var(--mail-row-compact) - 2px);
   margin-top: 1px;
   margin-bottom: 1px;
   font-size: 13px;
@@ -276,11 +280,13 @@
 /* Beside the reader the list is narrow, so each row is a card: sender and
    time, the subject, then a preview for medium and high relevance. */
 .row.card {
-  height: auto;
+  height: calc(var(--mail-row-card-low) - 2px);
   align-items: flex-start;
   padding: 9px 12px 10px;
   font-size: 13px;
 }
+.row.card.r2 { height: calc(var(--mail-row-card-medium) - 2px); }
+.row.card.r3 { height: calc(var(--mail-row-card-high) - 2px); }
 .card .avatar {
   width: 28px;
   height: 28px;
@@ -311,6 +317,7 @@
   font-weight: 600;
 }
 .compact .row.card {
+  height: calc(var(--mail-row-card-compact) - 2px);
   padding: 6px 12px;
 }
 .compact .row.card .avatar {
@@ -386,3 +393,7 @@
 .label-filter .dropdown-menu li {
   overflow-wrap: anywhere;
 }
+
+.row-pin { display: inline-flex; flex-shrink: 0; color: var(--accent); }
+.search-help { margin: 0; padding: 8px 18px; color: var(--text-3); font-size: 12px; }
+.search-help[role="alert"] { color: var(--danger); }

@@ -79,7 +79,7 @@
       "icon": "build/icon.icns",
       "identity": null,
       "notarize": false,
-      "artifactName": "Emc²-${version}-mac-${arch}.${ext}"
+      "artifactName": "Emc2-${version}-mac-${arch}.${ext}"
     },
     "dmg": {
       "sign": false
@@ -97,13 +97,18 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "Emc²-${version}-win-${arch}.${ext}"
+      "artifactName": "Emc2-${version}-win-${arch}.${ext}"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
-      "artifactName": "Emc²-${version}-linux-${arch}.${ext}"
+      "artifactName": "Emc2-${version}-linux-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "screen-devs",
+      "repo": "aggregate-mail"
     }
   }
 }

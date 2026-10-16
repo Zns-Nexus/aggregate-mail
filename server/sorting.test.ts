@@ -22,7 +22,7 @@ test("sender rules override heuristics, case insensitive", () => {
     reason: "Not relevant",
   });
 });
-test("security remains prominent in Other, promotions stay compact", () => {
+test("security stays important, promotions stay compact", () => {
   assert.deepEqual(
     sortMail(
       {

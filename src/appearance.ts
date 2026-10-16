@@ -1,7 +1,5 @@
-// Light and dark modes, theme presets, accent colors, window transparency and
-// the reading layout, stored per device. CSS owns each palette under
-// :root[data-scheme][data-theme]; this module resolves the scheme, sets the
-// accent, chooses the OS window material and toggles the translucent chrome.
+import { z } from "zod";
+import { applyPalette, clearPalette, customThemeIdSchema, customThemesSchema, type CustomTheme, type ThemePreview } from "./themes";
 
 export const modes = [
   { id: "system", label: "System" },
@@ -45,7 +43,7 @@ export const readingLayouts = [
 
 export type Mode = (typeof modes)[number]["id"];
 export type Scheme = "light" | "dark";
-export type ThemeId = (typeof themes)[number]["id"];
+export type ThemeId = (typeof themes)[number]["id"] | CustomTheme["id"];
 export type AccentId = (typeof accents)[number]["id"];
 export type Transparency = (typeof transparencies)[number]["id"];
 export type ReadingLayout = (typeof readingLayouts)[number]["id"];
@@ -56,9 +54,10 @@ export type Appearance = {
   accent: AccentId;
   transparency: Transparency;
   reading: ReadingLayout;
+  customThemes: CustomTheme[];
 };
 
-export const defaultAppearance: Appearance = { mode: "dark", theme: "black", accent: "blue", transparency: "glass", reading: "split" };
+export const defaultAppearance: Appearance = { mode: "dark", theme: "black", accent: "blue", transparency: "glass", reading: "split", customThemes: [] };
 const storageKey = "emc2.appearance.v1";
 
 /** Whether the desktop window has an OS material behind it to show through. */
@@ -94,18 +93,24 @@ const oneOf = <T extends { id: string }>(list: readonly T[], value: unknown): va
 export function readAppearance(): Appearance {
   try {
     const stored: unknown = JSON.parse(localStorage.getItem(storageKey) || "null");
-    if (!stored || typeof stored !== "object") return { ...defaultAppearance };
-    const input = stored as Record<string, unknown>;
+    const parsed = z.record(z.string(), z.unknown()).safeParse(stored);
+    if (!parsed.success) return { ...defaultAppearance };
+    const input = parsed.data;
+    const customThemes = customThemesSchema.safeParse(input.customThemes ?? []);
+    const library = customThemes.success ? customThemes.data : [];
+    const customId = customThemeIdSchema.safeParse(input.theme);
     // Earlier builds stored a boolean `glass` switch.
     const legacy = typeof input.glass === "boolean" ? (input.glass ? "glass" : "off") : undefined;
     let transparency = oneOf(transparencies, input.transparency) ? input.transparency : legacy ?? defaultAppearance.transparency;
     if (transparency === "subtle" && window.desktop?.platform === "darwin") transparency = "glass";
     return {
       mode: oneOf(modes, input.mode) ? input.mode : defaultAppearance.mode,
-      theme: oneOf(themes, input.theme) ? input.theme : defaultAppearance.theme,
+      theme: oneOf(themes, input.theme) ? input.theme
+        : customId.success && library.some((theme) => theme.id === customId.data) ? customId.data : defaultAppearance.theme,
       accent: oneOf(accents, input.accent) ? input.accent : defaultAppearance.accent,
       transparency,
       reading: oneOf(readingLayouts, input.reading) ? input.reading : defaultAppearance.reading,
+      customThemes: library,
     };
   } catch {
     return { ...defaultAppearance };
@@ -115,7 +120,9 @@ export function readAppearance(): Appearance {
 export function saveAppearance(value: Appearance): boolean {
   try {
     const { mode, theme, accent, transparency, reading } = value;
-    localStorage.setItem(storageKey, JSON.stringify({ mode, theme, accent, transparency, reading }));
+    const library = customThemesSchema.parse(value.customThemes);
+    if (!oneOf(themes, theme) && !library.some((custom) => custom.id === theme)) return false;
+    localStorage.setItem(storageKey, JSON.stringify({ mode, theme, accent, transparency, reading, customThemes: library }));
     return true;
   } catch {
     return false;
@@ -123,13 +130,17 @@ export function saveAppearance(value: Appearance): boolean {
 }
 
 /** Applies a preset to the document root and the window; called on start and on every change. */
-export function applyAppearance(value: Appearance, scheme: Scheme = resolveScheme(value.mode, false), root = document.documentElement) {
-  root.dataset.scheme = scheme;
+export function applyAppearance(value: Appearance, scheme: Scheme = resolveScheme(value.mode, false), root = document.documentElement, preview: ThemePreview | null = null) {
+  const activeScheme = preview?.scheme ?? scheme;
+  root.dataset.scheme = activeScheme;
   root.dataset.theme = value.theme;
-  root.style.setProperty("--accent", accents.find((accent) => accent.id === value.accent)![scheme]);
+  clearPalette(root);
+  root.style.setProperty("--accent", accents.find((accent) => accent.id === value.accent)![activeScheme]);
+  const palette = preview?.palette ?? value.customThemes.find((theme) => theme.id === value.theme)?.palettes[activeScheme];
+  if (palette) applyPalette(palette, root);
   const glass = supportsGlass() && value.transparency !== "off";
   root.toggleAttribute("data-glass", glass);
   // The native theme decides the material's tint, native menus and what System reports.
-  window.desktop?.setScheme?.(value.mode);
+  window.desktop?.setScheme?.(preview?.scheme ?? value.mode);
   window.desktop?.setMaterial?.(glass ? windowMaterial(value.transparency) : "none");
 }

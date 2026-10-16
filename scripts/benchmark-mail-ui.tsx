@@ -45,7 +45,9 @@ let renderTime = 0;
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 try {
   await act(async () => root.render(<Profiler id="inbox" onRender={(_id, _phase, duration) => { renderTime += duration; }}><App /></Profiler>));
-  assert.equal(container.querySelectorAll(".row").length, 1800);
+  const mountedRows = container.querySelectorAll(".row").length;
+  assert.ok(mountedRows > 0 && mountedRows < 100);
+  assert.ok(parseFloat((container.querySelector(".mail-window") as HTMLElement).style.height) > 0);
   assert.ok(document.documentElement.hasAttribute("data-glass"));
   for (const scenario of ["selection", "unchanged-refresh"] as const) {
     const renders: number[] = [], elapsed: number[] = [];
@@ -58,7 +60,7 @@ try {
       });
       if (i > 1) { renders.push(renderTime); elapsed.push(performance.now() - start); }
     }
-    console.log(JSON.stringify({ scenario, messages: state.messages.length,
+    console.log(JSON.stringify({ scenario, messages: state.messages.length, mountedRows: container.querySelectorAll(".row").length,
       medianReactMs: +median(renders).toFixed(2), medianElapsedMs: +median(elapsed).toFixed(2) }));
   }
 } finally {

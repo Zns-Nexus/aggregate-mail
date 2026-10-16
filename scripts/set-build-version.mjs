@@ -3,8 +3,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 export function ciVersion(version, env) {
   assert.match(version, /^\d+\.\d+\.\d+$/, "Commit a release version before building");
-  if (env.GITHUB_REF?.startsWith("refs/tags/")) {
-    assert.equal(env.GITHUB_REF, `refs/tags/v${version}`, "Release tag must match package.json");
+  const ref = env.EMC2_BUILD_REF || env.GITHUB_REF;
+  if (ref?.startsWith("refs/tags/") || /^v\d+\.\d+\.\d+$/.test(ref ?? "")) {
+    assert.ok(ref === `v${version}` || ref === `refs/tags/v${version}`, "Release tag must match package.json");
     return version;
   }
   for (const key of ["GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"])

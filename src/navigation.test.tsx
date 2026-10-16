@@ -2,19 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { act } from "react";
 import { JSDOM } from "jsdom";
-import type { Mail, State } from "../shared/types";
+import type { Draft, Mail, State } from "../shared/types";
+import { generatePalette, parseThemeFile, serializeThemeFile, type CustomTheme } from "./themes";
 
-async function mount(native = false, setup?: (state: State, storage: Storage) => void, bridge: Partial<NonNullable<Window["desktop"]>> = {}) {
+async function mount(native = false, setup?: (state: State, storage: Storage) => void, bridge: Partial<NonNullable<Window["desktop"]>> | boolean = {}) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/" });
-  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  dom.window.HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number, y?: number) {
+    this.scrollTop = typeof options === "number" ? y || 0 : options?.top ?? this.scrollTop;
+    this.dispatchEvent(new dom.window.Event("scroll"));
+  };
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  let discard = true;
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
-    location: dom.window.location, history: dom.window.history, HTMLElement: dom.window.HTMLElement,
+    location: dom.window.location, history: dom.window.history, HTMLElement: dom.window.HTMLElement, Element: dom.window.Element,
     requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 0; },
     IS_REACT_ACT_ENVIRONMENT: true,
-    confirm: () => discard,
+    confirm: () => true,
   };
   const previous = new Map(Object.keys(globals).map((key) =>
     [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -48,16 +51,36 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
       subscriptions++; navigate = callback;
       return () => { subscriptions--; navigate = undefined; };
     },
-    ...bridge,
+    ...(typeof bridge === "object" ? bridge : {}),
+  };
+  if (bridge === true) desktop.updates = {
+    state: async () => ({ phase: "current" }),
+    command: async () => { throw new Error("Opening update details must not issue a command"); },
+    onState: () => () => {}, onDrain: () => () => {},
   };
   (dom.window as unknown as Window).desktop = desktop;
   const previousFetch = globalThis.fetch;
   const mutations: string[] = [];
+  const renames: unknown[] = [];
+  let renameFails = false;
+  let savedDraft: Draft | undefined;
   let readWait: Promise<void> | undefined;
   let releaseRead: (() => void) | undefined;
   globalThis.fetch = async (input, options) => {
     const url = String(input);
-    if (options?.method === "PATCH") {
+    if (url.includes("/drafts") && ["POST", "PUT"].includes(options?.method || "")) {
+      savedDraft = { ...JSON.parse(String(options?.body)), id: "synthetic-draft", accountId: url.split("/")[3],
+        revision: (savedDraft?.revision || 0) + 1, updatedAt: 1 };
+      return { ok: true, json: async () => savedDraft } as Response;
+    }
+    if (options?.method === "PATCH" && url.startsWith("/api/accounts/")) {
+      const body = JSON.parse(String(options.body));
+      renames.push({ url, body });
+      if (renameFails) return { ok: false, json: async () => ({ error: "Synthetic rename failure" }) } as Response;
+      const account = state.accounts.find(account => url.endsWith(encodeURIComponent(account.id)))!;
+      if (body.name) account.name = body.name;
+      else delete account.name;
+    } else if (options?.method === "PATCH") {
       mutations.push(url);
       const mail = state.messages.find((mail) => url.endsWith(encodeURIComponent(mail.id)));
       await readWait;
@@ -71,9 +94,10 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   await act(async () => root.render(<App />));
-  const button = (label: string) => {
+  const button = (label: string): HTMLButtonElement => {
+    if (label === "Filter accounts") return accountButtons().find(item => item.getAttribute("aria-pressed") === "true")!;
     const found = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-      button.getAttribute("aria-label") === label || button.textContent?.trim() === label);
+      button.getAttribute("aria-label") === label || button.textContent?.trim() === label || button.querySelector(".sidebar-name, .tab-label")?.textContent === label || [...button.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").trim() === label);
     assert.ok(found, `button ${label}`);
     return found;
   };
@@ -85,6 +109,7 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
   };
   const choose = async (label: string, value: string) => {
     if (label !== "Filter accounts" && !container.querySelector(`[aria-label="${label}"]`)) await openFilters();
+    if (label === "Filter accounts") { await click(account(value)); return; }
     await click(button(label));
     const option = [...container.querySelectorAll<HTMLElement>('[role="option"]')]
       .find((option) => option.textContent?.trim() === value);
@@ -99,8 +124,8 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
   };
   const activeAccount = () => accountButtons().find((item) => item.getAttribute("aria-pressed") === "true")
     ?.querySelector(".sidebar-name")?.textContent;
-  const back = () => key("ArrowLeft", { altKey: true });
-  const forward = () => key("ArrowRight", { altKey: true });
+  const back = () => button("Back");
+  const forward = () => button("Forward");
   const open = async (id: string) => {
     const row = container.querySelector<HTMLElement>(`[id='mail-${id}']`)!;
     assert.ok(row);
@@ -124,6 +149,7 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
     });
   };
   return { state, storage: dom.window.localStorage, window: dom.window, container, button, click, choose, openFilters, account, activeAccount, accountButtons, back, forward, open, mouse, key, input, mutations,
+    renames, failRename: (value: boolean) => { renameFails = value; },
     title: () => container.querySelector(".message h1")?.textContent,
     native: async (direction: "back" | "forward") => { await act(async () => navigate?.(direction)); },
     refresh: async () => { await act(async () => changed?.()); },
@@ -134,7 +160,7 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
     subscriptions: () => subscriptions,
     holdRead: () => { readWait = new Promise<void>((resolve) => { releaseRead = resolve; }); },
     finishRead: async () => { await act(async () => { releaseRead?.(); await readWait; readWait = undefined; }); },
-    discardDraft: (value: boolean) => { discard = value; },
+    savedDraft: () => savedDraft,
     async close() {
       await act(async () => root.unmount());
       assert.equal(subscriptions, 0);
@@ -149,6 +175,297 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
   };
 }
 
+function themeButton(app: Awaited<ReturnType<typeof mount>>, label: string): HTMLButtonElement {
+  const document = app.window.document;
+  const scope = document.querySelector('[role="dialog"]') ?? app.container;
+  const button = [...scope.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent?.trim() === label || button.getAttribute("aria-label") === label);
+  assert.ok(button, `theme button ${label}`);
+  return button;
+}
+
+const sampleTheme = (): CustomTheme => ({
+  id: `custom:${crypto.randomUUID()}`, name: "Nightfall", palettes: {
+    dark: generatePalette("#1a1b26", "#7aa2f7", "dark"),
+    light: generatePalette("#eef0f8", "#3456bc", "light"),
+  },
+});
+
+test("theme dialogs retain edits and block Back/Forward until closed", async () => {
+  const theme = sampleTheme();
+  const app = await mount(true, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: theme.id, customThemes: [theme] })));
+  try {
+    const document = app.window.document;
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(app.button("Accounts"));
+    await app.native("back");
+    for (const action of ["Create theme", "Edit theme", "Import theme", "Delete theme"]) {
+      await app.click(themeButton(app, action));
+      const dialog = document.querySelector('[role="dialog"]')!;
+      const color = dialog.querySelector<HTMLInputElement>('[aria-label="Background hex"]');
+      if (color) await app.input(color, "#123456");
+      for (const direction of ["back", "forward"] as const) {
+        await app.native(direction);
+        await app.key(direction === "back" ? "ArrowLeft" : "ArrowRight", { altKey: true });
+        assert.equal(dialog.isConnected, true, `${action} must survive ${direction}`);
+        assert.equal(app.container.querySelector(".settings h1")?.textContent, "Appearance");
+        if (color) assert.equal(color.value, "#123456");
+      }
+      await app.click(themeButton(app, "Cancel"));
+    }
+    await app.native("forward");
+    assert.equal(app.container.querySelector(".settings h1")?.textContent, "Accounts", "closing restores navigation");
+    await app.native("back");
+    assert.equal(app.container.querySelector(".settings h1")?.textContent, "Appearance");
+  } finally { await app.close(); }
+});
+
+for (const mac of [false, true]) test(`${mac ? "Cmd" : "Ctrl"}+K cannot stack Commands over a theme dialog`, async () => {
+  const theme = sampleTheme();
+  const app = await mount(!mac, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: theme.id, customThemes: [theme] })));
+  try {
+    const document = app.window.document;
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    for (const action of ["Create theme", "Edit theme", "Import theme", "Delete theme"]) {
+      await app.click(themeButton(app, action));
+      const dialog = document.querySelector('[role="dialog"]')!;
+      await app.key("k", mac ? { metaKey: true } : { ctrlKey: true });
+      assert.equal(document.querySelectorAll('[role="dialog"]').length, 1, action);
+      assert.equal(document.querySelector('[role="dialog"]'), dialog);
+      if (mac) {
+        await app.key("[", { metaKey: true });
+        await app.key("]", { metaKey: true });
+        assert.equal(dialog.isConnected, true);
+      }
+      await app.key("Escape");
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+    }
+    await app.key("k", mac ? { metaKey: true } : { ctrlKey: true });
+    assert.equal(document.querySelector('[role="dialog"]')?.getAttribute("aria-label"), "Commands", "closing restores Commands");
+  } finally { await app.close(); }
+});
+
+test("custom theme preview cancels without saving; both palettes persist through an App restart", async () => {
+  const app = await mount();
+  let saved = "";
+  try {
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(app.button("Midnight"));
+    const before = app.storage.getItem("emc2.appearance.v1");
+    const document = app.window.document;
+    const root = document.documentElement;
+    await app.click(themeButton(app, "Create theme"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#202530");
+    assert.equal(root.style.getPropertyValue("--bg"), "#202530");
+    const color = document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!;
+    await app.input(color, "#123");
+    assert.equal(color.value, "#123", "shorthand must not interrupt typing a six-digit color");
+    await app.input(color, "#1234");
+    assert.equal(color.getAttribute("aria-invalid"), "true");
+    await app.click(themeButton(app, "Save theme"));
+    assert.ok(document.querySelector('[role="dialog"]'), "invalid colors block saving");
+    await app.input(color, "#123456");
+    assert.equal(root.style.getPropertyValue("--bg"), "#123456");
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), before);
+    await app.key("Escape");
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(root.style.getPropertyValue("--bg"), "");
+    assert.equal(root.dataset.theme, "midnight");
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), before);
+
+    await app.click(themeButton(app, "Create theme"));
+    await app.input(document.querySelector<HTMLInputElement>('.theme-name input')!, "Nightfall");
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#202530");
+    await app.click(themeButton(app, "Light"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#eef0f8");
+    assert.equal(root.dataset.scheme, "light");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(root.dataset.scheme, "dark", "saving returns to the selected appearance mode");
+    assert.equal(root.style.getPropertyValue("--bg"), "#202530");
+    saved = app.storage.getItem("emc2.appearance.v1")!;
+    const value = JSON.parse(saved);
+    assert.equal(value.customThemes.length, 1);
+    assert.equal(value.customThemes[0].palettes.light.canvas, "#eef0f8");
+    assert.equal(value.theme, value.customThemes[0].id);
+    await app.click(app.button("Close settings"));
+    assert.equal(root.style.getPropertyValue("--bg"), "#202530");
+    assert.equal(app.mutations.length, 0, "theme work never mutates mail");
+  } finally { await app.close(); }
+  const restarted = await mount(false, (_state, storage) => storage.setItem("emc2.appearance.v1", saved));
+  try {
+    assert.equal(restarted.window.document.documentElement.style.getPropertyValue("--bg"), "#202530");
+    await restarted.click(restarted.button("Settings"));
+    await restarted.click(restarted.button("Appearance"));
+    assert.equal(restarted.button("Nightfall").getAttribute("aria-checked"), "true");
+    await restarted.click(themeButton(restarted, "Light"));
+    assert.equal(restarted.window.document.documentElement.style.getPropertyValue("--bg"), "#eef0f8");
+  } finally { await restarted.close(); }
+});
+
+test("edit, duplicate, rename conflicts and confirmed deletion preserve independent themes", async () => {
+  const original = sampleTheme();
+  const app = await mount(false, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: original.id, customThemes: [original] })));
+  try {
+    const document = app.window.document;
+    const read = () => JSON.parse(app.storage.getItem("emc2.appearance.v1")!);
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(themeButton(app, "Edit theme"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Links hex"]')!, "#00ccaa");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(read().customThemes[0].palettes.dark.link, "#00ccaa");
+    await app.click(themeButton(app, "Duplicate theme"));
+    await app.input(document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#323232");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(read().customThemes.length, 2);
+    assert.notEqual(read().customThemes[0].id, read().customThemes[1].id);
+    assert.equal(read().customThemes[0].palettes.dark.canvas, original.palettes.dark.canvas);
+    assert.equal(read().customThemes[1].palettes.dark.canvas, "#323232");
+    await app.click(themeButton(app, "Edit theme"));
+    await app.input(document.querySelector<HTMLInputElement>('.theme-name input')!, "Nightfall");
+    await app.click(themeButton(app, "Save theme"));
+    assert.match(document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /already has this name/);
+    assert.equal(read().customThemes[1].name, "Nightfall copy");
+    await app.click(themeButton(app, "Cancel"));
+    await app.click(themeButton(app, "Delete theme"));
+    await app.click(themeButton(app, "Cancel"));
+    assert.equal(read().customThemes.length, 2);
+    await app.click(themeButton(app, "Delete theme"));
+    await app.click(themeButton(app, "Delete theme"));
+    assert.equal(read().customThemes.length, 1);
+    assert.equal(read().theme, "black");
+    assert.equal(document.documentElement.style.getPropertyValue("--bg"), "");
+  } finally { await app.close(); }
+});
+
+test("JSON import validates before saving and export downloads a portable copy", async () => {
+  const app = await mount();
+  const createObjectURL = URL.createObjectURL;
+  const revokeObjectURL = URL.revokeObjectURL;
+  let downloaded: Blob | undefined;
+  let filename = "";
+  let revoked = "";
+  try {
+    const document = app.window.document;
+    URL.createObjectURL = (blob) => {
+      assert.ok(blob instanceof Blob);
+      downloaded = blob;
+      return "blob:synthetic-theme";
+    };
+    URL.revokeObjectURL = (url) => { revoked = url; };
+    app.window.HTMLAnchorElement.prototype.click = function () { filename = this.download; };
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(themeButton(app, "Import theme"));
+    await app.input(document.querySelector<HTMLTextAreaElement>("textarea")!, '{"version":2}');
+    await app.click(themeButton(app, "Import theme"));
+    assert.match(document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /Emc² version 1/);
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), null);
+    const theme = sampleTheme();
+    await app.input(document.querySelector<HTMLTextAreaElement>("textarea")!, serializeThemeFile(theme));
+    await app.click(themeButton(app, "Import theme"));
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    const imported = JSON.parse(app.storage.getItem("emc2.appearance.v1")!).customThemes[0];
+    assert.notEqual(imported.id, theme.id);
+    await app.click(themeButton(app, "Export theme"));
+    assert.equal(filename, "nightfall.emc2-theme.json");
+    assert.ok(downloaded);
+    assert.deepEqual(parseThemeFile(await downloaded.text()), { name: theme.name, palettes: theme.palettes });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(revoked, "blob:synthetic-theme");
+    await app.click(themeButton(app, "Import theme"));
+    await app.input(document.querySelector<HTMLTextAreaElement>("textarea")!, await downloaded.text());
+    await app.click(themeButton(app, "Import theme"));
+    const themes = JSON.parse(app.storage.getItem("emc2.appearance.v1")!).customThemes;
+    assert.deepEqual(themes.map((item: CustomTheme) => item.name), ["Nightfall", "Nightfall (2)"]);
+    assert.notEqual(themes[0].id, themes[1].id);
+  } finally {
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    await app.close();
+  }
+});
+
+test("failed theme saves keep the editor and draft available and Cancel restores the saved appearance", async () => {
+  const app = await mount();
+  try {
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(app.button("Midnight"));
+    const saved = app.storage.getItem("emc2.appearance.v1");
+    Object.defineProperty(app.window.Storage.prototype, "setItem", { configurable: true, value() { throw new Error("quota"); } });
+    await app.click(themeButton(app, "Create theme"));
+    await app.input(app.window.document.querySelector<HTMLInputElement>('[aria-label="Background hex"]')!, "#202530");
+    await app.click(themeButton(app, "Save theme"));
+    assert.ok(app.window.document.querySelector('[role="dialog"]'));
+    assert.match(app.window.document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /could not be saved/);
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), saved);
+    await app.click(themeButton(app, "Cancel"));
+    assert.equal(app.window.document.documentElement.dataset.theme, "midnight");
+    assert.equal(app.window.document.documentElement.style.getPropertyValue("--bg"), "");
+  } finally { await app.close(); }
+});
+
+test("theme file input reads bounded files and ignores a read completed after Cancel", async () => {
+  const app = await mount();
+  try {
+    const document = app.window.document;
+    const exported = serializeThemeFile(sampleTheme());
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    await app.click(themeButton(app, "Import theme"));
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x".repeat(65537)], "large.json")] });
+    await act(async () => input.dispatchEvent(new app.window.Event("change", { bubbles: true })));
+    assert.match(document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /64 KB/);
+    Object.defineProperty(input, "files", { configurable: true, value: [new File([exported], "theme.json")] });
+    await act(async () => input.dispatchEvent(new app.window.Event("change", { bubbles: true })));
+    assert.equal(document.querySelector<HTMLTextAreaElement>("textarea")!.value, exported);
+    await app.click(themeButton(app, "Import theme"));
+    const saved = app.storage.getItem("emc2.appearance.v1");
+    await app.click(themeButton(app, "Import theme"));
+    let finish = (_text: string) => {};
+    const pending = new Promise<string>((resolve) => { finish = resolve; });
+    const nextInput = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(nextInput, "files", { value: [{ size: 100, text: () => pending }] });
+    await act(async () => nextInput.dispatchEvent(new app.window.Event("change", { bubbles: true })));
+    assert.ok(themeButton(app, "Reading file…").disabled);
+    await app.click(themeButton(app, "Cancel"));
+    await act(async () => { finish(exported); await pending; });
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(app.storage.getItem("emc2.appearance.v1"), saved);
+  } finally { await app.close(); }
+});
+
+test("a full theme library keeps editing available and the theme picker supports keyboard wrapping", async () => {
+  const themes = Array.from({ length: 32 }, (_, index) => ({ ...sampleTheme(), name: `Palette ${index + 1}` }));
+  const app = await mount(false, (_state, storage) => storage.setItem("emc2.appearance.v1", JSON.stringify({ theme: themes[0].id, customThemes: themes })));
+  try {
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Appearance"));
+    assert.ok(themeButton(app, "Create theme").disabled);
+    assert.ok(themeButton(app, "Import theme").disabled);
+    assert.ok(themeButton(app, "Duplicate theme").disabled);
+    await app.click(themeButton(app, "Edit theme"));
+    await app.input(app.window.document.querySelector<HTMLInputElement>('.theme-name input')!, "Renamed palette");
+    await app.click(themeButton(app, "Save theme"));
+    assert.equal(JSON.parse(app.storage.getItem("emc2.appearance.v1")!).customThemes.length, 32);
+    const chosen = app.button("Renamed palette");
+    chosen.focus();
+    await act(async () => chosen.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+    assert.equal(app.button("Black").getAttribute("aria-checked"), "true");
+    assert.equal(app.window.document.activeElement, app.button("Black"));
+    await act(async () => app.button("Black").dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    assert.equal(app.button("Palette 32").getAttribute("aria-checked"), "true");
+    assert.equal(app.window.document.activeElement, app.button("Palette 32"));
+    assert.equal(app.container.querySelectorAll('.theme-choices [tabindex="0"]').length, 1);
+  } finally { await app.close(); }
+});
+
 test("context menu Open navigates and marks read without a menu guard blocking it", async () => {
   const app = await mount();
   try {
@@ -160,124 +477,6 @@ test("context menu Open navigates and marks read without a menu guard blocking i
     assert.equal(app.mutations.length, 1);
   } finally { await app.close(); }
 });
-
-test("mounted App traverses intentional mail routes, restores context and truncates Forward", async () => {
-  const app = await mount();
-  try {
-    await app.click(app.container.querySelector<HTMLElement>("[id='mail-b:1']")!);
-    await app.key("j");
-    await app.back();
-    assert.equal(app.title(), undefined, "selection alone is not navigation");
-    await app.open("a:1");
-    assert.equal(app.title(), "Alpha");
-    assert.equal(app.container.querySelector(".reader-close-hint kbd")?.textContent, "Esc");
-    await app.click(app.button("Show images"));
-    assert.ok(app.container.querySelector(".message-images img"));
-    const mutationCount = app.mutations.length;
-    await app.back();
-    assert.equal(app.title(), undefined);
-    assert.ok(app.container.querySelector("[id='mail-a:1']")?.classList.contains("selected"));
-    await app.forward();
-    assert.equal(app.title(), "Alpha");
-    assert.equal(app.container.querySelector(".message-images img"), null);
-    assert.equal(app.mutations.length, mutationCount);
-    await app.back();
-    app.state.messages.find((mail) => mail.id === "a:1")!.unread = true;
-    await app.refresh();
-    await app.forward();
-    assert.equal(app.mutations.length, mutationCount + 1, "history reopening unread mail marks it read");
-    const beta = [...app.container.querySelectorAll<HTMLButtonElement>(".context-list button")]
-      .find((button) => button.textContent?.startsWith("Beta"))!;
-    await app.click(beta);
-    assert.equal(app.title(), "Beta");
-    await app.mouse(3);
-    assert.equal(app.title(), "Alpha");
-    await app.mouse(4);
-    assert.equal(app.title(), "Beta");
-    await app.back();
-    await app.click(app.button("Promotions1"));
-    assert.equal(app.title(), undefined);
-    await app.forward();
-    assert.equal(app.title(), undefined, "a new visit clears forward history");
-    await app.click(app.account("first@example.com"));
-    await app.click(app.button("Search mail"));
-    const search = app.container.querySelector<HTMLInputElement>(".search input")!;
-    await app.input(search, "Other");
-    await app.input(search, "Other message");
-    await app.open("a:3");
-    await app.back();
-    assert.equal(app.container.querySelector<HTMLInputElement>(".search input")?.value, "Other message");
-    assert.equal(app.activeAccount(), "first@example.com");
-    assert.equal(app.container.querySelector(".sidebar-group .active")?.getAttribute("aria-current"), "page");
-    await app.back(); // All keystrokes form one search visit.
-    assert.equal(app.container.querySelector<HTMLInputElement>(".search input"), null);
-    await app.forward();
-    await app.forward();
-    assert.equal(app.title(), "Other message");
-    app.state.messages.find((mail) => mail.id === "a:3")!.archived = true;
-    await app.refresh();
-    assert.equal(app.title(), "Other message"); // Changed classification cannot open an unrelated row.
-    await app.back();
-    app.state.messages = app.state.messages.filter((mail) => mail.id !== "a:3");
-    app.state.accounts = app.state.accounts.filter((account) => account.id !== "a");
-    await app.refresh();
-    await app.forward();
-    assert.equal(app.title(), undefined);
-    assert.equal(app.activeAccount(), "All accounts");
-    assert.equal(app.container.ownerDocument.location.href, "http://localhost/");
-    assert.equal(app.container.ownerDocument.defaultView!.localStorage.length, 0);
-  } finally { await app.close(); }
-});
-
-test("mounted App guards drafts/dialogs and uses one native side-button source with cleanup", async () => {
-  const app = await mount(true);
-  try {
-    await app.open("a:1");
-    await app.click(app.button("Promotions1"));
-    assert.equal(app.subscriptions(), 1);
-    await app.mouse(3);
-    assert.equal(app.title(), undefined); // DOM delivery cannot duplicate Electron's command.
-    await app.native("back");
-    assert.equal(app.title(), "Alpha");
-    await app.native("forward");
-    assert.equal(app.title(), undefined);
-    await app.native("back");
-    const mutations = app.mutations.length;
-    for (const shortcut of ["c", "m", "s", "?"]) {
-      await app.key(shortcut);
-      assert.ok(app.container.querySelector('[role="dialog"]'));
-      const body = app.container.querySelector<HTMLTextAreaElement>("textarea");
-      if (shortcut === "c") {
-        assert.ok(body);
-        await app.input(body, "Keep this draft");
-      }
-      await app.native("back");
-      await app.native("forward");
-      assert.equal(app.title(), "Alpha");
-      if (shortcut === "c") assert.equal(body!.value, "Keep this draft");
-      if (shortcut === "c") {
-        app.discardDraft(false);
-        await app.key("Escape");
-        assert.equal(body!.value, "Keep this draft");
-        assert.ok(app.container.querySelector('[role="dialog"]'));
-        app.discardDraft(true);
-      }
-      await app.key("Escape");
-    }
-    await app.key("Escape");
-    assert.equal(app.title(), undefined);
-    assert.equal(app.mutations.length, mutations);
-    await app.click(app.button("Settings"));
-    await app.native("back");
-    assert.ok(app.container.querySelector(".settings"));
-    await app.click(app.button("Close settings"));
-    await app.native("back");
-    assert.equal(app.title(), undefined);
-    await app.back();
-    assert.equal(app.title(), undefined, "back at the start of history does nothing");
-  } finally { await app.close(); }
-});
-
 
 test("Settings persist opening mode and custom keys while single-click opens and marks read once", async () => {
   const app = await mount();
@@ -377,7 +576,7 @@ test("privacy removes connected recipient names and addresses from list, headers
     await app.click(app.button("Show images"));
     assert.equal(app.container.querySelectorAll(".message-body img").length, 1);
     assertHidden();
-    await app.back(); await app.forward();
+    await app.click(app.back()); await app.click(app.forward());
     assert.equal(app.container.querySelector(".message-body img"), null, "history return requires new consent in privacy mode");
     assert.equal(app.button("Show images").disabled, false);
   } finally { await app.close(); }
@@ -566,10 +765,10 @@ test("mounted cached-mail controls combine filters, retain the read-on-open read
     assert.equal(app.title(), undefined, "explicit sort change closes the reader");
     assert.deepEqual(rows(), []);
     assert.match(app.container.querySelector(".empty")!.textContent!, /No matching mail/);
-    await app.back();
-    assert.equal(app.title(), "Alpha");
+    await app.click(app.back());
+    assert.equal(app.title(), undefined, "menu history restores its list");
     assert.equal(app.button("Sort mail").textContent, "Oldest");
-    await app.forward();
+    await app.click(app.forward());
     assert.equal(app.title(), undefined);
     const reset = app.container.querySelector<HTMLButtonElement>(".empty button")!;
     assert.equal(reset.textContent, "Reset filters and sort");
@@ -580,7 +779,7 @@ test("mounted cached-mail controls combine filters, retain the read-on-open read
       ["Relevance filter", "All relevance"], ["Sort mail", "Newest"], ["Filter by Gmail label", "All labels"]])
       assert.equal(app.button(label).textContent, value);
     assert.equal(app.container.querySelector(".search input"), null);
-    await app.back();
+    await app.click(app.back());
     assert.deepEqual(rows(), []);
     assert.equal(app.button("Sort mail").textContent, "Relevance");
     assert.equal(app.activeAccount(), "first@example.com");
@@ -590,7 +789,7 @@ test("mounted cached-mail controls combine filters, retain the read-on-open read
     assert.equal(app.container.querySelector<HTMLInputElement>(".search input")?.value, "ALPHA");
     await app.choose("Read status", "All mail");
     assert.deepEqual(rows(), ["mail-a:1"]);
-    await app.forward();
+    await app.click(app.forward());
     assert.equal(app.button("Read status").textContent, "All mail", "new control visit truncates Forward");
     assert.equal(app.storage.length, 0, "mail filter history remains in memory");
   } finally { await app.close(); }
@@ -635,8 +834,8 @@ test("sidebar account choices close the reader, keep history and leave number sh
     await app.click(app.account("first@example.com"));
     assert.equal(app.activeAccount(), "first@example.com");
     assert.equal(app.title(), undefined);
-    await app.back();
-    assert.equal(app.title(), "Alpha");
+    await app.click(app.back());
+    assert.equal(app.title(), undefined, "account history returns to its list");
     await app.click(app.account("second@example.com"));
     assert.equal(app.title(), undefined);
     assert.equal(app.container.querySelector(".row.selected")?.id, "mail-b:1");
@@ -659,10 +858,10 @@ test("mounted Oldest and Relevance controls reorder cached rows and history rest
     await app.choose("Sort mail", "Relevance");
     assert.deepEqual(rows(), ["mail-a:2", "mail-b:1", "mail-a:1"]);
     assert.equal(app.container.querySelector(".group"), null, "date groups do not interrupt relevance ordering");
-    await app.back();
+    await app.click(app.back());
     assert.equal(app.button("Sort mail").textContent, "Oldest");
     assert.deepEqual(rows(), ["mail-b:1", "mail-a:2", "mail-a:1"]);
-    await app.forward();
+    await app.click(app.forward());
     assert.equal(app.button("Sort mail").textContent, "Relevance");
     assert.deepEqual(rows(), ["mail-a:2", "mail-b:1", "mail-a:1"]);
   } finally { await app.close(); }
@@ -696,15 +895,21 @@ test("Unread reader navigation keeps the opened message as an ordering anchor", 
   }
 });
 
-test("sidebar toggle hides the panel and the choice survives a restart", async () => {
+test("sidebar toggle stays first in its header, hides the panel and survives a restart", async () => {
   const app = await mount();
   try {
+    assert.equal(app.container.querySelector(".sidebar-head")?.firstElementChild, app.button("Hide sidebar"));
+    assert.equal(app.container.querySelector('.main-head [aria-controls="sidebar"]'), null);
     await app.click(app.button("Hide sidebar"));
+    assert.equal(app.container.querySelector(".main-head")?.firstElementChild, app.button("Show sidebar"));
     // The panel stays mounted so it can animate closed, but leaves the focus order.
     assert.ok(app.container.querySelector(".sidebar.closed[inert]"));
     assert.equal(app.window.localStorage.getItem("sidebar"), "closed");
     await app.click(app.button("Show sidebar"));
     assert.equal(app.container.querySelector(".sidebar.closed, .sidebar[inert]"), null);
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Hide sidebar"));
+    assert.equal(app.container.querySelector(".main-head")?.firstElementChild, app.button("Show sidebar"));
   } finally { await app.close(); }
   const restarted = await mount(false, (_state, storage) => storage.setItem("sidebar", "closed"));
   try {
@@ -715,7 +920,13 @@ test("sidebar toggle hides the panel and the choice survives a restart", async (
 test("Settings replaces the mail sidebar with its sections and shows one at a time", async () => {
   const app = await mount();
   try {
-    await app.click(app.button("Settings"));
+    const settings = app.button("Settings");
+    const footer = settings.closest(".sidebar-footer");
+    assert.ok(footer, "Settings belongs beside Sync at the bottom of the sidebar");
+    assert.ok(footer.querySelector(".sync"));
+    assert.ok(settings.querySelector("svg"));
+    assert.equal(settings.textContent, "", "Settings is an accessible icon button");
+    await app.click(settings);
     assert.equal(app.container.querySelector('[aria-label="Mail views"]'), null);
     assert.ok(app.container.querySelector("[data-interaction-settings]"));
     await app.click(app.button("Appearance"));
@@ -790,7 +1001,7 @@ test("desktop mail rows use a native context menu and run the chosen action", as
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(app.container.querySelector('[role="menu"]'), null, "no drawn menu on the desktop");
     assert.deepEqual(menus[0].items.map((item) => item.label),
-      ["Open", "Mark as read", "Reply", "Archive", "Snooze", "Move to Trash", "Teach sorting"]);
+      ["Open", "Mark as read", "Pin email", "Reply", "Archive", "Snooze", "Move to Trash", "Teach sorting"]);
     assert.deepEqual(menus[0].items.filter((item) => item.separator).map((item) => item.id), ["reply", "archive", "teach"]);
     assert.ok(app.mutations.some((url) => url.endsWith(encodeURIComponent("a:1"))), "the chosen action ran");
   } finally { await app.close(); }
@@ -809,4 +1020,500 @@ test("sidebar sections fold away and stay folded after a restart", async () => {
     await restarted.click(restarted.button("Accounts"));
     assert.ok(restarted.accountButtons().length > 0);
   } finally { await restarted.close(); }
+});
+
+test("initial reader Back and Forward restore the latest reader without traversal visits", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1");
+    assert.equal(app.back().disabled, false);
+    await app.click(app.back());
+    assert.equal(app.title(), undefined);
+    assert.equal(app.back().disabled, true);
+    await app.click(app.forward());
+    assert.equal(app.title(), "Alpha");
+    await app.key("j");
+    await app.click(app.button("Next email"));
+    assert.equal(app.title(), "Gamma");
+    await app.click(app.button("Show images"));
+    await app.click(app.back());
+    assert.equal(app.title(), undefined);
+    assert.equal(app.back().disabled, true, "reader traversal adds no history entries");
+    await app.click(app.forward());
+    assert.equal(app.title(), "Gamma");
+    assert.ok(app.button("Show images"), "restoring a reader requires fresh image consent");
+    await app.click(app.back());
+    await app.open("a:2");
+    await app.key("Escape");
+    assert.equal(app.forward().disabled, true, "opening another reader clears the previous return");
+    await app.open("a:1");
+    await app.click(app.back());
+    await app.click(app.button("Promotions"));
+    assert.equal(app.forward().disabled, true, "a new menu visit clears the reader return");
+  } finally { await app.close(); }
+});
+
+
+test("mouse side buttons leave and restore an initial reader while dialogs guard both directions", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1");
+    await app.mouse(3);
+    assert.equal(app.title(), undefined);
+    await app.mouse(4);
+    assert.equal(app.title(), "Alpha");
+    for (const shortcut of ["c", "m", "s", "?"]) {
+      await app.key(shortcut);
+      assert.ok(app.container.querySelector('[role="dialog"]'));
+      await app.mouse(3); await app.mouse(4);
+      assert.equal(app.title(), "Alpha");
+      assert.ok(app.container.querySelector('[role="dialog"]'));
+      await app.key("Escape");
+    }
+    await app.mouse(3);
+    assert.equal(app.title(), undefined);
+    await app.mouse(4);
+    assert.equal(app.title(), "Alpha");
+  } finally { await app.close(); }
+});
+
+
+test("menu history restores view, account, search and Settings without restoring readers", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    assert.ok(app.back().disabled && app.forward().disabled);
+    await app.open("a:1");
+    await app.key("j");
+    assert.equal(app.title(), "Beta");
+    assert.ok(!app.back().disabled, "an opened reader can return to its list");
+    await app.key("Escape");
+    assert.ok(app.back().disabled, "closing email creates no menu visit");
+    await app.click(app.button("Promotions"));
+    await app.choose("Filter accounts", "first@example.com");
+    await app.click(app.button("Search mail"));
+    const search = app.container.querySelector<HTMLInputElement>(".search input")!;
+    await app.input(search, "Other"); await app.input(search, "Other message");
+    await app.click(app.button("Settings"));
+    assert.ok(app.container.querySelector(".settings"));
+    assert.ok(!app.back().disabled, "history remains reachable in Settings");
+    await app.click(app.back());
+    assert.equal(app.container.querySelector(".settings"), null);
+    assert.equal(app.container.querySelector<HTMLInputElement>(".search input")?.value, "Other message");
+    assert.equal(app.activeAccount(), "first@example.com");
+    await app.open("a:3");
+    assert.equal(app.title(), "Other message");
+    await app.key("Escape");
+    assert.ok(!app.forward().disabled, "opening and closing do not clear Forward");
+    await app.click(app.forward());
+    assert.ok(app.container.querySelector(".settings"));
+    await app.mouse(3);
+    assert.equal(app.title(), undefined);
+    await app.mouse(3);
+    assert.equal(app.container.querySelector(".search input"), null, "search keystrokes form one visit");
+    await app.mouse(4);
+    assert.equal(app.container.querySelector<HTMLInputElement>(".search input")?.value, "Other message");
+    await app.click(app.back());
+    await app.click(app.button("Archive"));
+    assert.ok(app.forward().disabled, "new menu navigation truncates Forward");
+    await app.choose("Filter accounts", "second@example.com");
+    await app.click(app.button("Settings"));
+    app.state.accounts = app.state.accounts.filter(account => account.id !== "b");
+    await app.refresh(); await app.click(app.back());
+    assert.equal(app.activeAccount(), "All accounts", "missing accounts resolve to All");
+    assert.equal(app.title(), undefined);
+    assert.equal(app.storage.length, 0, "history is memory-only");
+  } finally { await app.close(); }
+});
+
+
+
+test("reader buttons reuse unread anchors, edge guards and image resets without history visits", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.choose("Read status", "Unread");
+    await app.click(app.button("Settings")); await app.click(app.back());
+    await app.open("a:1");
+    assert.equal(app.button("Previous email").disabled, true);
+    await app.click(app.button("Show images"));
+    await app.click(app.button("Next email"));
+    assert.equal(app.title(), "Beta");
+    assert.ok(app.button("Show images"));
+    assert.ok(!app.forward().disabled, "reader buttons preserve menu Forward");
+    await app.click(app.button("Next email"));
+    assert.equal(app.title(), "Gamma");
+    assert.equal(app.button("Next email").disabled, true);
+    await app.click(app.button("Reply"));
+    assert.equal(app.button("Previous email").disabled, true);
+    assert.equal(app.button("Next email").disabled, true);
+  } finally { await app.close(); }
+});
+
+
+
+test("updater Escape dismisses only update details and preserves reader focus", { timeout: 10000 }, async () => {
+  const app = await mount(false, undefined, true);
+  try {
+    await app.open("a:1");
+    const trigger = app.container.querySelector<HTMLButtonElement>("[aria-controls='update-details']")!;
+    trigger.focus();
+    await app.click(trigger);
+    assert.ok(app.container.querySelector("#update-details"));
+    const escape = new app.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    await act(async () => trigger.dispatchEvent(escape));
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(app.container.querySelector("#update-details"), null);
+    assert.equal(app.title(), "Alpha");
+    assert.ok(app.window.document.activeElement === trigger, "focus returns to the updater icon");
+    await app.key("Escape");
+    assert.equal(app.title(), undefined, "the next Escape still closes the reader");
+  } finally { await app.close(); }
+});
+
+
+test("updater Escape from Search preserves Search and the opened reader", { timeout: 10000 }, async () => {
+  const app = await mount(false, undefined, true);
+  try {
+    await app.open("a:1");
+    await app.key("/");
+    const search = app.container.querySelector<HTMLInputElement>("[aria-label='Search all synced mail']")!;
+    assert.ok(search);
+    const trigger = app.container.querySelector<HTMLButtonElement>("[aria-controls='update-details']")!;
+    await app.click(trigger);
+    search.focus();
+    const escape = new app.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    await act(async () => search.dispatchEvent(escape));
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(app.container.querySelector("#update-details"), null);
+    assert.equal(app.title(), "Alpha");
+    assert.ok(search.isConnected, "Escape leaves Search open beneath the dismissed panel");
+    assert.ok(app.window.document.activeElement === trigger, "focus returns to the updater icon");
+  } finally { await app.close(); }
+});
+
+
+test("reader button traversal keeps focus in the reader so Tab preserves the mail view", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1");
+    for (const [label, title] of [["Next email", "Beta"], ["Previous email", "Alpha"]]) {
+      if (label === "Previous email") await app.key("j");
+      const button = app.button(label);
+      button.focus();
+      await app.click(button);
+      const reader = app.container.querySelector<HTMLElement>(".message")!;
+      assert.equal(app.title(), title);
+      assert.ok(app.window.document.activeElement === reader, "focus stays inside the replacement reader");
+      const tab = new app.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+      await act(async () => reader.dispatchEvent(tab));
+      assert.equal(tab.defaultPrevented, false);
+      assert.equal(app.title(), title);
+      assert.ok(app.container.querySelector('.sidebar-group button.active')?.textContent?.includes("Inbox"));
+      const action = app.button("Reply"); action.focus();
+      const key = new app.window.KeyboardEvent("keydown", { key: title === "Beta" ? "k" : "j", bubbles: true, cancelable: true });
+      await act(async () => action.dispatchEvent(key));
+      const nextReader = app.container.querySelector<HTMLElement>(".message")!;
+      assert.ok(app.window.document.activeElement === nextReader, "j/k moves focus off the replaced reader action");
+      const nextTitle = title === "Beta" ? "Alpha" : "Beta";
+      assert.equal(app.title(), nextTitle);
+      const afterKeyTab = new app.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+      await act(async () => nextReader.dispatchEvent(afterKeyTab));
+      assert.equal(afterKeyTab.defaultPrevented, false);
+      assert.equal(app.title(), nextTitle);
+      assert.ok(app.container.querySelector('.sidebar-group [aria-current="page"]')?.textContent?.includes("Inbox"));
+    }
+  } finally { await app.close(); }
+});
+
+
+
+test("private rename confirms saving and displays the custom account label", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.click(app.button("Hide personal information"));
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Accounts"));
+    await app.click(app.button("Rename"));
+    const form = app.container.querySelector<HTMLFormElement>(".account-name-form")!;
+    const input = form.querySelector<HTMLInputElement>("input")!;
+    await act(async () => input.focus());
+    await app.input(input, "Work inbox");
+    await act(async () => input.blur());
+    assert.equal(input.value, "", "blur hides the private draft without discarding it");
+    await app.click(form.querySelector<HTMLButtonElement>('button[type="submit"]')!);
+    assert.equal(app.state.accounts[0].name, "Work inbox");
+    assert.match(app.container.querySelector(".toast-text")?.textContent || "", /^Account name saved\.$/);
+    assert.match(app.container.querySelector(".settings")!.textContent!, /Work inbox/);
+    await app.click(app.button("Show personal information"));
+    assert.match(app.container.querySelector(".settings")!.textContent!, /Work inbox/, "the saved name appears when privacy is off");
+  } finally { await app.close(); }
+});
+
+
+test("Settings rename persists through PATCH and reload, clears to email, cancels and retains failed input", { timeout: 10000 }, async () => {
+  const app = await mount();
+  const form = () => app.container.querySelector<HTMLFormElement>(".account-name-form")!;
+  const submit = async () => { await act(async () => form().dispatchEvent(new app.window.Event("submit", { bubbles: true, cancelable: true }))); };
+  try {
+    await app.click(app.button("Settings")); await app.click(app.button("Accounts")); await app.click(app.button("Rename"));
+    assert.equal(form().querySelector<HTMLInputElement>("input")!.maxLength, 80);
+    await app.input(form().querySelector("input")!, "  Personal inbox  "); await submit();
+    assert.deepEqual(app.renames, [{ url: "/api/accounts/a", body: { name: "Personal inbox" } }]);
+    assert.equal(app.state.accounts[0].name, "Personal inbox");
+    assert.match(app.container.querySelector(".settings")!.textContent!, /Personal inbox/); assert.equal(form(), null);
+    await app.click(app.button("Rename")); await app.input(form().querySelector("input")!, "Discarded");
+    await app.click(app.button("Cancel")); assert.equal(app.renames.length, 1);
+    await app.click(app.button("Rename")); await app.input(form().querySelector("input")!, "Keep this name");
+    app.failRename(true); await submit();
+    assert.equal(form().querySelector<HTMLInputElement>("input")!.value, "Keep this name");
+    assert.match(form().querySelector('[role="alert"]')!.textContent!, /Could not rename/);
+    assert.equal(app.state.accounts[0].name, "Personal inbox");
+    app.failRename(false); await app.input(form().querySelector("input")!, "x".repeat(81)); await submit();
+    assert.deepEqual(app.renames.at(-1), { url: "/api/accounts/a", body: { name: "x".repeat(80) } });
+    await app.click(app.button("Rename")); await app.input(form().querySelector("input")!, "   "); await submit();
+    assert.equal(app.state.accounts[0].name, undefined); assert.match(app.container.querySelector(".settings")!.textContent!, /first@example.com/);
+  } finally { await app.close(); }
+});
+
+
+test("custom account labels remain visible in privacy while addresses and unfocused edit values are hidden", { timeout: 10000 }, async () => {
+  const app = await mount(false, (state, storage) => { state.accounts[0].name = "Private Identity"; storage.setItem("privacy", "on"); });
+  try {
+    const hidden = () => {
+      assert.doesNotMatch(app.container.innerHTML, /first@example.com|second@example.com/);
+      assert.match(app.container.textContent!, /Private Identity/);
+    };
+    hidden(); await app.click(app.button("Hide sidebar")); hidden();
+    await app.click(app.button("Show sidebar"));
+    await app.click(app.button("Settings")); await app.click(app.button("Accounts")); hidden();
+    await app.click(app.button("Rename")); hidden();
+    const input = app.container.querySelector<HTMLInputElement>(".account-name-form input")!;
+    await act(async () => input.focus()); assert.equal(input.value, "Private Identity");
+    await act(async () => input.blur()); assert.equal(input.value, ""); hidden();
+    await app.click(app.button("Cancel")); assert.equal(app.renames.length, 0);
+    await app.click(app.button("Show personal information"));
+    assert.match(app.container.textContent!, /Private Identity/);
+  } finally { await app.close(); }
+});
+
+
+test("menu Back and Forward shortcuts work from focused sidebar controls", { timeout: 10000 }, async () => {
+  const app = await mount();
+  const historyKey = async (key: string) => {
+    const target = app.window.document.activeElement!;
+    assert.ok(target.closest("#sidebar"), "dispatch from the sidebar control that retained focus");
+    const event = new app.window.KeyboardEvent("keydown", { key, altKey: true, bubbles: true, cancelable: true });
+    await act(async () => target.dispatchEvent(event));
+    assert.equal(event.defaultPrevented, true);
+  };
+  try {
+    for (const label of ["Archive", "second@example.com"]) {
+      const control = app.button(label);
+      await act(async () => control.focus()); await app.click(control);
+      assert.equal(app.back().disabled, false);
+      await historyKey("ArrowLeft");
+      assert.equal(app.container.querySelector(".settings"), null);
+      assert.equal(app.button("Inbox").getAttribute("aria-current"), "page");
+      assert.equal(app.activeAccount(), "All accounts");
+      await historyKey("ArrowRight");
+      if (label === "Settings") assert.ok(app.container.querySelector(".settings"));
+      else if (label === "Archive") assert.equal(app.button(label).getAttribute("aria-current"), "page");
+      else assert.equal(app.activeAccount(), label);
+      await historyKey("ArrowLeft");
+    }
+  } finally { await app.close(); }
+});
+
+
+
+test("focused closed filters accept Ctrl density shortcuts while editors and dialogs guard them", { timeout: 10000 }, async () => {
+  const app = await mount();
+  const density = () => app.container.querySelector(".list")!.classList.contains("compact");
+  const send = async (target: HTMLElement, key: string) => {
+    const event = new app.window.KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true });
+    await act(async () => target.dispatchEvent(event));
+    return event.defaultPrevented;
+  };
+  try {
+    await app.openFilters();
+    const filter = app.button("Read status"); await act(async () => filter.focus());
+    assert.equal(await send(filter, "-"), true);
+    assert.equal(density(), true);
+    assert.equal(await send(filter, "+"), true);
+    assert.equal(density(), false);
+    await app.click(app.button("Search mail"));
+    const search = app.container.querySelector<HTMLInputElement>(".search input")!;
+    search.focus(); assert.equal(await send(search, "-"), false); assert.equal(density(), false);
+    await app.key("Escape");
+    await app.open("a:1"); await app.key("c");
+    const textarea = app.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    assert.ok(textarea); assert.equal(await send(textarea, "-"), false); assert.equal(density(), false);
+    const dialogButton = app.container.querySelector<HTMLElement>('[role="dialog"] button')!;
+    assert.equal(await send(dialogButton, "-"), false); assert.equal(density(), false);
+  } finally { await app.close(); }
+});
+
+
+for (const reading of ["split", "full"] as const) test(`3000-row ${reading} App window retains tail mail, navigation, actions and passive-scroll focus`, { timeout: 15000 }, async () => {
+  const app = await mount(false, (state, storage) => {
+    storage.setItem("emc2.appearance.v1", JSON.stringify({ reading }));
+    const sample = state.messages[0];
+    state.messages = Array.from({ length: 3000 }, (_, index) => ({ ...sample,
+      id: `window:${index}`, remoteId: String(index), subject: `Window message ${index}`,
+      body: `Window message ${index}`, preview: `Window message ${index}`, unread: false,
+      date: Date.now() - index * 1000, accountId: index % 2 ? "b" : "a",
+    }));
+  });
+  const list = () => app.container.querySelector<HTMLElement>(".list")!;
+  const bounded = () => assert.ok(app.container.querySelectorAll(".row").length < 60);
+  const tail = async () => {
+    const window = app.container.querySelector<HTMLElement>(".mail-window")!;
+    assert.ok(window);
+    await act(async () => list().scrollTo({ top: Math.max(0, parseFloat(window.style.height) - 600) }));
+    bounded();
+  };
+  try {
+    bounded();
+    const first = app.container.querySelector<HTMLElement>('[id="mail-window:0"]')!;
+    await act(async () => first.focus());
+    await tail();
+    assert.equal(app.window.document.activeElement, first, "ordinary scrolling preserves focused row");
+    const tailTop = list().scrollTop;
+    await app.refresh();
+    assert.equal(list().scrollTop, tailTop, "refresh never snaps scrolling to selection");
+    assert.ok(app.container.querySelector('[id="mail-window:2999"]'), "last message stays reachable");
+    await app.open("window:2999"); assert.equal(app.title(), "Window message 2999");
+    for (let index = 0; index < 31; index++) await app.key("k");
+    assert.equal(app.title(), "Window message 2968", "reader navigation crosses the mounted viewport");
+    await app.click(app.back()); bounded(); assert.ok(app.container.querySelector('[id="mail-window:2968"]'));
+    await app.click(app.forward()); assert.equal(app.title(), "Window message 2968");
+    await app.click(app.back());
+    await app.key("j"); await app.key("Enter"); assert.equal(app.title(), "Window message 2969", "keyboard uses the full ordered data");
+    await app.key("Escape");
+    await app.key("-", { ctrlKey: true }); assert.ok(list().classList.contains("compact")); await tail();
+    assert.ok(app.container.querySelector('[id="mail-window:2999"]'));
+    await app.choose("Sort mail", "Oldest"); await app.key("Escape"); bounded();
+    assert.ok(app.container.querySelector('[id="mail-window:2999"]'), "sort includes the tail of the original data");
+    await app.choose("Filter accounts", "first@example.com"); await tail();
+    assert.ok(app.container.querySelector('[id="mail-window:0"]'), "filtered sorted tail remains reachable");
+    await app.choose("Filter accounts", "All accounts");
+    await app.click(app.button("Search mail"));
+    await app.input(app.container.querySelector<HTMLInputElement>(".search input")!, "Window message 2999");
+    assert.equal(app.container.querySelectorAll(".row").length, 1, "search considers all cached messages");
+    const row = app.container.querySelector<HTMLElement>(".mail-row")!;
+    await act(async () => row.dispatchEvent(new app.window.MouseEvent("mouseover", { bubbles: true })));
+    assert.ok(row.querySelector('[aria-label="Move to Trash"]'), "offscreen mail retains its action when reached");
+  } finally { await app.close(); }
+});
+
+
+for (const removed of ["message", "account"]) test(`Forward rejects a removed reader ${removed}`, { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1"); await app.click(app.back());
+    if (removed === "message") app.state.messages = app.state.messages.filter(mail => mail.id !== "a:1");
+    else app.state.accounts = app.state.accounts.filter(account => account.id !== "a");
+    await app.refresh(); await app.click(app.forward());
+    assert.equal(app.title(), undefined);
+    assert.ok(app.container.querySelector(".list"));
+  } finally { await app.close(); }
+});
+
+
+test("privacy masks addresses embedded in custom account labels", { timeout: 10000 }, async () => {
+  const app = await mount(false, (state, storage) => {
+    state.accounts[0].name = "Work first@example.com";
+    storage.setItem("privacy", "on");
+  });
+  try {
+    assert.match(app.container.querySelector('[aria-label="Filter accounts"]')!.textContent!, /Work/);
+    assert.doesNotMatch(app.container.innerHTML, /first@example.com|second@example.com/);
+    await app.click(app.button("Settings")); await app.click(app.button("Accounts"));
+    assert.match(app.container.querySelector(".settings")!.textContent!, /Work/);
+    assert.doesNotMatch(app.container.innerHTML, /first@example.com|second@example.com/);
+  } finally { await app.close(); }
+});
+
+
+
+test("reader history restores row focus from a removed reader and preserves focused controls", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1");
+    const reader = app.container.querySelector<HTMLElement>(".message")!;
+    await act(async () => reader.focus());
+    await app.mouse(3);
+    assert.equal(app.window.document.activeElement?.id, "mail-a:1");
+    await app.mouse(4);
+    assert.equal(app.title(), "Alpha");
+    assert.ok(app.window.document.activeElement?.closest(".message"));
+    const control = app.back(); await act(async () => control.focus());
+    await app.click(control);
+    assert.equal(app.window.document.activeElement, control, "returning to the list preserves control focus");
+  } finally { await app.close(); }
+});
+
+test("mounted App guards drafts/dialogs and uses one native side-button source with cleanup", { timeout: 10000 }, async () => {
+  const app = await mount(true);
+  try {
+    await app.open("a:1");
+    await app.click(app.button("Promotions"));
+    assert.equal(app.subscriptions(), 1);
+    await app.mouse(3);
+    assert.equal(app.title(), undefined); // DOM delivery cannot duplicate Electron's command.
+    await app.native("back");
+    assert.equal(app.title(), undefined);
+    await app.native("forward");
+    assert.equal(app.title(), undefined);
+    await app.native("back");
+    await app.open("a:1");
+    const mutations = app.mutations.length;
+    for (const shortcut of ["c", "m", "s", "?"]) {
+      await app.key(shortcut);
+      assert.ok(app.container.querySelector('[role="dialog"]'));
+      const body = app.container.querySelector<HTMLTextAreaElement>("textarea");
+      if (shortcut === "c") {
+        assert.ok(body);
+        await app.input(body, "Keep this draft");
+      }
+      assert.ok(app.back().disabled && app.forward().disabled);
+      await app.native("back");
+      await app.native("forward");
+      assert.equal(app.title(), "Alpha");
+      if (shortcut === "c") assert.equal(body!.value, "Keep this draft");
+      await app.key("Escape");
+      if (shortcut === "c") {
+        assert.equal(app.container.querySelector('[role="dialog"]'), null);
+        assert.equal(app.savedDraft()?.body, "Keep this draft", "Escape retains the acknowledged draft");
+      }
+    }
+    await app.key("Escape");
+    assert.equal(app.title(), undefined);
+    assert.equal(app.mutations.length, mutations);
+    await app.click(app.button("Settings"));
+    await app.native("back");
+    assert.equal(app.container.querySelector(".settings"), null);
+    await app.native("forward");
+    assert.ok(app.container.querySelector(".settings"));
+    await app.native("back");
+    assert.equal(app.title(), undefined);
+    assert.ok(app.back().disabled);
+  } finally { await app.close(); }
+});
+
+test("menu history clears saved readers before resolving and never marks them read", { timeout: 10000 }, async () => {
+  const app = await mount();
+  try {
+    await app.open("a:1");
+    await app.click(app.button("Archive"));
+    app.state.messages.find(mail => mail.id === "a:1")!.unread = true;
+    await app.refresh();
+    const reads = app.mutations.length;
+    await app.click(app.back());
+    assert.equal(app.title(), undefined);
+    assert.equal(app.mutations.length, reads, "returning to a menu never opens its saved reader");
+    assert.equal(app.state.messages.find(mail => mail.id === "a:1")!.unread, true);
+    await app.click(app.forward());
+    assert.equal(app.title(), undefined);
+    assert.equal(app.mutations.length, reads);
+  } finally { await app.close(); }
 });

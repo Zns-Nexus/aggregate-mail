@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { act } from "react";
 import { JSDOM } from "jsdom";
-import type { Mail, State } from "../shared/types";
+import type { Draft, Mail, State } from "../shared/types";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -18,6 +18,7 @@ async function mount() {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     location: dom.window.location, history: dom.window.history, HTMLElement: dom.window.HTMLElement,
     requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 0; },
+    confirm: () => true,
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   const previous = new Map(Object.keys(globals).map((key) =>
@@ -33,6 +34,7 @@ async function mount() {
     html: null, images: [], messageId: `<${accountId}-${uid}@example.com>`,
   });
   const state: State = {
+    unreadArrivals: 0, composePreferences: { templates: [], signatures: {} },
     accounts: [{ id: "a", email: "reader@example.com", provider: "imap" },
       { id: "b", email: "second@example.com", provider: "imap" }],
     messages: [makeMail("a", 5), makeMail("a", 6), makeMail("b", 5)],
@@ -47,6 +49,7 @@ async function mount() {
   };
   const previousFetch = globalThis.fetch;
   const mutations: { id: string; action: string }[] = [];
+  const drafts = new Map<string, Draft>();
   let readGate: Promise<void> | undefined;
   let trashGate: Promise<void> | undefined;
   let stateGate: ReturnType<typeof deferred<State>> | undefined;
@@ -72,10 +75,22 @@ async function mount() {
         mail.unread = false;
         mail.labelIds = mail.labelIds?.filter((label) => label !== "UNREAD");
       } else if (action === "snooze") mail.snoozedUntil = until!;
+      else if (action === "pin") mail.pinned = true;
+      else if (action === "unpin") delete mail.pinned;
       else if (action === "unsnooze") mail.snoozedUntil = null;
       else if (action === "archive") mail.archived = true;
       else if (action === "trash") state.messages = state.messages.filter((mail) => mail.id !== id);
       data = { ok: true };
+    } else if (url === "/api/compose-preferences" && options?.method === "PUT") {
+      state.composePreferences = JSON.parse(String(options.body));
+      data = state.composePreferences;
+    } else if (url.includes("/drafts") && ["POST", "PUT"].includes(options?.method || "")) {
+      const id = options?.method === "POST" ? `synthetic-draft-${drafts.size + 1}` : url.split("/")[5];
+      const content = JSON.parse(String(options?.body));
+      const draft: Draft = { ...content, id, accountId: url.split("/")[3],
+        revision: (drafts.get(id)?.revision || 0) + 1, updatedAt: 1, sendUnknown: !!content.sendUnknown };
+      drafts.set(id, draft);
+      data = draft;
     } else throw new Error(`Unexpected synthetic request: ${url}`);
     return { ok: true, json: async () => data } as Response;
   };
@@ -101,7 +116,7 @@ async function mount() {
   const toolbar = () => container.querySelector<HTMLElement>(".mail-actions")!;
   const dialog = () => container.querySelector<HTMLElement>('[role="dialog"]')!;
   return {
-    state, container, button, click, key, row, trash, toolbar, dialog, mutations,
+    state, container, button, click, key, row, trash, toolbar, dialog, mutations, drafts,
     refresh: async () => { await act(async () => changed?.()); },
     open: async (id = "a:1:5") => { await click(row(id)); await key("Enter", row(id)); },
     // JSDOM has no native button default action; model Enter after dispatching the key.
@@ -172,7 +187,7 @@ test("failed reads stay unread without automatic retry; keyboard reopen retries 
     app.failRead(true);
     await app.open();
     assert.equal(app.button("Mark as read", app.toolbar()).disabled, false);
-    assert.match(app.container.querySelector(".notice")!.textContent!, /provider failure.*retry/);
+    assert.match(app.container.querySelector(".toast-text")!.textContent!, /provider failure.*retry/);
     assert.equal(app.mutations.length, 1);
     await app.key("Escape");
     assert.equal(app.row().classList.contains("unread"), true);
@@ -181,7 +196,7 @@ test("failed reads stay unread without automatic retry; keyboard reopen retries 
     await app.open();
     assert.equal(app.mutations.length, 2);
     assert.ok(app.button("Read", app.toolbar()).disabled);
-    assert.match(app.container.querySelector(".notice")!.textContent!, /marked as read.*refresh failed/);
+    assert.match([...app.container.querySelectorAll(".toast-text")].at(-1)!.textContent!, /marked as read.*refresh failed/);
     await app.key("Escape");
     assert.equal(app.row().classList.contains("unread"), false);
   } finally { await app.close(); }
@@ -245,7 +260,7 @@ test("Trash confirmation is private, cancelable and keyboard accessible; success
     assert.equal(app.row(), null);
     assert.ok(app.row("a:1:6"));
     assert.ok(app.row("b:1:5"));
-    assert.match(app.container.querySelector(".notice")!.textContent!, /moved to Trash.*refresh failed/);
+    assert.match([...app.container.querySelectorAll(".toast-text")].at(-1)!.textContent!, /moved to Trash.*refresh failed/);
   } finally { await app.close(); }
 });
 
@@ -260,8 +275,8 @@ test("failed reader Trash keeps mail visible and never retries or claims success
     await app.click(app.button("Move to Trash", app.dialog()));
     assert.ok(app.container.querySelector(".message"));
     assert.ok(app.dialog());
-    assert.match(app.container.querySelector(".notice")!.textContent!, /provider failure.*Check your provider/);
-    assert.doesNotMatch(app.container.querySelector(".notice")!.textContent!, /Email moved to Trash/);
+    assert.match(app.container.querySelector(".toast-text")!.textContent!, /provider failure.*Check your provider/);
+    assert.doesNotMatch(app.container.querySelector(".toast-text")!.textContent!, /Email moved to Trash/);
     assert.equal(app.mutations.filter((request) => request.action === "trash").length, 1);
     assert.equal(app.button("Move to Trash", app.dialog()).disabled, false);
     await app.key("Escape");
@@ -302,5 +317,100 @@ test("row Trash targets an unselected email without opening or marking it read",
     assert.ok(app.row("a:1:5"));
     assert.ok(app.row("a:1:6"));
     assert.equal(app.row("b:1:5"), null);
+  } finally { await app.close(); }
+});
+
+test("Up and Down select mail without scrolling, opening or changing read state", async () => {
+  const app = await mount();
+  try {
+    assert.equal((await app.key("ArrowDown")).defaultPrevented, true);
+    assert.equal(app.row("b:1:5").getAttribute("aria-current"), "true");
+    assert.equal(app.mutations.length, 0);
+    assert.equal(app.container.querySelector(".message"), null);
+    assert.equal((await app.key("ArrowUp", app.row("b:1:5"))).defaultPrevented, true);
+    assert.equal(app.row().getAttribute("aria-current"), "true");
+    assert.equal((await app.key("ArrowUp", app.row())).defaultPrevented, true, "edge does not scroll page");
+    await app.key("ArrowDown", app.row(), { ctrlKey: true });
+    await app.key("PageDown", app.row());
+    assert.equal(app.row().getAttribute("aria-current"), "true");
+    await app.click(app.button("Search mail"));
+    const search = app.container.querySelector<HTMLInputElement>('[aria-label="Search all synced mail"]')!;
+    assert.equal((await app.key("ArrowDown", search)).defaultPrevented, false);
+    await app.key("Escape", search);
+    await app.open();
+    const opened = app.container.querySelector(".message")!;
+    assert.ok(opened);
+    const before = app.mutations.length;
+    assert.equal((await app.key("ArrowDown", opened)).defaultPrevented, false);
+    assert.equal(app.mutations.length, before);
+  } finally { await app.close(); }
+});
+
+test("commands pin cached mail, structured search finds it and arrival notices are counted once", async () => {
+  const app = await mount();
+  try {
+    assert.equal(app.container.querySelector(".toast-text"), null, "initial snapshot is silent");
+    await app.key("k", app.row(), { ctrlKey: true });
+    const dialog = app.dialog();
+    assert.equal(dialog.getAttribute("aria-label"), "Commands");
+    const pin = [...dialog.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === "Pin email")!;
+    assert.ok(pin);
+    await app.click(pin);
+    assert.equal(app.dialog(), null, "command closes before action");
+    assert.deepEqual(app.mutations, [{ id: "a:1:5", action: "pin" }]);
+    assert.ok(app.button("Unpin email", app.toolbar()));
+    assert.match(app.row().getAttribute("aria-label")!, /^Pinned:/);
+    await app.key("k", app.row(), { ctrlKey: true });
+    await app.click([...app.dialog().querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === "Show pinned emails in this view")!);
+    assert.equal(app.container.querySelectorAll(".row").length, 1);
+    assert.ok(app.row());
+    await app.click(app.button("Unpin email", app.toolbar()));
+    assert.equal(app.container.querySelectorAll(".row").length, 0);
+    app.state.unreadArrivals = 1;
+    await app.refresh();
+    assert.equal(app.container.querySelectorAll(".toast-text").length, 1);
+    assert.match(app.container.querySelector(".toast-text")!.textContent!, /1 new unread email/);
+    app.state.unreadArrivals = 2;
+    await app.refresh();
+    assert.equal(app.container.querySelectorAll(".toast-text").length, 2, "equal-sized distinct batches are both reported");
+    await app.refresh();
+    assert.equal(app.container.querySelectorAll(".toast-text").length, 2, "repeated snapshot is silent");
+  } finally { await app.close(); }
+});
+
+test("saved Compose settings reach new drafts, templates and account signatures without sending", async () => {
+  const app = await mount();
+  try {
+    app.state.composePreferences = {
+      templates: [{ id: "followup", name: "Follow up", subject: "Next steps", body: "Template body" }],
+      signatures: { a: "Work signature", b: "Personal signature" },
+    };
+    await app.refresh();
+    await app.click(app.button("Settings"));
+    await app.click(app.button("Compose"));
+    const settings = app.container.querySelector<HTMLElement>(".compose-settings")!;
+    assert.ok(settings);
+    await app.click(app.button("Save compose preferences", settings));
+    assert.match(settings.textContent!, /Compose preferences saved/);
+    await app.click(app.button("Close settings"));
+    await app.key("c");
+    const dialog = app.dialog();
+    const body = dialog.querySelector<HTMLTextAreaElement>("textarea")!;
+    assert.equal(body.value, "\n\n-- \nWork signature");
+    const template = dialog.querySelector<HTMLSelectElement>(".compose-preference-controls select")!;
+    await act(async () => { template.value = "followup"; template.dispatchEvent(new app.container.ownerDocument.defaultView!.Event("change", { bubbles: true })); });
+    await app.click(app.button("Insert template", dialog));
+    assert.equal(body.value, "Template body\n\n-- \nWork signature");
+    const from = dialog.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => { from.value = "b"; from.dispatchEvent(new app.container.ownerDocument.defaultView!.Event("change", { bubbles: true })); });
+    assert.equal(body.value, "Template body\n\n-- \nPersonal signature");
+    assert.deepEqual([...app.drafts.values()].map((draft) => [draft.accountId, draft.body]), [
+      ["a", "Template body\n\n-- \nWork signature"],
+      ["b", "Template body\n\n-- \nPersonal signature"],
+    ], "Changing account retains the acknowledged original and saves a copy");
+    assert.equal(app.mutations.length, 0);
+    assert.equal((await app.key("ArrowDown", body)).defaultPrevented, false);
+    await app.key("k", body, { ctrlKey: true });
+    assert.equal(app.dialog().getAttribute("aria-label"), "New message", "palette cannot replace a draft");
   } finally { await app.close(); }
 });

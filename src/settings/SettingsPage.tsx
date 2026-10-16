@@ -1,14 +1,18 @@
-import { useContext } from "react";
-import type { State } from "../../shared/types";
+import { Fragment, useContext, useId, useState } from "react";
+import type { Account, State } from "../../shared/types";
+import { emptyComposePreferences, type ComposePreferences } from "../../shared/mail-features";
+import { ComposeSettings } from "./ComposeSettings";
 import type { Api, Perform } from "../api";
 import type { Appearance, Scheme } from "../appearance";
+import type { ThemePreview } from "../themes";
 import type { InteractionPreferences } from "../interaction";
+import { accountLabel } from "../mail-ui";
 import { redactPrivateText } from "../privacy";
 import { ProviderChoices, type ImapProvider } from "../dialogs/ConnectDialog";
 import { ProviderIcon } from "../mail/Avatar";
 import { relevanceNames } from "../mail/format";
-import { UpdateNotice } from "../shell/UpdateNotice";
-import { Address, PrivacyContext, Redact } from "../ui/Privacy";
+import { aboutStorageSentence } from "../shell/CredentialFallbackNotice";
+import { PrivacyContext, Redact } from "../ui/Privacy";
 import { Segmented } from "../ui/Segmented";
 import { drawsWindowControls } from "../ui/TrafficLights";
 import { ArrowRight } from "../ui/icons";
@@ -35,6 +39,9 @@ export function SettingsPage({
   appearance,
   scheme,
   onAppearance,
+  onComposePreferences,
+  onThemePreview,
+  onModalChange,
 }: {
   state: State;
   busy: boolean;
@@ -50,9 +57,14 @@ export function SettingsPage({
   section: SettingsSection;
   appearance: Appearance;
   scheme: Scheme;
-  onAppearance: (value: Appearance) => void;
+  onAppearance: (value: Appearance) => boolean;
+  onComposePreferences?: (value: ComposePreferences) => Promise<void>;
+  onThemePreview?: (preview: ThemePreview | null) => void;
+  onModalChange?: (open: boolean) => void;
 }) {
   const { on: privacy, names } = useContext(PrivacyContext);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState("");
   return (
     <main className="settings">
       <div className="settings-column" key={section}>
@@ -64,11 +76,11 @@ export function SettingsPage({
           <h1>Accounts</h1>
           <h2>Connected</h2>
           {state.accounts.length ? (
-            <div className="settings-group">{state.accounts.map((a) => (
-              <div className="account-row" key={a.id}>
+            <div className="settings-group">{state.accounts.map((a, index) => (
+              <Fragment key={a.id}><div className="account-row">
                 <ProviderIcon provider={a.provider} />
                 <strong>
-                  <Address value={a.email} />
+                  {accountLabel(a, index, privacy)}
                 </strong>
                 <span
                   className={a.error ? "attention" : undefined}
@@ -80,6 +92,7 @@ export function SettingsPage({
                 >
                   {a.syncStatus === "queued" ? "Retry queued" : a.syncStatus === "running" ? "Syncing" : a.error ? "Needs attention" : "Connected"}
                 </span>
+                <button type="button" className="link" disabled={busy} onClick={() => { setRenaming(a.id); setRenameError(""); }}>Rename</button>
                 <button
                   className="link"
                   disabled={busy || !!a.syncStatus}
@@ -96,7 +109,7 @@ export function SettingsPage({
                   onClick={() => {
                     if (
                       confirm(
-                        `Disconnect ${privacy ? redactPrivateText(a.email, names) : a.email}? This removes its local mail cache. Your provider mailbox stays intact.`,
+                        `Disconnect ${privacy ? redactPrivateText(a.email, names) : a.email}? This permanently deletes its local drafts, including messages that may already have been sent, and removes its local mail cache. Your provider mailbox stays intact.`,
                       )
                     )
                       void perform(
@@ -108,6 +121,18 @@ export function SettingsPage({
                   Disconnect
                 </button>
               </div>
+              {renaming === a.id && <AccountNameForm key={a.id} account={a} busy={busy} error={renameError}
+                onCancel={() => { setRenaming(null); setRenameError(""); }}
+                onSave={async (name) => {
+                  setRenameError("");
+                  let saved = false;
+                  await perform(async () => {
+                    try { await api(`/accounts/${encodeURIComponent(a.id)}`, "PATCH", { name }); saved = true; }
+                    catch { setRenameError("Could not rename account. Try again."); throw new Error("Could not rename account. Try again."); }
+                  }, "Account name saved.");
+                  if (saved) setRenaming(null);
+                }} />}
+              </Fragment>
             ))}</div>
           ) : (
             <p className="muted">No accounts connected.</p>
@@ -116,6 +141,11 @@ export function SettingsPage({
           <div className="settings-group">
             <ProviderChoices googleConfigured={state.googleConfigured} busy={busy} onChoose={onConnectAccount} />
           </div>
+        </section>}
+        {section === "compose" && onComposePreferences && <section>
+          <h1>Compose</h1>
+          <ComposeSettings accounts={state.accounts} value={state.composePreferences ?? emptyComposePreferences}
+            onSave={onComposePreferences} busy={busy} />
         </section>}
         {section === "sorting" && <section>
           <h1>Sorting</h1>
@@ -220,7 +250,7 @@ export function SettingsPage({
         </section>}
         {section === "appearance" && <section>
           <h1>Appearance</h1>
-          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} />
+          <AppearanceSettings value={appearance} scheme={scheme} onChange={onAppearance} onPreview={onThemePreview} onModalChange={onModalChange} />
           {window.desktop && window.desktop.platform !== "darwin" ? (
             <>
               <h2>Window controls</h2>
@@ -269,17 +299,37 @@ export function SettingsPage({
         {section === "about" && <section>
           <h1>About</h1>
           <p className="note">
-            Mail is stored encrypted on this computer. IMAP watches for changes;
+            {aboutStorageSentence(globalThis.window?.desktop?.credentialFallback)}. IMAP watches for changes;
             Gmail checks for changes every 15 seconds, with periodic full sync
             for recovery. Closing the desktop window keeps it
             running in the tray; use Quit in the tray menu to exit. New unread
             mail shows a desktop notification. Archive moves mail out of your
-            provider's inbox. Snooze is local to this client. Disconnect removes the
-            local account and cache without changing your mailbox.
+            provider's inbox. Snooze is local to this client. Disconnect permanently deletes
+            all local drafts for that account, including messages that may already have been sent,
+            and removes the local account and cache without changing your mailbox.
           </p>
-          <UpdateNotice bridge={window.desktop?.updates} />
         </section>}
       </div>
     </main>
   );
+}
+
+function AccountNameForm({ account, busy, error, onSave, onCancel }: {
+  account: Account; busy: boolean; error: string;
+  onSave: (name: string) => Promise<void>; onCancel: () => void;
+}) {
+  const { on: privacy } = useContext(PrivacyContext);
+  const [name, setName] = useState(account.name || "");
+  const [focused, setFocused] = useState(false);
+  const inputId = useId();
+  return <form className="account-name-form" onSubmit={(event) => { event.preventDefault(); if (!busy) void onSave(name.trim().slice(0, 80)); }}>
+    <label htmlFor={inputId}>Account name</label>
+    <input id={inputId} maxLength={80} value={privacy && !focused ? "" : name} disabled={busy}
+      placeholder={privacy && !focused ? "Focus to edit" : "Use email address"}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => setName(event.target.value)}
+      aria-describedby={error ? `${inputId}-error` : undefined} />
+    <button type="submit" className="button" disabled={busy}>Save</button>
+    <button type="button" className="button" disabled={busy} onClick={onCancel}>Cancel</button>
+    {error && <p id={`${inputId}-error`} role="alert">{error}</p>}
+  </form>;
 }

@@ -9,6 +9,7 @@ An installable desktop email client for Windows, with a macOS build target, base
 - [Jev sorting](#jev-sorting)
 - [Other providers](#other-providers)
 - [Inbox](#inbox)
+- [Search and compose tools](#search-and-compose-tools)
 - [MCP](#mcp)
 - [Keyboard](#keyboard)
 - [Local storage](#local-storage)
@@ -20,7 +21,7 @@ An installable desktop email client for Windows, with a macOS build target, base
 
 ## Install
 
-Download the newest published Windows setup installer from [Releases](https://github.com/screen-devs/aggregate-mail/releases), named `Emc²-<version>-win-x64.exe`. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
+Download the newest published Windows setup installer from [Releases](https://github.com/screen-devs/aggregate-mail/releases), named `Emc2-<version>-win-x64.exe` in new releases. It installs for the current user and creates Start menu and desktop shortcuts. Launch Emc² and connect accounts in Settings.
 
 To build it yourself instead, run `npm run package` and open the installer it writes to `release/`. You can also run `release/win-unpacked/Emc².exe` directly; keep its surrounding files together. The installer is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
@@ -58,6 +59,18 @@ Do not remove quarantine or disable Gatekeeper to make a build launch. If signat
 For local DMG and ZIP output, `npm run package:mac` uses the same signing hook. Local packaging never publishes downloads. Public binary distribution with a verified publisher still requires Developer ID signing and notarization by an authorized Apple team. The version-tag release workflow remains unchanged.
 
 The macOS menu provides standard Command shortcuts for editing, closing and quitting. The window controls sit at the top left, beside the sidebar toggle. Closing the window hides the app to the tray on both platforms: it keeps syncing and shows a notification for new unread mail, and Quit in the tray menu exits. Unsent drafts still require confirmation.
+
+## Search and compose tools
+
+Search cached mail in the current view with words, quoted phrases and combined filters. For example, `from:team@example.com is:unread after:2026-10-01 -subject:newsletter` combines sender, unread state, date and exclusion. Supported fields are `from:`, `to:`, `subject:`, `body:`, `account:`, `is:read`, `is:unread`, `is:pinned`, `before:` and `after:`. Dates use `YYYY-MM-DD` at midnight UTC; before excludes that day and after includes it. Account matches the full account ID, email address or custom label. Existing account, Gmail-label, relevance and view filters still apply.
+
+Select Commands in the sidebar, or press Command+K on macOS and Control+K elsewhere, to search app actions. Up/Down move through the command choices; Enter runs one. In the closed mail list, Up/Down select an email without opening or reading it. j/k remain available.
+
+Settings, Compose manages reusable plain-text templates and per-account signatures. Save preferences before composing. A new message or reply gets its account's signature. Changing From replaces an unchanged signature; edited text stays intact. Insert template appends text and only fills the subject if it is empty. These preferences use the encrypted local store.
+
+Pin email in the toolbar or context menu marks a cached message locally. Search `is:pinned`, or choose Show pinned emails in this view in Commands, to find it. Pins do not change the provider mailbox or mail sorting.
+
+In-app toasts report new unread arrivals after the initial import, sending and action outcomes. Errors and delivery warnings remain until dismissed. A send warning can mean delivery succeeded but the Sent copy failed; check the stated outcome before sending again.
 
 ## Connect an account
 
@@ -121,10 +134,13 @@ A partial listing retains cached mail and batches already fetched. Only a comple
 
 ## Inbox
 
+Custom account names can be edited in Settings, Accounts. Privacy keeps these labels visible while hiding email addresses. Back returns from an email to the list; immediate Forward restores that email. The update icon opens dismissible details without a banner. All cached mail remains reachable through the windowed list.
+
 - Inbox combines all connected inboxes and splits them into Primary, Social, Promotions, Newsletters, Transactions and Updates tabs. Gmail mail follows Gmail's own categories; codes, security notices, support threads and replies always stay in Primary. Numbered account controls filter the view. Each sender shows its company logo, fetched once by the app from a favicon service and cached on this computer; senders on Gmail, Outlook, iCloud and similar hosts keep their initial, because their favicon would be the provider's logo rather than their own.
 - In a full-width list, comfortable rows use 28px for low relevance, 34px for medium, and 48px on two lines for high relevance; compact mode uses uniform 24px rows. Beside the reader, rows become two- or three-line cards. A 300px sender panel, which Sender details hides or shows, gives context, recent mail from the sender and recently opened mail. Measurements are recorded in `DESIGN.md`.
 - Search is the field centered in the mail header; `/` opens it. Inbox, Snoozed and Archive are listed in the left sidebar with the account filters.
 - Opened mail shows beside the list by default; Settings, Appearance can switch to Full width, which opens mail in place of the list. The same section offers System, Light and Dark modes, themes, accents and transparency.
+- In Settings, Appearance, choose Create theme to customize light and dark palettes with live preview. Advanced colors adjusts individual surfaces and text. Save keeps the theme on this device; Cancel restores the previous appearance. Select a custom theme to edit, duplicate, export or delete it. Import theme accepts an Emc² JSON file or pasted JSON. Exported files include both palettes and can be shared with another Emc² installation.
 - Local sorting works without an AI service. Add a Jev or OpenAI key under Settings, Connection to classify new mail with Jev by TypeSafe AI (used when its key is set) or OpenAI. Sender, subject and up to 220 characters of preview text go to that provider, a few messages at a time so a first sync stays quick. A failed call names the provider, then falls back to local sorting for the rest of that account's sync.
 - Teach applies an exact sender rule to existing and future mail. Removing a rule reapplies local sorting.
 - Archive removes mail from the Gmail inbox or moves IMAP mail to an archive folder. It does not delete mail.
@@ -229,7 +245,9 @@ AI contributors must also read the project instructions in [AGENTS.md](AGENTS.md
 
 ## Releasing
 
-GitHub hosts CI and release downloads. Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls the CI build jobs and attaches the Windows setup installer, both macOS DMGs, the Linux AppImage and `SHA256SUMS.txt` to the GitHub release after all jobs pass. The tag must match `package.json`. Manual workflow runs create build artifacts; only version-tag runs publish releases.
+GitHub hosts CI and release downloads. Each non-release push to `main` runs `auto-release.yml`, which bumps the patch version and builds the matching tag. Pushing a `v*` tag also has a release route in `.github/workflows/release.yml`. Both reuse the CI build jobs and publish the Windows setup installer, both macOS DMGs, the Linux AppImage, `latest.yml`, `latest-linux.yml` and `SHA256SUMS.txt` after all jobs pass. The tag must match `package.json`. Manual CI runs create build artifacts without publishing releases.
+
+New installer filenames use the GitHub-safe `Emc2-` prefix; the application name stays Emc². Linux x64 installers end in `linux-x86_64.AppImage`. CI validates the Windows/Linux manifest version, filename, size and SHA512 against the packaged installer before upload. See [ADR 0039](docs/adr/0039-release-update-assets.md).
 
 To cut a Windows build locally:
 
@@ -239,7 +257,7 @@ node scripts/release.mjs --patch
 
 That bumps the version, packages, prints the installer's SHA-256, and uploads it to the GitHub release when a GitHub remote exists. Delete the superseded installers in `release/`, which is ignored by git, so nothing there reaches either host.
 
-The installer is unsigned, so Windows SmartScreen warns on first run. There is no auto-updater; installing a newer version over an older one keeps your mail and settings.
+The installer is unsigned, so Windows SmartScreen can warn on first run. Compatible Windows and Linux AppImage builds offer updates through the update icon when a newer stable release supplies verified metadata. Installation requires an explicit action and waits for mail operations and draft saves. macOS automatic installation remains unsupported. Installing a newer version over an older one keeps your mail and settings. Native update/restart acceptance requires separate testing.
 
 ## Verification
 

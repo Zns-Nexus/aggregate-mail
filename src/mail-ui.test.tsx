@@ -4,7 +4,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { GmailLabel, Mail } from "../shared/types";
 import { LabelForm } from "./dialogs/LabelForm";
 import { PrivacyContext } from "./ui/Privacy";
-import { customLabels, densityShortcut, filterMail, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
+import { accountLabel, customLabels, densityShortcut, filterMail, markMailRead, matchesLabel, selectedMail } from "./mail-ui";
+
+test("account labels keep custom names visible while redacting literal and encoded addresses", () => {
+  const account = { id: "a", provider: "imap" as const, email: "first@example.com" };
+  assert.equal(accountLabel(account, 0, false), "first@example.com");
+  assert.equal(accountLabel(account, 0, true), "Account 1 · Custom IMAP");
+  assert.equal(accountLabel({ ...account, name: "Work inbox" }, 0, true), "Work inbox");
+  for (const name of ["Work <first@example.com>", "Work first%40example.com"]) {
+    assert.equal(accountLabel({ ...account, name }, 0, false), name);
+    assert.doesNotMatch(accountLabel({ ...account, name }, 0, true), /first|example\.com/);
+    assert.match(accountLabel({ ...account, name }, 0, true), /Work/);
+  }
+});
 
 const mail: Mail = {
   id: "a:1", accountId: "a", remoteId: "1", sender: "Sender",

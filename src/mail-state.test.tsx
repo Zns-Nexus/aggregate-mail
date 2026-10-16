@@ -47,3 +47,17 @@ test("changed mail, recipient privacy names, new records, removals and order rem
   incoming.messages = [{ ...state.messages[0], id: "a:2", remoteId: "2" }];
   assert.equal(reuseMailState(state, incoming).messages[0].id, "a:2");
 });
+
+
+test("compose preferences keep unchanged snapshots stable while edits and arrivals remain observable", () => {
+  const current = { ...state, unreadArrivals: 0, composePreferences: { templates: [], signatures: { a: "Synthetic signature" } } };
+  assert.equal(reuseMailState(current, structuredClone(current)), current);
+  const incoming = structuredClone(current); incoming.unreadArrivals = 1;
+  const updated = reuseMailState(current, incoming);
+  assert.equal(updated.composePreferences, current.composePreferences);
+  assert.equal(updated.messages, current.messages);
+  incoming.composePreferences.signatures.a = "Changed signature";
+  const edited = reuseMailState(current, incoming);
+  assert.notEqual(edited.composePreferences, current.composePreferences);
+  assert.equal(edited.composePreferences?.signatures.a, "Changed signature");
+});

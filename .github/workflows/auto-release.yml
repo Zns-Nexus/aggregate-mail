@@ -66,9 +66,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum *.exe *.dmg *.AppImage > SHA256SUMS.txt
+          sha256sum *.exe *.dmg *.AppImage latest.yml latest-linux.yml > SHA256SUMS.txt
           gh release create "${{ needs.version.outputs.tag }}" \
-            *.exe *.dmg *.AppImage SHA256SUMS.txt \
+            *.exe *.dmg *.AppImage latest.yml latest-linux.yml SHA256SUMS.txt \
             --repo "${GITHUB_REPOSITORY}" --verify-tag \
             --title "${{ needs.version.outputs.tag }}" \
             --generate-notes

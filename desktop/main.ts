@@ -20,13 +20,14 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  chmodSync,
 } from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
 import path from "node:path";
 import type { Server } from "node:http";
 import { editingMenu } from "./context-menu.js";
 import { menuPosition, nativeMenuItems, overlayColors, readWindowControls, writeWindowControls, type WindowControls } from "./window-chrome.js";
-import { isExternalLink, isLocalNavigation } from "./navigation.js";
+import { isExternalLink, isLocalNavigation, trustedWindowSender } from "./navigation.js";
 import { LEGACY_APP_NAME, migrateLegacyUserData } from "./migrate.js";
 import type { Updates } from "./updates.js";
 import { canonicalKey, readCurrentRecord, migrateLegacyKey, MIGRATION_ERROR, type CurrentRecord } from "./keychain.js";
@@ -34,6 +35,15 @@ import { canonicalKey, readCurrentRecord, migrateLegacyKey, MIGRATION_ERROR, typ
 app.setName("Emc²");
 app.setAppUserModelId("dev.screen.aggregate-mail");
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
+// Linux-only weaker key storage, see ADR 0027.
+const FALLBACK_MODE = "linux-local";
+const UNAVAILABLE_ERROR =
+  "System credential encryption is unavailable, so Emc² cannot protect its mail key. Your mail store was not opened.";
+const KEYRING_ERROR =
+  "Emc² cannot decrypt its local data. This profile's mail key was protected by the system keyring, which is now unavailable, locked or changed. Your mail store was not opened. Unlock GNOME Keyring or KWallet and start Emc² again, or reset the local profile by moving the Emc² app data folder (for example ~/.config/Emc²) aside.";
+const DECRYPT_ERROR =
+  "Emc² cannot decrypt its local data because the system credential store no longer accepts this profile's mail key. Your mail store was not opened. Reset the local profile by moving the Emc² app data folder aside to start fresh.";
 const explicitProfile = process.argv.some(
   (arg) => arg === "--user-data-dir" || arg.startsWith("--user-data-dir="),
 );
@@ -50,6 +60,8 @@ if (
 const dataPath = app.getPath("userData");
 const mailPath = path.join(dataPath, "mail");
 const protectedKey = path.join(mailPath, "key.protected");
+const localKey = path.join(mailPath, "key.local");
+let credentialFallback = false;
 const identityPath = path.join(mailPath, "keychain-identity.json");
 const retryFlag = "--emc2-legacy-keychain-retry";
 const retried = process.argv.includes(retryFlag);
@@ -114,34 +126,34 @@ else {
   // Appearance switches the Windows material live: Mica tints from the
   // wallpaper, Acrylic blurs what is behind the window. macOS keeps vibrancy.
   ipcMain.on("window-material", (event, material: unknown) => {
-    if (!window || event.sender !== window.webContents || process.platform !== "win32") return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || process.platform !== "win32") return;
     if (material === "none" || material === "mica" || material === "acrylic")
       window.setBackgroundMaterial(material);
   });
   // Light, dark or system appearance: the native theme tints Mica, Acrylic and
   // macOS vibrancy, draws native menus, and decides what System reports.
   ipcMain.on("window-scheme", (event, mode: unknown) => {
-    if (!window || event.sender !== window.webContents) return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin)) return;
     if (mode === "system" || mode === "light" || mode === "dark") nativeTheme.themeSource = mode;
   });
   // The caption buttons can only be chosen when a window is created, so a
   // switch saves the choice and reopens the window in place.
   ipcMain.on("window-controls", (event, controls: unknown) => {
-    if (!window || event.sender !== window.webContents || isMac || (controls !== "mac" && controls !== "windows")) return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || isMac || (controls !== "mac" && controls !== "windows")) return;
     writeWindowControls(controlsFile, controls);
     if (controls !== windowControls) void reopenWindow?.();
   });
   // System caption buttons take the colors of the pane beneath them.
   ipcMain.on("window-overlay", (event, input: unknown) => {
     const colors = overlayColors(input);
-    if (!window || event.sender !== window.webContents || windowControls !== "windows" || !colors) return;
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || windowControls !== "windows" || !colors) return;
     window.setTitleBarOverlay({ ...colors, height: 52 });
   });
   // Mail rows use a native context menu; the renderer runs the chosen action.
   ipcMain.handle("mail-menu", (event, input: unknown, position: unknown) => new Promise<string | null>((resolve) => {
     const items = nativeMenuItems(input);
     const at = menuPosition(position);
-    if (!window || event.sender !== window.webContents || !items) { resolve(null); return; }
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin) || !items) { resolve(null); return; }
     let chosen = false;
     const template = items.flatMap((item) => [
       ...(item.separator ? [{ type: "separator" as const }] : []),
@@ -151,8 +163,8 @@ else {
     // Some platforms report the close before the click, so dismissal waits a moment.
     Menu.buildFromTemplate(template).popup({ window, ...at, callback: () => setTimeout(() => { if (!chosen) resolve(null); }, 100) });
   }));
-  ipcMain.on("window-command", (_event, command: string) => {
-    if (!window) return;
+  ipcMain.on("window-command", (event, command: unknown) => {
+    if (!window || !trustedWindowSender(event, window.webContents, rendererOrigin)) return;
     if (command === "minimize") window.minimize();
     else if (command === "maximize")
       window.isMaximized() ? window.unmaximize() : window.maximize();
@@ -177,16 +189,28 @@ else {
           : null,
       );
       mkdirSync(mailPath, { recursive: true });
-      if (!safeStorage.isEncryptionAvailable())
-        throw new Error(
-          "System credential encryption is unavailable. Your mail store was not opened.",
-        );
+      const encryptionAvailable = safeStorage.isEncryptionAvailable();
+      if (isLinux && existsSync(localKey) && !existsSync(protectedKey)) {
+        // A profile created in fallback mode keeps its local key, even if the
+        // keyring appears later; migration is not automatic (ADR 0027).
+        credentialFallback = true;
+      } else if (!encryptionAvailable) {
+        if (!isLinux) throw new Error(UNAVAILABLE_ERROR);
+        if (existsSync(protectedKey)) throw new Error(KEYRING_ERROR);
+        if (existsSync(path.join(mailPath, "mail.sqlite")))
+          throw new Error("The protected mail key is missing. Your mail store was not opened.");
+        credentialFallback = true;
+      }
+      if (credentialFallback)
+        console.warn(JSON.stringify({ credentialFallback: FALLBACK_MODE,
+          warning: "Mail key protected only by file permissions; install or unlock GNOME Keyring or KWallet for system encryption." }));
       if (isMac && retried && !existsSync(protectedKey))
         throw new Error("The protected mail key is missing. Your mail store was not opened.");
       // Preserve the earlier client's data without moving or deleting its source files.
       let legacyKey: Buffer | undefined;
       if (
         !app.isPackaged &&
+        !credentialFallback &&
         !explicitProfile &&
         !existsSync(path.join(mailPath, "mail.sqlite")) &&
         existsSync(path.resolve(".data/key"))
@@ -211,14 +235,26 @@ else {
         }
       }
       let key: string;
-      if (existsSync(protectedKey)) {
+      if (credentialFallback) {
+        if (existsSync(localKey)) {
+          key = readFileSync(localKey, "utf8").trim();
+          try { canonicalKey(key).fill(0); } catch {
+            throw new Error("The local mail key is damaged. Your mail store was not opened.");
+          }
+          chmodSync(localKey, 0o600);
+        } else {
+          key = randomBytes(32).toString("base64");
+          writeFileSync(`${localKey}.tmp`, key, { mode: 0o600 });
+          renameSync(`${localKey}.tmp`, localKey);
+        }
+      } else if (existsSync(protectedKey)) {
         const bytes = currentRecord ? Buffer.from(currentRecord.wrappedKey, "base64") : readFileSync(protectedKey);
         try {
           key = safeStorage.decryptString(bytes);
           canonicalKey(key).fill(0);
         } catch (error) {
           if (!isMac || retried || confirmedIdentity || keychainName !== "Emc²")
-            throw isMac ? new Error(MIGRATION_ERROR) : error;
+            throw new Error(isMac ? MIGRATION_ERROR : isLinux ? KEYRING_ERROR : DECRYPT_ERROR, { cause: error });
           const args = process.argv.slice(1);
           const separator = args.indexOf("--");
           args.splice(separator < 0 ? args.length : separator, 0, `--user-data-dir=${dataPath}`, retryFlag);
@@ -240,7 +276,7 @@ else {
           throw new Error("The protected mail key is missing. Your mail store was not opened.");
         key = (legacyKey || randomBytes(32)).toString("base64");
       }
-      if (!existsSync(protectedKey))
+      if (!credentialFallback && !existsSync(protectedKey))
         writeFileSync(protectedKey, safeStorage.encryptString(key));
       if (isMac && keychainName === LEGACY_APP_NAME && !currentRecord) {
         await migrateLegacyKey({ mailPath, key, app });
@@ -254,6 +290,8 @@ else {
         writeFileSync(`${identityPath}.tmp`, metadata, { mode: 0o600 });
         renameSync(`${identityPath}.tmp`, identityPath);
       }
+      if (credentialFallback) process.env.MAIL_CREDENTIAL_FALLBACK = FALLBACK_MODE;
+      else delete process.env.MAIL_CREDENTIAL_FALLBACK;
       process.env.MAIL_DATA_DIR = mailPath;
       process.env.MAIL_DATA_KEY = key;
       process.env.MAIL_CONFIG_PATH = path.join(dataPath, "settings.env");
@@ -299,7 +337,7 @@ else {
         (_contents, _permission, callback) => callback(false),
       );
       localSession.setPermissionCheckHandler(() => false);
-      const openWindow = async (previous?: BrowserWindow) => {
+      const openWindow = async (restore?: { bounds: Electron.Rectangle; maximized: boolean }) => {
         windowControls = isMac ? "mac" : readWindowControls(controlsFile);
         const nativeControls = windowControls === "windows";
         window = new BrowserWindow({
@@ -307,7 +345,7 @@ else {
           width: 1440,
           height: 900,
           // A window reopened for new controls keeps its place and size.
-          ...(previous && !previous.isMaximized() ? previous.getBounds() : {}),
+          ...(restore && !restore.maximized ? restore.bounds : {}),
           minWidth: 900,
           minHeight: 560,
           // macOS vibrancy and a Windows 11 material sit behind the page. The
@@ -335,11 +373,12 @@ else {
             additionalArguments: [
               ...(checking ? ["--emc2-disable-updates"] : []),
               ...(nativeControls ? ["--emc2-window-controls=windows"] : []),
+              ...(credentialFallback ? [`--emc2-credential-fallback=${FALLBACK_MODE}`] : []),
             ],
             session: localSession,
           },
         });
-        if (previous?.isMaximized()) window.maximize();
+        if (restore?.maximized) window.maximize();
         // Hidden windows catch up from the encrypted cache when shown again.
         window.on("show", notifyMailChanged);
         window.on("restore", notifyMailChanged);
@@ -404,11 +443,11 @@ else {
           if (
             dialog.showMessageBoxSync(window, {
               type: "question",
-              buttons: ["Keep editing", "Discard draft"],
+              buttons: ["Keep editing", "Close anyway"],
               defaultId: 0,
               cancelId: 0,
-              message: "Discard your draft?",
-              detail: "If the send status is unknown, this message may already have been sent.",
+              message: "Close with a draft still open?",
+              detail: "Saved drafts remain on this device. Changes not yet saved will be lost. If the send status is unknown, this message may already have been sent.",
             }) === 1
           )
             event.preventDefault();
@@ -426,14 +465,36 @@ else {
         window.webContents.once("did-finish-load", reveal);
         await window.loadURL(rendererOrigin);
       };
+      const closeWindow = () => new Promise<boolean>((resolve) => {
+        if (!window || window.isDestroyed()) { resolve(false); return; }
+        const closingWindow = window;
+        const closed = () => { window = null; finish(true); };
+        const finish = (accepted: boolean) => {
+          clearTimeout(timer);
+          closingWindow.removeListener("closed", closed);
+          finishUpdateClose = undefined;
+          if (!accepted) { quitting = false; updateClosing = false; }
+          resolve(accepted);
+        };
+        const timer = setTimeout(() => finish(false), 30000);
+        finishUpdateClose = finish;
+        closingWindow.once("closed", closed);
+        showWindow();
+        updateClosing = true;
+        quitting = true;
+        closingWindow.close();
+      });
       reopenWindow = async () => {
         const previous = window;
-        if (!previous) return;
-        await openWindow(previous);
-        previous.destroy();
+        if (!previous || updateClosing) return;
+        const restore = { bounds: previous.getBounds(), maximized: previous.isMaximized() };
+        // The existing close path asks before discarding an unsent or uncertain draft.
+        if (!await closeWindow()) return;
+        quitting = false; updateClosing = false;
+        await openWindow(restore);
       };
       if (!checking) {
-        const { Updates, registerUpdateIpc, trustedUpdateSender } = await import("./updates.js");
+        const { Updates, registerUpdateIpc } = await import("./updates.js");
         updates = new Updates({
           target: { platform: process.platform, arch: process.arch, version: app.getVersion(),
             packaged: app.isPackaged, appImage: process.env.APPIMAGE },
@@ -444,7 +505,7 @@ else {
             if (!window) { reject(new Error("Update renderer unavailable.")); return; }
             const request = randomBytes(16).toString("hex");
             const listener = (event: Electron.IpcMainEvent, response: unknown) => {
-              if (response !== request || !window || !trustedUpdateSender(event, window.webContents, rendererOrigin)) return;
+              if (response !== request || !window || !trustedWindowSender(event, window.webContents, rendererOrigin)) return;
               clearTimeout(timer);
               ipcMain.removeListener("update-drained", listener);
               resolve();
@@ -456,25 +517,7 @@ else {
             ipcMain.on("update-drained", listener);
             window.webContents.send("update-drain", request);
           }),
-          closeWindow: () => new Promise<boolean>((resolve) => {
-            if (!window || window.isDestroyed()) { resolve(false); return; }
-            const closingWindow = window;
-            const closed = () => { window = null; finish(true); };
-            const finish = (accepted: boolean) => {
-              clearTimeout(timer);
-              closingWindow.removeListener("closed", closed);
-              finishUpdateClose = undefined;
-              if (!accepted) { quitting = false; updateClosing = false; }
-              resolve(accepted);
-            };
-            const timer = setTimeout(() => finish(false), 30000);
-            finishUpdateClose = finish;
-            closingWindow.once("closed", closed);
-            showWindow();
-            updateClosing = true;
-            quitting = true;
-            closingWindow.close();
-          }),
+          closeWindow,
           restoreWindow: async () => {
             quitting = false; updateClosing = false;
             if (!window || window.isDestroyed()) await openWindow();
@@ -538,6 +581,7 @@ else {
             packaged: app.isPackaged,
             electron: process.versions.electron,
             database: "opened",
+            credentialFallback: credentialFallback ? FALLBACK_MODE : null,
             renderer: "loaded",
             hotReload: developing,
             isolatedApi: true,

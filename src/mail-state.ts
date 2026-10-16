@@ -14,6 +14,9 @@ function reuseRecords<T>(current: T[], incoming: T[], key: (record: T) => string
 export function reuseMailState(current: State, incoming: State): State {
   const next = {
     ...incoming,
+    ...(incoming.composePreferences ? { composePreferences:
+      JSON.stringify(current.composePreferences) === JSON.stringify(incoming.composePreferences)
+        ? current.composePreferences : incoming.composePreferences } : {}),
     accounts: reuseRecords(current.accounts, incoming.accounts, (account) => account.id),
     messages: reuseRecords(current.messages, incoming.messages, (mail) => mail.id),
     labels: reuseRecords(current.labels, incoming.labels, (label) => `${label.accountId}:${label.id}`),

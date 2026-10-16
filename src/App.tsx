@@ -9,16 +9,22 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { inboxTab, inboxTabs, type InboxTab } from "../shared/inbox-tabs";
-import type { Mail, State } from "../shared/types";
-import { coalesceReload } from "./api";
+import type { Draft, Mail, State } from "../shared/types";
+import { emptyComposePreferences, type ComposePreferences } from "../shared/mail-features";
+import { initialCompose } from "./compose/ComposePreferences";
+import { ApiError, coalesceReload } from "./api";
 import { applyAppearance, hexColor, readAppearance, resolveScheme, saveAppearance } from "./appearance";
+import type { ThemePreview } from "./themes";
 import { ComposePanel, sendCompose, type Compose } from "./compose/ComposePanel";
+import { DraftPicker } from "./compose/DraftPicker";
+import { DraftSession, type DraftProgress } from "./compose/draft-session";
 import { ConnectDialog, ProviderChoices, type ImapProvider } from "./dialogs/ConnectDialog";
 import { LabelForm } from "./dialogs/LabelForm";
 import { ShortcutsDialog } from "./dialogs/ShortcutsDialog";
 import { SnoozeDialog } from "./dialogs/SnoozeDialog";
 import { TeachDialog } from "./dialogs/TeachDialog";
 import { TrashDialog } from "./dialogs/TrashDialog";
+import { CommandPalette, type PaletteCommand } from "./dialogs/CommandPalette";
 import { interactionActions, matches, read as readInteraction, save as saveInteraction, shortcutLabel } from "./interaction";
 import { InboxTabs } from "./mail/InboxTabs";
 import { ListEmpty } from "./mail/ListEmpty";
@@ -30,10 +36,10 @@ import { SenderPanel } from "./mail/SenderPanel";
 import { tabName, viewNames, viewOrder, type View } from "./mail/format";
 import { customLabels, densityShortcut, filterMail, matchesLabel, markMailRead } from "./mail-ui";
 import { reuseMailState } from "./mail-state";
+import { compileMailSearch } from "./mail-search";
 import { useMailNavigation, type MailLocation } from "./navigation";
 import { collectPrivateNames, redactPrivateText } from "./privacy";
 import { SettingsPage } from "./settings/SettingsPage";
-import type { SettingsSection } from "./settings/sections";
 import { PaneHeader, type Corner } from "./shell/PaneHeader";
 import { Sidebar } from "./shell/Sidebar";
 import { UpdateNotice } from "./shell/UpdateNotice";
@@ -42,7 +48,9 @@ import { Dialog } from "./ui/Dialog";
 import { MailPrivacy, PrivacyContext, Redact } from "./ui/Privacy";
 import { drawsWindowControls, systemCaption } from "./ui/TrafficLights";
 import { useMedia } from "./ui/useMedia";
-import { Close, Eye, EyeOff, PanelRight, Search, SidebarIcon } from "./ui/icons";
+import { CredentialFallbackNotice } from "./shell/CredentialFallbackNotice";
+import { ToastStack, useToasts } from "./ui/Toasts";
+import { ArrowLeft, ArrowRight, Close, Eye, EyeOff, PanelRight, Search, SidebarIcon } from "./ui/icons";
 
 // Direction the list pane enters from: tabs slide sideways, mail opens upward.
 type Motion = "forward" | "back" | "open" | "close";
@@ -64,7 +72,7 @@ const empty: State = {
 export function App() {
   const [state, setState] = useState(empty);
   const navigation = useMailNavigation();
-  const { view, tab, accountFilter, labelFilter, selectedId, query, opened, readFilter, relevanceFilter, sort } = navigation.location;
+  const { page, settingsSection, view, tab, accountFilter, labelFilter, selectedId, query, opened, readFilter, relevanceFilter, sort } = navigation.location;
   const setSelectedId = (selectedId: string | null) =>
     navigation.update((current) => ({ ...current, selectedId }));
   const setOpened = (opened: boolean) =>
@@ -72,27 +80,42 @@ export function App() {
   const [interaction, setInteraction] = useState(readInteraction);
   const shortcut = (action: typeof interactionActions[number]["id"]) => shortcutLabel(interaction.shortcuts[action]);
   const [searching, setSearching] = useState(false);
-  const [settings, setSettings] = useState(false);
+  const settings = page === "settings";
+  const setSettings = (next: boolean | ((current: boolean) => boolean)) => {
+    const value = typeof next === "function" ? next(settings) : next;
+    navigate({ page: value ? "settings" : "mail", opened: false });
+  };
+  const setSettingsSection = (settingsSection: MailLocation["settingsSection"]) => navigate({ settingsSection });
   const setLabelFilter = (labelFilter: string) => navigation.update(current => ({ ...current, labelFilter }));
   const [labelMail, setLabelMail] = useState<Mail | null>(null);
   const [contextMenu, setContextMenu] = useState<ReturnType<typeof mailMenuRequest> | null>(null);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const [connecting, setConnecting] = useState<ImapProvider | "choose" | null>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
+  const [draftPicker, setDraftPicker] = useState(false);
+  const [draftProgress, setDraftProgress] = useState<DraftProgress>({ phase: "idle", message: "Draft saves on this device as you type." });
+  const draftSession = useRef<DraftSession | null>(null);
+  const draftLock = useRef(false);
+  const draftTask = useRef<Promise<void> | undefined>(undefined);
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const sendTask = useRef<Promise<void> | undefined>(undefined);
   const [teach, setTeach] = useState<Mail | null>(null);
   const [snooze, setSnooze] = useState<Mail | null>(null);
   const [trashMail, setTrashMail] = useState<Mail | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
-  const navigationBlocked = !!(compose || teach || snooze || trashMail || shortcuts || settings || labelMail || connecting);
+  const [palette, setPalette] = useState(false);
+  const [settingsModal, setSettingsModal] = useState(false);
+  useEffect(() => { if (updateInstalling) setPalette(false); }, [updateInstalling]);
+  const navigationBlocked = !!(compose || draftPicker || teach || snooze || trashMail || shortcuts || labelMail || connecting || updateInstalling || settingsModal);
   const navigate = (patch: Partial<MailLocation>, search = false) => {
     if (navigationBlocked) return false;
     navigation.visit(patch, search);
     return true;
   };
   const travel = (direction: -1 | 1) => {
-    if (navigationBlocked || contextMenu) return;
+    if (navigationBlocked || contextMenu || palette) return;
+    const active = document.activeElement;
+    const restoreFocus = active === document.body || active instanceof HTMLElement && !!active.closest(".row, .message");
     navigation.travel(direction, (target) => {
       const accountExists = target.accountFilter === "all" ||
         state.accounts.some((account) => account.id === target.accountFilter);
@@ -100,6 +123,10 @@ export function App() {
         state.accounts.some((account) => account.id === mail.accountId));
       const mail = state.messages.find((mail) => mail.id === target.selectedId);
       if (target.opened && mailExists && mail) markRead(mail);
+      if (restoreFocus && target.opened !== opened) {
+        readerFocusPending.current = target.opened && mailExists;
+        listFocusPending.current = !target.opened && opened;
+      }
       setSearching(!!target.query);
       return { ...target, accountFilter: accountExists ? target.accountFilter : "all",
         selectedId: mailExists ? target.selectedId : null, opened: target.opened && mailExists };
@@ -113,7 +140,9 @@ export function App() {
     const mouse = (event: MouseEvent) => {
       if (event.button !== 3 && event.button !== 4) return;
       event.preventDefault();
-      if (!native && event.type === "mouseup") travel(event.button === 3 ? -1 : 1);
+      const element = event.target instanceof Element ? event.target : null;
+      const guarded = element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], [data-update-command], .update-notice, .credential-fallback-notice');
+      if (!native && !guarded && event.type === "mouseup") travel(event.button === 3 ? -1 : 1);
     };
     window.addEventListener("mousedown", mouse, true);
     window.addEventListener("mouseup", mouse, true);
@@ -154,27 +183,29 @@ export function App() {
   };
   const listRef = useRef<HTMLDivElement>(null);
   const readerRef = useRef<HTMLDivElement>(null);
+  const readerFocusPending = useRef(false);
+  const listFocusPending = useRef(false);
   // The sidebar stays open or closed between launches.
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("sidebar") !== "closed");
   const toggleSidebar = () => {
     localStorage.setItem("sidebar", sidebarOpen ? "closed" : "open");
     setSidebarOpen(!sidebarOpen);
   };
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("interaction");
   // The Filters popover; its button stays lit while a filter or sort differs from its default.
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [appearance, setAppearance] = useState(readAppearance);
+  const [themePreview, setThemePreview] = useState<ThemePreview | null>(null);
   const prefersLight = useMedia("(prefers-color-scheme: light)", false);
   const scheme = resolveScheme(appearance.mode, prefersLight);
   useLayoutEffect(() => {
-    applyAppearance(appearance, scheme);
+    applyAppearance(appearance, scheme, document.documentElement, themePreview);
     // System caption buttons take the pane surface and text color beneath them.
     if (!systemCaption) return;
     const tokens = window.getComputedStyle(document.documentElement);
     const color = hexColor(tokens.getPropertyValue("--surface"));
     const symbolColor = hexColor(tokens.getPropertyValue("--text"));
     if (color && symbolColor) window.desktop?.setOverlay?.({ color, symbolColor });
-  }, [appearance, scheme]);
+  }, [appearance, scheme, themePreview]);
   // Panes that need room drop out as the window narrows: the sender panel, then
   // the reader beside the list (mail then opens in place), then the sidebar.
   const roomy = useMedia("(min-width: 760px)");
@@ -195,7 +226,9 @@ export function App() {
   );
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [notice, setNotice] = useState("");
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
+  const setNotice = useCallback((text: string) => { if (text) pushToast(text, "error"); }, [pushToast]);
+  const arrivals = useRef<number | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const csrf = useRef("");
@@ -217,21 +250,66 @@ export function App() {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const data = (await res.json()) as T & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Request failed. Try again.");
+      if (!res.ok) throw new ApiError(res.status, data.error || "Request failed. Try again.");
       return data;
     },
     [],
   );
+  const openCompose = (value: Compose | Draft) => {
+    const session = new DraftSession(api, value, (progress) => {
+      if (draftSession.current === session) {
+        setDraftProgress(progress);
+        setCompose(session.content);
+      }
+    });
+    draftSession.current = session;
+    setCompose(session.content);
+    setDraftProgress({ phase: "idle", message: "Draft saves on this device as you type." });
+    session.change(session.content);
+  };
+  const editCompose = (value: Compose) => {
+    const session = draftSession.current;
+    if (!session || sendLock.current || draftLock.current || updateInstalling) return;
+    if (value.accountId !== session.content.accountId) {
+      if (session.dirty) return;
+      if (session.stored && !confirm("Keep the existing draft and start a copy from the selected account?")) return;
+      openCompose(value);
+    } else {
+      session.change(value);
+      setCompose(session.content);
+    }
+  };
+  const runDraftAction = (task: (session: DraftSession) => Promise<void>) => {
+    const session = draftSession.current;
+    if (!session || busy || sendLock.current || draftLock.current || updateInstalling) return;
+    draftLock.current = true;
+    setBusy(true);
+    draftTask.current = task(session).catch(() => {
+      setNotice("Draft action could not be confirmed. Your text is still open. Check the draft save status before closing.");
+    }).finally(() => { draftLock.current = false; setBusy(false); });
+  };
+  const closeCompose = () => runDraftAction(async (session) => {
+    await session.flush();
+    draftSession.current = null;
+    setCompose(null);
+  });
   const reload = useMemo(() => coalesceReload(async () => {
     const revision = ++loadRevision.current;
     const data = await api<State & { csrf: string }>("/state");
     csrf.current = data.csrf;
     if (revision !== loadRevision.current) return data;
+    if (data.unreadArrivals !== undefined) {
+      if (arrivals.current !== undefined && data.unreadArrivals > arrivals.current) {
+        const count = data.unreadArrivals - arrivals.current;
+        pushToast(`${count} new unread ${count === 1 ? "email" : "emails"}.`, "info", `arrival:${revision}`);
+      }
+      arrivals.current = data.unreadArrivals;
+    }
     setState((current) => reuseMailState(current, data));
     setSyncing(data.syncing || syncLock.current);
     setLoaded(true);
     return data;
-  }), [api]);
+  }), [api, pushToast]);
   const sync = useCallback(async () => {
     if (syncLock.current) return;
     syncLock.current = true;
@@ -302,11 +380,13 @@ export function App() {
   );
   useEffect(() => window.desktop?.updates?.onDrain(async () => {
     await sendTask.current;
+    await draftTask.current;
+    await draftSession.current?.flush();
     // Let the send result update the draft/unload guard before native close.
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }), []);
   const showSearch = () => {
-    setSettings(false);
+    if (settings) setSettings(false);
     setSearching(true);
     requestAnimationFrame(() => searchRef.current?.focus());
   };
@@ -350,7 +430,8 @@ export function App() {
   const tabs = useMemo(() => new Map(state.messages.map((mail) => [mail.id, inboxTab(mail, state.rules)])),
     [state.messages, state.rules]);
   const tabOf = (mail: Mail) => tabs.get(mail.id) ?? inboxTab(mail, state.rules);
-  const filtered = filterMail(state.messages, navigation.location, activeLabel, now, undefined, tabOf);
+  const search = useMemo(() => compileMailSearch(query, state.accounts), [query, state.accounts]);
+  const filtered = filterMail(state.messages, navigation.location, activeLabel, now, undefined, tabOf, search.matches);
   const selected = opened
     ? state.messages.find((m) => m.id === selectedId &&
         state.accounts.some((account) => account.id === m.accountId))
@@ -372,7 +453,7 @@ export function App() {
     try {
       await task();
       await reload();
-      if (success) setNotice(success);
+      if (success) pushToast(success, "success");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Action failed.");
     } finally {
@@ -381,7 +462,7 @@ export function App() {
   };
   const changeMessage = (
     mail: Mail,
-    action: "read" | "archive" | "snooze" | "unsnooze",
+    action: "read" | "archive" | "snooze" | "unsnooze" | "pin" | "unpin",
     until?: number,
   ) =>
     perform(() =>
@@ -431,11 +512,17 @@ export function App() {
     }
   };
   const openMail = (mail: Mail, context: Partial<MailLocation> = {}) => {
-    if (!navigate({ ...context, selectedId: mail.id, opened: true })) return;
+    if (navigationBlocked || settings) return;
+    navigation.update((current) => ({ ...current, ...context, selectedId: mail.id, opened: true }));
     setRecent((ids) =>
       [mail.id, ...ids.filter((id) => id !== mail.id)].slice(0, 6),
     );
     markRead(mail);
+  };
+  const openReaderMail = (mail: Mail | undefined) => {
+    if (!mail || navigationBlocked || contextMenu) return;
+    readerFocusPending.current = true;
+    openMail(mail);
   };
   const jumpTo = (mail: Mail) => {
     openMail(mail, {
@@ -448,8 +535,10 @@ export function App() {
       setConnecting("choose");
       return;
     }
-    if (compose) return;
-    setCompose({
+    if (compose || draftPicker || updateInstalling) return;
+    const accountId = reply?.accountId ||
+      (accountFilter !== "all" ? accountFilter : state.accounts[0].id);
+    openCompose(initialCompose(accountId, state.composePreferences ?? emptyComposePreferences, {
       accountId:
         reply?.accountId ||
         (accountFilter !== "all" ? accountFilter : state.accounts[0].id),
@@ -470,16 +559,22 @@ export function App() {
             reply.messageId,
           ]
         : reply?.references,
-    });
+    }));
   };
   const archive = (mail: Mail) => {
     void changeMessage(mail, "archive");
     setOpened(false);
   };
+  const neighbours = opened && selected
+    ? filterMail(state.messages, navigation.location, activeLabel, now, selected.id, tabOf, search.matches) : filtered;
+  const neighbourIndex = neighbours.findIndex((mail) => mail.id === selected?.id);
+  const previousMail = neighbours[neighbourIndex - 1];
+  const nextMail = neighbours[neighbourIndex + 1];
   // One list of actions feeds the native menu on the desktop and the drawn menu elsewhere.
   const mailMenuActions = (mail: Mail): MenuAction[] => [
     { id: "open", label: "Open", key: shortcut("open"), run: () => openMail(mail) },
     { id: "read", label: reading.has(mail.id) ? "Marking as read…" : "Mark as read", disabled: !mail.unread || reading.has(mail.id), run: () => markRead(mail) },
+    { id: "pin", label: mail.pinned ? "Unpin email" : "Pin email", disabled: busy, run: () => void changeMessage(mail, mail.pinned ? "unpin" : "pin") },
     { id: "reply", label: "Reply", key: shortcut("reply"), disabled: busy, separator: true, run: () => startCompose(mail) },
     { id: "archive", label: "Archive", key: shortcut("done"), disabled: busy || syncing || mail.archived, separator: true, run: () => archive(mail) },
     { id: "snooze", label: "Snooze", key: shortcut("snooze"), disabled: busy || syncing || mail.archived, run: () => setSnooze(mail) },
@@ -505,8 +600,15 @@ export function App() {
   };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (contextMenu || event.defaultPrevented || event.isComposing || event.repeat) return;
+      if (settingsModal || updateInstalling || draftPicker || contextMenu || event.defaultPrevented || event.isComposing ||
+        event.repeat && !["ArrowUp", "ArrowDown"].includes(event.key)) return;
       const target = event.target;
+      if (event.key.toLowerCase() === "k" && !event.altKey && !event.shiftKey &&
+        (window.desktop?.platform === "darwin" ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) {
+        if (!navigationBlocked) { event.preventDefault(); setFiltersOpen(false); setPalette((value) => !value); }
+        return;
+      }
+      if (palette) return;
       if (settings && target instanceof HTMLElement && target.closest("[data-interaction-settings]") &&
         event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
         !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
@@ -514,11 +616,11 @@ export function App() {
       }
       if (target instanceof HTMLElement && (target.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
-      if (target instanceof HTMLElement && target.tagName === "BUTTON" && target.getAttribute("role") === "combobox") return;
       const nextDensity = densityShortcut(event);
       if (nextDensity && !settings && !compose && !teach && !snooze && !trashMail && !shortcuts && !labelMail && !connecting) {
         event.preventDefault(); setDensity(nextDensity); return;
       }
+      if (target instanceof HTMLElement && target.tagName === "BUTTON" && target.getAttribute("role") === "combobox") return;
       if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey) {
         if (compose) return;
         if (trashMail) { if (!trashLock.current) setTrashMail(null); return; }
@@ -531,7 +633,16 @@ export function App() {
       if (action === "back" || action === "forward") {
         event.preventDefault(); travel(action === "back" ? -1 : 1); return;
       }
+      if (target instanceof HTMLElement && target.closest("#sidebar")) return;
       const inbox = !settings;
+      if (inbox && !opened && ["ArrowDown", "ArrowUp"].includes(event.key) &&
+        !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+        (!(target instanceof HTMLElement) || !target.closest("button, a, [role=button]") || target.closest(".row"))) {
+        event.preventDefault();
+        const next = event.key === "ArrowDown" ? nextMail : previousMail;
+        if (next) setSelectedId(next.id);
+        return;
+      }
       if (action === "search") { event.preventDefault(); showSearch(); }
       else if (action === "settings") setSettings((value) => !value);
       else if (action === "help") setShortcuts(true);
@@ -542,11 +653,8 @@ export function App() {
       else if (inbox && action === "other") nextTab();
       else if (inbox && (action === "next" || action === "previous")) {
         event.preventDefault();
-        const neighbours = opened && selected
-          ? filterMail(state.messages, navigation.location, activeLabel, now, selected.id, tabOf) : filtered;
-        const index = neighbours.findIndex((mail) => mail.id === selected?.id);
-        const next = neighbours[Math.max(0, Math.min(neighbours.length - 1, index + (action === "next" ? 1 : -1)))];
-        if (next) { if (opened) openMail(next); else setSelectedId(next.id); }
+        const next = action === "next" ? nextMail : previousMail;
+        if (next) { if (opened) openReaderMail(next); else setSelectedId(next.id); }
       } else if (inbox && action === "open" && selected &&
         (!(target instanceof HTMLElement) || !target.closest("button, a, [role=button]") || target.closest(".row"))) {
         event.preventDefault(); openMail(selected);
@@ -570,7 +678,7 @@ export function App() {
   });
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
-      if (sendLock.current || compose?.sendUnknown || compose?.body || compose?.to || compose?.subject)
+      if (sendLock.current || draftLock.current || draftSession.current?.dirty || compose?.sendUnknown)
         e.preventDefault();
     };
     window.addEventListener("beforeunload", handle);
@@ -600,29 +708,22 @@ export function App() {
           ? "close"
           : motion,
     };
-  // A new pane starts at its top; the next effect restores the chosen row.
-  useLayoutEffect(() => {
-    listRef.current?.scrollTo({ top: 0, behavior: "instant" });
-  }, [paneKey]);
-  useEffect(() => {
-    const list = listRef.current;
-    const row = selected
-      ? document.getElementById(`mail-${selected.id}`)
-      : null;
-    if (!list || !row) return;
-    // Vertical only: a horizontal adjustment would fight the pane's slide-in.
-    const offset =
-      row.getBoundingClientRect().top -
-      list.getBoundingClientRect().top +
-      list.scrollTop;
-    if (offset < list.scrollTop) list.scrollTop = offset;
-    else if (row.offsetHeight + offset > list.scrollTop + list.clientHeight)
-      list.scrollTop = offset + row.offsetHeight - list.clientHeight;
-  }, [selected?.id, paneKey]);
   const readerKey = opened && selected ? selected.id : null;
   useLayoutEffect(() => {
-    readerRef.current?.scrollTo({ top: 0, behavior: "instant" });
-  }, [readerKey]);
+    if (!opened) {
+      if (listFocusPending.current) {
+        listFocusPending.current = false;
+        document.getElementById(`mail-${selected?.id}`)?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    const region = split ? readerRef.current : listRef.current;
+    region?.scrollTo({ top: 0, behavior: "instant" });
+    if (readerFocusPending.current) {
+      readerFocusPending.current = false;
+      region?.querySelector<HTMLElement>(".message")?.focus({ preventScroll: true });
+    }
+  }, [readerKey, opened, split]);
   useEffect(closeContextMenu, [paneKey, readerKey, settings, closeContextMenu]);
   const menuMail = contextMenu && state.messages.find((mail) => mail.id === contextMenu.mailId);
   const privacyContext = useMemo(() => ({ on: privacy, revealed, toggle: toggleAddress,
@@ -647,6 +748,7 @@ export function App() {
   const sidebarToggle = !sidebarOpen && roomy && (
     <button
       className="icon"
+      id="sidebar-toggle"
       aria-label="Show sidebar"
       aria-expanded={false}
       aria-controls="sidebar"
@@ -693,7 +795,12 @@ export function App() {
       onArchive={() => archive(selected)}
       onSnooze={() => setSnooze(selected)}
       onUnsnooze={() => void changeMessage(selected, "unsnooze")}
+      onPin={() => void changeMessage(selected, selected.pinned ? "unpin" : "pin")}
       onClose={() => setOpened(false)}
+      onPrevious={() => openReaderMail(previousMail)}
+      onNext={() => openReaderMail(nextMail)}
+      previousDisabled={navigationBlocked || !!contextMenu || !previousMail}
+      nextDisabled={navigationBlocked || !!contextMenu || !nextMail}
     />
   );
   const reader = opened && selected && (
@@ -708,6 +815,34 @@ export function App() {
       onMenuKey={mailMenuKey}
     />
   );
+  const historyControls = (
+    <nav className="mail-navigation" aria-label="Mail history">
+      <button type="button" disabled={navigationBlocked || !!contextMenu || !navigation.canBack} onClick={() => travel(-1)}>
+        <ArrowLeft size={15} />Back
+      </button>
+      <button type="button" disabled={navigationBlocked || !!contextMenu || !navigation.canForward} onClick={() => travel(1)}>
+        Forward<ArrowRight size={15} />
+      </button>
+    </nav>
+  );
+  const paletteActions = {
+    important: () => switchView("inbox"), search: showSearch, compose: () => startCompose(),
+    settings: () => setSettings(true), privacy: togglePrivacy, help: () => setShortcuts(true),
+    density: () => setDensity((value) => value === "comfortable" ? "compact" : "comfortable"),
+  };
+  const commands: PaletteCommand[] = [
+    ...interactionActions.flatMap(({ id, label }) => id in paletteActions ? [{ id, label, shortcut: shortcut(id),
+      run: paletteActions[id as keyof typeof paletteActions] }] : []),
+    { id: "archive-view", label: "Show Archive", run: () => switchView("archive") },
+    { id: "snoozed-view", label: "Show Snoozed", run: () => switchView("snoozed") },
+    { id: "pinned-view", label: "Show pinned emails in this view", run: () => {
+      navigate({ page: "mail", query: "is:pinned", selectedId: null, opened: false });
+      setSearching(true);
+    } },
+    { id: "sync", label: "Sync mail", disabled: syncing || !state.accounts.length, run: () => void sync() },
+    ...(!settings && selected ? mailMenuActions(selected).map(({ id, label, key, disabled, run }) =>
+      ({ id: `mail-${id}`, label, shortcut: key, disabled, run })) : []),
+  ];
   return (
     <PrivacyContext.Provider
       value={privacyContext}
@@ -716,25 +851,17 @@ export function App() {
         className={`app${window.desktop ? " desktop" : ""}${privacy ? " private" : ""}`}
         data-platform={window.desktop?.platform}
       >
-        {notice && (
-          <div className="notice" role="status">
-            <span>
-              <Redact text={notice} />
-            </span>
-            <button
-              aria-label="Dismiss notification"
-              onClick={() => setNotice("")}
-            >
-              <Close color="currentColor" size={12} />
-            </button>
-          </div>
-        )}
-        <div className="frame" inert={updateInstalling}>
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
+        {palette && !updateInstalling && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+        <div className="app-update-control" style={{ right: systemCaption ? 154 : drawsWindowControls && windowSide === "right" ? 106 : 12 }}>
+          <UpdateNotice bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+        </div>
+        <div className="frame" inert={updateInstalling || palette}>
           <Sidebar
             open={sidebarShown}
+            onToggle={toggleSidebar}
             corner={corner("sidebar")}
             maximized={maximized}
-            onToggle={toggleSidebar}
             settings={settings}
             mail={{
               view,
@@ -749,7 +876,9 @@ export function App() {
               busy,
               onAddAccount: () => setConnecting("choose"),
               onCompose: () => startCompose(),
+              onDrafts: () => setDraftPicker(true),
               onSettings: () => setSettings(true),
+              onCommands: () => { if (!navigationBlocked) setPalette(true); },
               shortcut,
               syncing,
               lastSync: state.lastSync,
@@ -763,18 +892,24 @@ export function App() {
           />
         {settings ? (
           <div className="settings-pane">
-            <PaneHeader className="main-head" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
+            <PaneHeader className="main-head update-reserved" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
               <h1 className="pane-title">Settings</h1>
               <div className="pane-tools">{privacyButton}</div>
             </PaneHeader>
-            <UpdateNotice banner bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+            <CredentialFallbackNotice mode={window.desktop?.credentialFallback} />
+            {historyControls}
             <SettingsPage
               state={state}
               busy={busy}
               perform={perform}
               api={api}
               onConnectAccount={setConnecting}
-              onNotice={setNotice}
+              onNotice={(text) => pushToast(text, "info")}
+              onComposePreferences={async (value) => {
+                const saved = await api<ComposePreferences>("/compose-preferences", "PUT", value);
+                setState((current) => ({ ...current, composePreferences: saved }));
+                pushToast("Templates and signatures saved.", "success");
+              }}
               windowSide={windowSide}
               onWindowSide={placeWindowControls}
               onWindowControls={(controls) => {
@@ -788,17 +923,23 @@ export function App() {
               }}
               section={settingsSection}
               appearance={appearance}
-              scheme={scheme}
+              scheme={themePreview?.scheme ?? scheme}
               onAppearance={(value) => {
+                if (!saveAppearance(value)) {
+                  setNotice("Appearance could not be saved on this device.");
+                  return false;
+                }
                 setAppearance(value);
-                if (!saveAppearance(value)) setNotice("Appearance could not be saved on this device.");
+                return true;
               }}
+              onThemePreview={setThemePreview}
+              onModalChange={setSettingsModal}
             />
           </div>
         ) : (
           <main className={split ? "workspace split" : "workspace"}>
             <section className="list-pane">
-              <PaneHeader className="main-head" corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
+              <PaneHeader className={!contextShown && !split ? "main-head update-reserved" : "main-head"} corner={corner("main")} maximized={maximized} lead={sidebarToggle}>
                 <h1 className="pane-title">{viewNames[view]}</h1>
                 <div className="head-search">
                   {searching ? (
@@ -808,6 +949,8 @@ export function App() {
                         ref={searchRef}
                         aria-label="Search all synced mail"
                         placeholder="Search mail"
+                        aria-describedby="mail-search-help"
+                        aria-invalid={!!search.error}
                         value={query}
                         onKeyDown={(e) => {
                           if (e.key === "Escape") closeSearch();
@@ -851,10 +994,14 @@ export function App() {
                   {!split && senderToggle}
                 </div>
               </PaneHeader>
+              {historyControls}
+              {searching && <p id="mail-search-help" className="search-help" role={search.error ? "alert" : undefined}>
+                {search.error || 'Search cached mail in this view: from:, to:, subject:, body:, account:, is:unread, is:pinned, before:YYYY-MM-DD, after:YYYY-MM-DD. Use quotes for phrases and - to exclude.'}
+              </p>}
               {view === "inbox" && !query && (
                 <InboxTabs tab={tab} unread={tabUnread} onTab={switchTab} />
               )}
-              <UpdateNotice banner bridge={window.desktop?.updates} onInstalling={setUpdateInstalling} />
+              <CredentialFallbackNotice mode={window.desktop?.credentialFallback} />
               {!(split && opened) && actions}
               <div
                 ref={listRef}
@@ -865,6 +1012,8 @@ export function App() {
                 {reader && !split ? reader : filtered.length ? (
                   <MailList
                     messages={filtered}
+                    listRef={listRef}
+                    focusSelection={!navigationBlocked && !contextMenu}
                     selectedId={selected?.id}
                     density={density}
                     narrow={split}
@@ -897,7 +1046,7 @@ export function App() {
             </section>
             {split && (
               <section className="reader-pane" aria-label="Reading pane">
-                <PaneHeader className="reader-head" corner={corner("reader")} maximized={maximized}>
+                <PaneHeader className={contextShown ? "reader-head" : "reader-head update-reserved"} corner={corner("reader")} maximized={maximized}>
                   {opened && actions}
                   <div className="pane-tools">{senderToggle}</div>
                 </PaneHeader>
@@ -910,7 +1059,7 @@ export function App() {
             )}
             {contextShown && (
               <aside className="context" aria-label="Sender context">
-                <PaneHeader className="context-head" corner={corner("context")} maximized={maximized} />
+                <PaneHeader className="context-head update-reserved" corner={corner("context")} maximized={maximized} />
                 <SenderPanel
                   selected={selected}
                   account={selectedAccount}
@@ -974,22 +1123,56 @@ export function App() {
             }}
           />
         )}
+        {draftPicker && (
+          <DraftPicker accounts={state.accounts} api={api}
+            onClose={() => setDraftPicker(false)}
+            onOpen={(draft) => { setDraftPicker(false); openCompose(draft); }} />
+        )}
         {compose && (
           <ComposePanel
             draft={compose}
-            setDraft={setCompose}
+            setDraft={editCompose}
             accounts={state.accounts}
+            preferences={state.composePreferences ?? emptyComposePreferences}
             busy={busy || updateInstalling}
-            onClose={() => setCompose(null)}
+            progress={draftProgress}
+            onClose={closeCompose}
+            onDiscard={() => runDraftAction(async (session) => {
+              await session.discard();
+              draftSession.current = null;
+              setCompose(null);
+            })}
+            onRetry={() => runDraftAction(async (session) => {
+              await session.retry();
+              setCompose(session.content);
+            })}
+            onSaveCopy={() => {
+              if (busy || sendLock.current || draftLock.current || updateInstalling) return;
+              if (confirm("Save a separate copy? The previous saved draft may still exist. Neither copy will be sent automatically.")) openCompose(draftSession.current?.content || compose);
+            }}
             onSend={() => {
-              if (busy || sendLock.current || updateInstalling) return;
-              sendTask.current = sendCompose(compose, {
+              const session = draftSession.current;
+              if (!session || busy || draftLock.current || sendLock.current || updateInstalling) return;
+              const snapshot = session.content;
+              sendTask.current = sendCompose(snapshot, {
                 lock: sendLock,
-                send: (draft) => api("/send", "POST", draft),
+                prepare: async () => {
+                  session.change({ ...snapshot, sendUnknown: true });
+                  setCompose(session.content);
+                  await session.flush();
+                },
+                send: (draft) => {
+                  pushToast("Sending email…", "info");
+                  return api("/send", "POST", draft);
+                },
+                complete: () => session.discard(),
                 reload,
-                setDraft: setCompose,
+                setDraft: (value) => {
+                  if (value === null) draftSession.current = null;
+                  setCompose(value);
+                },
                 setBusy,
-                setNotice,
+                setNotice: (text) => pushToast(text, text === "Email sent." ? "success" : "error"),
                 confirm: (message) => confirm(message),
               });
             }}
