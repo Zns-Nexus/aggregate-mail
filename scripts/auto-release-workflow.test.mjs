@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-const workflow = readFileSync(new URL("../.github/workflows/auto-release.yml", import.meta.url), "utf8");
+const workflow = readFileSync(new URL("../.github/workflows/auto-release.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("automatic release builds the triggering SHA and writes its tag only after builds pass", () => {
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}[\s\S]*release_version:/);

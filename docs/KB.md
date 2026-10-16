@@ -578,6 +578,9 @@ version commits beginning with `Release ` skip the automatic lane. Retry an
 automatic release through its original workflow run, since its tag points at source
 with the older committed version and cannot use the strict manual tag route.
 
+Workflow source tests normalize LF and CRLF checkout line endings before checking
+the release gates and executing the tag command.
+
 ## Email links
 
 Plain-text fallback bodies stay text. Explicit HTTP and HTTPS URLs become links when the message opens. The renderer preserves query strings and balanced parentheses, and leaves surrounding prose punctuation and curly quotes outside the link. Bare domains and mailto links remain text. The bounded formatted reader described below now supports a safe subset of sender layout. Remote body images require per-message activation, as described below.

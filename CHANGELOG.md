@@ -8,6 +8,8 @@
 
 - Build automatic patch releases from the triggering commit and create their tags only after every platform build passes. Keep version stamping in the runner instead of pushing a version commit to `main`.
 
+- Accept Windows checkout line endings in automatic-release workflow tests.
+
 - Keep theme dialogs inside the app's navigation and shortcut guards so Back/Forward cannot discard unsaved edits and Commands cannot open a second modal. Restore navigation and commands when the theme dialog closes.
 
 - Publish GitHub-safe `Emc2-` installer filenames and Windows/Linux updater manifests with release checksums. Match Linux AppImage `x86_64` filenames and verify packaged metadata, size and SHA512 before upload. The application remains Emc² with the update icon and existing signing policy.
