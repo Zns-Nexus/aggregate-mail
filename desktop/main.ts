@@ -404,11 +404,11 @@ else {
           if (
             dialog.showMessageBoxSync(window, {
               type: "question",
-              buttons: ["Keep editing", "Discard draft"],
+              buttons: ["Keep editing", "Close anyway"],
               defaultId: 0,
               cancelId: 0,
-              message: "Discard your draft?",
-              detail: "If the send status is unknown, this message may already have been sent.",
+              message: "Close with a draft still open?",
+              detail: "Saved drafts remain on this device. Changes not yet saved will be lost. If the send status is unknown, this message may already have been sent.",
             }) === 1
           )
             event.preventDefault();

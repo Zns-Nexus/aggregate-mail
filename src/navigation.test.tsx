@@ -2,19 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { act } from "react";
 import { JSDOM } from "jsdom";
-import type { Mail, State } from "../shared/types";
+import type { Draft, Mail, State } from "../shared/types";
 
 async function mount(native = false, setup?: (state: State, storage: Storage) => void, bridge: Partial<NonNullable<Window["desktop"]>> = {}) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/" });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  let discard = true;
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     location: dom.window.location, history: dom.window.history, HTMLElement: dom.window.HTMLElement,
     requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 0; },
     IS_REACT_ACT_ENVIRONMENT: true,
-    confirm: () => discard,
+    confirm: () => true,
   };
   const previous = new Map(Object.keys(globals).map((key) =>
     [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -53,10 +52,16 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
   (dom.window as unknown as Window).desktop = desktop;
   const previousFetch = globalThis.fetch;
   const mutations: string[] = [];
+  let savedDraft: Draft | undefined;
   let readWait: Promise<void> | undefined;
   let releaseRead: (() => void) | undefined;
   globalThis.fetch = async (input, options) => {
     const url = String(input);
+    if (url.includes("/drafts") && ["POST", "PUT"].includes(options?.method || "")) {
+      savedDraft = { ...JSON.parse(String(options?.body)), id: "synthetic-draft", accountId: url.split("/")[3],
+        revision: (savedDraft?.revision || 0) + 1, updatedAt: 1 };
+      return { ok: true, json: async () => savedDraft } as Response;
+    }
     if (options?.method === "PATCH") {
       mutations.push(url);
       const mail = state.messages.find((mail) => url.endsWith(encodeURIComponent(mail.id)));
@@ -134,7 +139,7 @@ async function mount(native = false, setup?: (state: State, storage: Storage) =>
     subscriptions: () => subscriptions,
     holdRead: () => { readWait = new Promise<void>((resolve) => { releaseRead = resolve; }); },
     finishRead: async () => { await act(async () => { releaseRead?.(); await readWait; readWait = undefined; }); },
-    discardDraft: (value: boolean) => { discard = value; },
+    savedDraft: () => savedDraft,
     async close() {
       await act(async () => root.unmount());
       assert.equal(subscriptions, 0);
@@ -255,14 +260,11 @@ test("mounted App guards drafts/dialogs and uses one native side-button source w
       await app.native("forward");
       assert.equal(app.title(), "Alpha");
       if (shortcut === "c") assert.equal(body!.value, "Keep this draft");
-      if (shortcut === "c") {
-        app.discardDraft(false);
-        await app.key("Escape");
-        assert.equal(body!.value, "Keep this draft");
-        assert.ok(app.container.querySelector('[role="dialog"]'));
-        app.discardDraft(true);
-      }
       await app.key("Escape");
+      if (shortcut === "c") {
+        assert.equal(app.container.querySelector('[role="dialog"]'), null);
+        assert.equal(app.savedDraft()?.body, "Keep this draft", "Escape retains the acknowledged draft");
+      }
     }
     await app.key("Escape");
     assert.equal(app.title(), undefined);

@@ -1,4 +1,9 @@
 /* Dialogs, compose and their option lists. */
+.draft-recovery-actions { display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap; }
+.saved-drafts { list-style: none; padding: 0; margin: 12px 0 0; }
+.saved-drafts li + li { border-top: 1px solid var(--line); }
+.saved-drafts button { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 12px 0; gap: 4px; text-align: left; overflow-wrap: anywhere; }
+.saved-drafts span { color: var(--text-3); }
 .label-options {
   max-height: 300px;
   overflow-y: auto;

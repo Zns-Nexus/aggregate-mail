@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add an encrypted local draft API with revision-checked saves and deletion, account-scoped recovery and persistent unknown-send protection. Draft writes remain available during sync and stop during updater quiescence. Renderer autosave and send coordination require separate integration.
+- Autosave compose and reply text to encrypted local drafts, with visible save status and recovery from the Drafts button. Closing compose keeps the draft; discarding is a separate confirmed action. Reconcile lost save responses without overwriting newer revisions. Save a durable uncertainty marker before sending, require confirmation before resending an uncertain draft and treat accepted-send cleanup failures as warnings. Draft writes remain available during sync and stop during updater quiescence.
 
 - Rebase the sidebar redesign onto current main, preserving macOS key migration and test timeouts. Reconcile contributor guidance, component links and ADR numbering.
 

@@ -60,7 +60,7 @@ function reader(opened = true, accountFilter = "a", selectedId: string | null = 
     pendingReads: { current: new Set<string>() },
     api: async (...args: unknown[]) => { requests.push(args); },
     reload: async () => {},
-    contextMenu: false, settings: false, compose: false, teach: false,
+    draftPicker: false, contextMenu: false, settings: false, compose: false, teach: false,
     snooze: false, trashMail: false, trashLock: { current: false }, shortcuts: false, labelMail: false, connecting: false,
     HTMLElement: Element, Error, densityShortcut, filterMail, markMailRead, tabOf: () => "primary",
     interaction: defaults, interactionActions, matches, window: { desktop: { platform: "darwin" } },

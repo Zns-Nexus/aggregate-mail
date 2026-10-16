@@ -57,9 +57,9 @@ Synthetic mounted-App tests cover combined controls, empty-result reset, privacy
 
 `server/drafts.ts` stores local compose/reply snapshots as encrypted `draft`
 records using the existing data key. Draft recovery never invokes a provider.
-The renderer still holds compose state in memory; this backend does not add
-UI autosave, close protection or automatic send recovery. See
-[ADR 0027](adr/0027-encrypted-local-drafts.md).
+The renderer uses these routes for autosave and explicit recovery. See
+[ADR 0027](adr/0027-encrypted-local-drafts.md) for persistence and
+[ADR 0035](adr/0035-compose-autosave-and-recovery.md) for caller coordination.
 
 All draft routes are under `/api/accounts/:accountId/drafts` and inherit the
 Host, origin, desktop-session, CSRF and `Cache-Control: no-store` guards.
@@ -93,16 +93,16 @@ clearing a true uncertainty flag or deleting it without confirmation return
 purges that account's drafts, including uncertain drafts, alongside its cached
 mail and labels. Reconnecting an account does not remove its drafts.
 
-The renderer integration must serialize writes per draft and retain local
+`src/compose/draft-session.ts` serializes writes per draft and retains local
 edits until a save is acknowledged. Create once, then use only the returned ID
-and latest acknowledged revision for PUT. If a create response is lost, inspect
-the list and recover rather than blindly creating another draft. A lost PUT
-response requires GET and reconciliation before another save. Never resolve a
-409 by attaching the newest revision to stale content. Cancel pending autosaves
-before explicit deletion. PUT never creates a missing record, so delayed saves
-cannot restore a deleted ID; a new compose must POST for a new ID.
+and latest acknowledged revision for PUT. A lost create response pauses saves;
+Retry never repeats POST. Save separate copy requires confirmation and retains
+the possible original. A lost PUT response requires GET and exact revision and
+snapshot reconciliation before another save. A conflict never adopts a newer
+revision to overwrite it. Explicit deletion stops queued autosaves. PUT never
+creates a missing record, so delayed saves cannot restore a deleted ID.
 
-Before sending, the caller must freeze editing, drain autosaves, save the exact
+Before sending, the renderer freezes editing, drains autosaves, saves the exact
 snapshot with `sendUnknown: true`, and await its acknowledgement. If that save
 is unacknowledged, do not send. Only then call the existing `/api/send` once.
 An acknowledged `ok: true`, including a Sent-copy warning, proves provider
@@ -114,17 +114,25 @@ because copying to Sent failed. Resending an uncertain draft requires explicit
 duplicate-risk confirmation. Manual discard also requires explicit confirmation.
 Editing cannot clear the marker. There is no receipt engine, outbox or retry.
 
-These sequences are requirements for future caller work. Existing renderer and
-MCP send callers are unchanged and do not use this draft lifecycle. This API
-cannot coordinate those callers or guarantee recovery of unacknowledged edits.
+The Drafts button lists account-scoped summaries; opening one fetches its body
+without sending. Privacy mode omits private summary subjects and recipients.
+Close, Escape and Keep draft wait for the latest save. Discard is separately
+confirmed. Save errors keep text open and protect unload. Saved text survives
+ordinary close; the native prompt warns before closing with unsaved changes or
+an uncertain send. Changing From retains a saved original and confirms a copy
+in the selected account. The existing renderer updater drain also waits for
+draft actions and the current save. MCP send callers remain unchanged and do
+not use this draft lifecycle. Unacknowledged edits cannot be guaranteed.
 SQLite uses WAL with explicit FULL synchronization; acknowledged saves survive
 the tested process restart/crash with the same key. This does not prove device
-power-loss behavior, disk survival or native close integration.
+power-loss behavior or disk survival. Native interactive close/crash behavior
+requires separate installed-app acceptance.
 
 Focused synthetic service and subprocess verification:
 
 ```sh
 node --import tsx --test --test-timeout=30000 server/drafts.test.ts
+node --import tsx --test --test-timeout=30000 src/draft-session.test.tsx src/draft-recovery.test.tsx src/compose-send.test.tsx src/update-lifecycle.test.tsx
 npm run build
 ```
 
@@ -133,7 +141,13 @@ processes, hard-kill a writer after committed saves/deletion and verify recovery
 with the original key. They cover account isolation/removal, capacity, strict
 validation, authentication, conflicting saves/deletes, sticky uncertainty and
 sync/updater guards. They use temporary stores and no real accounts or sends.
-Full-suite and isolated desktop verification remain separate checks.
+Mounted synthetic renderer tests use the authenticated HTTP routes and encrypted
+store to cover rapid edits, pending-save close protection, remount recovery,
+lost create responses, failed updates, explicit copies, account switching, private
+summaries, send preparation and frozen fields, persistent uncertainty, confirmed
+resend, accepted-send cleanup, Keep and Discard. These use a simulated DOM and
+fake sync/send boundaries. Full-suite and isolated desktop verification remain
+separate checks.
 
 ## Desktop targets
 

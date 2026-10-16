@@ -2,6 +2,10 @@
 export type Api = <T>(url: string, method?: string, body?: unknown) => Promise<T>;
 export type Perform = (task: () => Promise<unknown>, success?: string) => Promise<void>;
 
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
 export function coalesceReload<T>(load: () => Promise<T>): () => Promise<T> {
   let running: Promise<T> | undefined;
   let pending = false;
