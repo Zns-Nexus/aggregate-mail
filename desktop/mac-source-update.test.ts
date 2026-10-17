@@ -229,6 +229,7 @@ async function builderFixture(beforeRun?: (cmd: string, args: string[], cwd: str
   await writeFile(path.join(profile, "key.protected"), "synthetic unchanged wrapper");
   await writeFile(helper, "process.exit(1)");
   const calls: { cmd: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }[] = [];
+  const helperExits: Promise<void>[] = [];
   let fail = "", quit = 0;
   const run: Run = async (cmd, args, cwd, env, signal) => {
     calls.push({ cmd, args, cwd, env });
@@ -250,10 +251,15 @@ async function builderFixture(beforeRun?: (cmd: string, args: string[], cwd: str
     if (["codesign", "plutil", "lipo"].some(tool => cmd.endsWith(tool))) return verifyRun(cmd, args, cwd, env, signal);
     return "";
   };
-  const adapter = new MacSourceUpdate(candidate, { installed, helper, home: root, profile, quit: () => { quit++; } }, run, (_cmd, args, options) => spawn(process.execPath, args, options));
+  const adapter = new MacSourceUpdate(candidate, { installed, helper, home: root, profile, quit: () => { quit++; } }, run, (_cmd, args, options) => {
+    const child = spawn(process.execPath, args, options);
+    // Ignored stdio needs no draining; IPC disconnect can omit the close event.
+    helperExits.push(new Promise(resolve => child.once("exit", () => resolve())));
+    return child;
+  });
   return { root, installed, helper, profile, adapter, calls, quit: () => quit, fail: (value: string) => { fail = value; },
     workspace: async () => path.join(root, (await readdir(root)).find(name => name.startsWith(".emc2-update-"))!),
-    cleanup: () => rm(root, { recursive: true, force: true }) };
+    cleanup: async () => { await Promise.all(helperExits); await rm(root, { recursive: true, force: true }); } };
 }
 
 test("builder fetches exact canonical tag, stamps only checkout, builds process arch and stages before quiescence", async () => {

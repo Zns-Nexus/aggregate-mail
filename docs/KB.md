@@ -199,6 +199,8 @@ Release v0.1.9 lacks compatible updater manifests and carries CI-suffixed instal
 
 Synthetic tests exercise candidate rejection, pinned-library options and Windows launch arguments, checksum changes, duplicate commands, download bounds, authenticated IPC, actual service drain/resume, mounted notice behavior and the renderer's unknown-send unload guard. Tests of the pinned AppImage library use temporary files and synthetic process adapters to check replacement/launch failure, filename preservation and destination collisions. The Electron download adapter receives synthetic streams to check headerless overflow, exact size, checksum failures and preheader cancellation. Actual library download tests cover unsafe cache files, cache growth, valid reuse, changed hashes, untrusted metadata paths, and stalled-read timeout, cancellation and stop. The Windows publisher callback test is synthetic. Startup checks disable update traffic and cannot prove download/install/restart. Native installation requires separate disposable two-version fixtures on each supported platform. The macOS source adapter and helper have their own focused tests; native download, installation, renderer/data continuity and cleanup must be recorded separately. An update into a release predating the adapter proves only one cycle.
 
+The source-adapter test fixture waits for each synthetic helper to exit before removing its workspace, since Windows locks a running process's working directory. These helpers ignore standard streams; IPC disconnect can omit Node's `close` event.
+
 ### Background running and notifications
 
 The desktop window hides to a tray icon when it is closed; the app, its mail

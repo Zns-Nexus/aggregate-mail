@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Wait for synthetic update helpers to exit before removing their test workspaces on Windows.
+
 - Add a macOS source-update route: download a pinned stable release, build and sign it locally, verify and stage it, then drain mail and restart from the replacement while retaining the previous app. Preserve draft cancellation, encrypted profiles and Windows/Linux updater checks. Git, Node 24+, npm and Xcode Command Line Tools remain required.
 
 - Keep the app update icon clickable over native title bars by placing its no-drag region after the pane headers. Preserve its position and availability while installation blocks the mail interface.
