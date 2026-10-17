@@ -109,3 +109,21 @@ test("details can be dismissed with Escape and expose progress and failure statu
     assert.equal(ui.container.querySelector("#update-details"), null);
   } finally { await ui.close(); }
 });
+
+test("macOS source action explains prerequisites and uses indeterminate build progress", async () => {
+  const ui = await mount({ phase: "available", version: "0.1.12", method: "mac-source" }, async () => ({ phase: "error", reason: "source-build", method: "mac-source" }));
+  try {
+    await ui.open();
+    assert.match(ui.container.textContent!, /Node 24 or newer, npm and Xcode Command Line Tools/);
+    assert.equal(ui.commandButton().textContent?.trim(), "Download, build, install and restart");
+    await ui.emit({ phase: "downloading", version: "0.1.12", method: "mac-source" });
+    assert.match(ui.button().getAttribute("aria-label")!, /Downloading and building/);
+    assert.doesNotMatch(ui.button().getAttribute("aria-label")!, /%/);
+    assert.equal(ui.container.querySelector("progress")?.hasAttribute("value"), false);
+    assert.equal(ui.commandButton().disabled, true);
+    await ui.emit({ phase: "available", version: "0.1.12", method: "mac-source" });
+    await ui.click();
+    assert.match(ui.container.textContent!, /local source build failed/);
+    assert.equal(ui.commandButton().disabled, false);
+  } finally { await ui.close(); }
+});

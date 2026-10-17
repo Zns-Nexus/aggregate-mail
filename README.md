@@ -215,7 +215,7 @@ Developer OAuth settings and any optional Jev or OpenAI key are stored in the ap
 
 The first development launch copies the earlier `.data` database using SQLite's backup API and preserves the original files. Packaged and development desktop builds share the app-data folder. `.data` and `.env` remain available to the earlier browser development target.
 
-This is a single-user desktop client. Its mail service runs while its window is open or hidden in the tray and stops when you quit. This version has no automatic updater or public-hosting configuration.
+This is a single-user desktop client. Its mail service runs while its window is open or hidden in the tray and stops when you quit. Updates require an explicit action through the update icon; the app has no public-hosting configuration.
 
 ## Development
 
@@ -257,7 +257,7 @@ node scripts/release.mjs --patch
 
 That bumps the version, packages, prints the installer's SHA-256, and uploads it to the GitHub release when a GitHub remote exists. Delete the superseded installers in `release/`, which is ignored by git, so nothing there reaches either host.
 
-The installer is unsigned, so Windows SmartScreen can warn on first run. Compatible Windows and Linux AppImage builds offer updates through the update icon when a newer stable release supplies verified metadata. Installation requires an explicit action and waits for mail operations and draft saves. macOS automatic installation remains unsupported. Installing a newer version over an older one keeps your mail and settings. Native update/restart acceptance requires separate testing.
+The installer is unsigned, so Windows SmartScreen can warn on first run. Compatible Windows and Linux AppImage builds offer updates through the update icon when a newer stable release supplies verified metadata. Installation requires an explicit action and waits for mail operations and draft saves. On macOS, the update action downloads a pinned release source checkout, builds and signs it locally, then replaces and restarts the app while retaining the previous bundle. It requires the source-install build tools above, a writable app location and free build space. The local build can take time. See [the macOS update decision](docs/adr/0042-macos-source-updates.md). Installing a newer version over an older one keeps your mail and settings. Native update/restart acceptance requires separate testing.
 
 ## Verification
 

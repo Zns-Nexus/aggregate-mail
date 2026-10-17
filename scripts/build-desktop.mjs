@@ -17,3 +17,12 @@ await build({
   target: "node24",
   external: ["electron"],
 });
+
+await build({
+  entryPoints: ["desktop/mac-update-helper.ts"],
+  outfile: ".desktop/mac-update-helper.cjs",
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node24",
+});

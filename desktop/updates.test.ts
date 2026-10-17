@@ -77,11 +77,11 @@ test("manifest identity, size, digest, source and unsupported metadata are check
   ]) assert.throws(() => validateCandidate(found, invalid));
 });
 
-test("running app architecture wins, and ad-hoc macOS/development/non-AppImage installs stay disabled", () => {
+test("running app architecture wins, macOS source builds qualify, and development/non-AppImage installs stay disabled", () => {
   assert.equal(unsupportedReason(target), undefined);
   assert.equal(unsupportedReason({ ...target, packaged: false }), "development");
-  assert.equal(unsupportedReason({ ...target, platform: "darwin", arch: "x64" }), "mac-signing", "Rosetta x64 must never select an arm64 installer");
-  assert.equal(unsupportedReason({ ...target, platform: "darwin", arch: "arm64" }), "mac-signing");
+  assert.equal(unsupportedReason({ ...target, platform: "darwin", arch: "x64" }), undefined, "Rosetta remains x64 for source builds");
+  assert.equal(unsupportedReason({ ...target, platform: "darwin", arch: "arm64" }), undefined);
   assert.equal(unsupportedReason({ ...target, platform: "linux" }), "appimage");
   assert.equal(unsupportedReason({ ...target, arch: "ia32" }), "platform");
   const linux = { ...target, platform: "linux", appImage: "/synthetic/Emc.AppImage" };
@@ -675,9 +675,9 @@ test("bounded download cancels once; unsupported builds and ordinary stop never 
   await normal.updates.command("check"); await normal.updates.command("download"); normal.updates.stop();
   await normal.updates.command("install");
   assert.ok(!normal.calls.includes("install"));
-  const mac = fixture({ target: { ...target, platform: "darwin" } });
+  const mac = fixture({ target: { ...target, packaged: false } });
   await mac.updates.command("check"); await mac.updates.command("download"); await mac.updates.command("install");
-  assert.equal(mac.updates.snapshot().reason, "mac-signing"); assert.deepEqual(mac.calls, []);
+  assert.equal(mac.updates.snapshot().reason, "development"); assert.deepEqual(mac.calls, []);
 });
 
 test("download size overruns cancel once and never expose a ready installer", async () => {
@@ -690,6 +690,81 @@ test("download size overruns cancel once and never expose a ready installer", as
   assert.equal((await downloading).reason, "verification");
   assert.equal(f.calls.filter((call) => call === "cancel").length, 1);
   assert.ok(!f.calls.includes("install"));
+});
+
+test("macOS source builds finish before mail drain and use the same cancellation and restoration boundary", async () => {
+  for (const mode of ["success", "cancel", "build-failure", "verify-failure", "helper-failure", "stop"] as const) {
+    const calls: string[] = [];
+    const version = "0.1.7";
+    const candidate = { kind: "mac-source" as const, version, tag: `v${version}`, commit: "a".repeat(40), arch: "x64" as const };
+    const source = { candidate,
+      build: async () => { calls.push("build"); if (mode === "build-failure") throw Error("synthetic build failure"); },
+      verify: async () => { calls.push("verify"); if (mode === "verify-failure") throw Error("tamper"); },
+      install: async () => { calls.push("helper"); if (mode === "helper-failure") throw Error("helper not ready"); calls.push("quit"); },
+      stop: () => calls.push("stop"), dispose: async () => { calls.push("dispose"); },
+    } as unknown as import("./mac-source-update.js").MacSourceUpdate;
+    const flow = fixture({ target: { ...target, platform: "darwin" },
+      mac: { installed: "/synthetic/Emc².app", helper: "/synthetic/helper.cjs", home: "/synthetic/home", quit: () => calls.push("unexpected-quit") },
+      read: async url => url.endsWith("/releases/latest") ? JSON.stringify(release()) : JSON.stringify({ ref: "refs/tags/v0.1.7", object: { type: "commit", sha: candidate.commit } }),
+      source: (selected) => { assert.deepEqual(selected, candidate); return source; },
+      create: async () => { throw Error("Mac source must never use the installer manifest driver"); },
+      quiesce: async () => { calls.push("quiesce"); }, drainRenderer: async () => { calls.push("drain"); },
+      closeWindow: async () => { calls.push("close"); return mode !== "cancel"; }, resume: () => calls.push("resume"),
+      restoreWindow: async () => { calls.push("restore"); } });
+    assert.equal((await flow.updates.command("check")).method, "mac-source");
+    assert.equal(calls.length, 0);
+    const downloaded = await flow.updates.command("download");
+    assert.deepEqual(calls, ["build"], "building must not pause mail or close the app");
+    if (mode === "build-failure") { assert.equal(downloaded.reason, "source-build"); continue; }
+    assert.equal(downloaded.phase, "ready");
+    if (mode === "stop") flow.updates.stop();
+    const state = await flow.updates.command("install");
+    if (mode === "success") {
+      assert.equal(state.phase, "installing");
+      assert.deepEqual(calls, ["build", "quiesce", "drain", "close", "verify", "helper", "quit"]);
+    } else if (mode === "cancel") {
+      assert.equal(state.reason, "cancelled");
+      assert.deepEqual(calls, ["build", "quiesce", "drain", "close", "resume"]);
+    } else if (mode === "stop") assert.deepEqual(calls, ["build", "stop"]);
+    else {
+      assert.equal(state.reason, mode === "verify-failure" ? "verification" : "installer");
+      assert.ok(!calls.includes("quit"));
+      assert.deepEqual(calls.slice(-2), ["restore", "resume"]);
+    }
+  }
+});
+
+test("ordinary disposal after Keep editing stops and disposes the ready source without installing", async () => {
+  const calls: string[] = [];
+  const source = {
+    candidate: { version: "0.1.7" }, build: async () => {},
+    stop: () => { calls.push("stop"); }, dispose: async () => { calls.push("dispose"); },
+    install: async () => { calls.push("install"); },
+  } as unknown as import("./mac-source-update.js").MacSourceUpdate;
+  const f = fixture({ target: { ...target, platform: "darwin" },
+    mac: { installed: "/synthetic/Emc².app", helper: "/synthetic/helper.cjs", home: "/synthetic/home", quit: () => calls.push("quit") },
+    read: async url => url.endsWith("/releases/latest") ? JSON.stringify(release()) :
+      JSON.stringify({ ref: "refs/tags/v0.1.7", object: { type: "commit", sha: "a".repeat(40) } }),
+    source: () => source, closeWindow: async () => false });
+  await f.updates.command("check"); await f.updates.command("download");
+  assert.equal((await f.updates.command("install")).reason, "cancelled");
+  await f.updates.dispose();
+  assert.deepEqual(calls, ["stop", "dispose"]);
+  assert.ok(f.calls.includes("resume"));
+  await f.updates.command("install");
+  assert.deepEqual(calls, ["stop", "dispose"]);
+});
+
+test("macOS pinning distinguishes failed API reads from malformed source metadata", async () => {
+  for (const mode of ["network", "candidate"] as const) {
+    const f = fixture({ target: { ...target, platform: "darwin" }, read: async url => {
+      if (url.endsWith("/releases/latest")) return JSON.stringify(release());
+      if (mode === "network") throw new Error("synthetic network failure");
+      return "null";
+    } });
+    assert.equal((await f.updates.command("check")).reason, mode);
+    assert.ok(!f.calls.includes("download"));
+  }
 });
 
 test("update IPC authenticates the main renderer frame and accepts only a command enum with no extra arguments", async () => {

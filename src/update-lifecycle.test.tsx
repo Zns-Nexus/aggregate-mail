@@ -65,6 +65,8 @@ test("mounted App drains its send promise and retains the real unload guard for 
   };
   try {
     await act(async () => root.render(<App />));
+    assert.ok(container.querySelector(".frame")!.nextElementSibling === container.querySelector(".app-update-control"),
+      "the updater's no-drag region must follow the draggable pane headers in DOM order");
     assert.equal(unload(), false);
     assert.ok(updateState);
     await act(async () => updateState!({ phase: "installing", version: "0.1.7" }));
